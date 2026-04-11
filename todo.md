@@ -1,0 +1,4 @@
+- use beutiful/user-friendly tui/cli pkgs
+- add mission-session (multi-turn chat), use local tiny database if not daemon-mode
+- add "learn a cli" functionality (perhaps with lightweight RAG or fuzzy search tools)
+- mcp, tools, skills, etc.

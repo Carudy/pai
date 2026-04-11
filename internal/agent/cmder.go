@@ -28,7 +28,7 @@ func extractJSON(content string) (string, error) {
 }
 
 func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput string, cfg *userconfig.Config) (*CmdResult, error) {
-	prompt := fmt.Sprintf("%s\nEnv info:\n%s", cfg.CmdPrompt, configs.Get_sys_prompt())
+	prompt := fmt.Sprintf("%s\nRemember your env info:\n%s", cfg.CmdPrompt, configs.Get_sys_prompt())
 
 	messages := []anyllm.Message{
 		{Role: anyllm.RoleSystem, Content: prompt},
