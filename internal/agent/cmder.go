@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	anyllm "github.com/mozilla-ai/any-llm-go"
+
+	"pai/internal/configs"
 )
 
 type CmdResult struct {
@@ -26,7 +28,8 @@ func extractJSON(content string) (string, error) {
 }
 
 func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput string, cfg *userconfig.Config) (*CmdResult, error) {
-	prompt := fmt.Sprintf("%s\n%s", get_sys_prompt(), cfg.CmdPrompt)
+	prompt := fmt.Sprintf("%s\n%s", cfg.CmdPrompt, configs.Get_sys_prompt())
+
 	messages := []anyllm.Message{
 		{Role: anyllm.RoleSystem, Content: prompt},
 		{Role: anyllm.RoleUser, Content: userInput},
@@ -38,6 +41,10 @@ func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput st
 	})
 	if err != nil {
 		return nil, err
+	}
+
+	if len(resp.Choices) == 0 {
+		return nil, fmt.Errorf("no choices in response")
 	}
 
 	content, ok := resp.Choices[0].Message.Content.(string)

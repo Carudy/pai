@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -40,7 +41,8 @@ func LoadConfig() (*Config, error) {
 
 		// fill APIKeys in env
 		for _, key := range configs.Supported_providers {
-			if val := os.Getenv(key); val != "" {
+			envKey := strings.ToUpper(key) + "_API_KEY"
+			if val := os.Getenv(envKey); val != "" {
 				config.APIKeys[key] = val
 			}
 		}

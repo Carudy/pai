@@ -1,8 +1,9 @@
-package pai
+package main
 
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 
 	"pai/internal/agent"
@@ -25,9 +26,21 @@ func main() {
 	}
 
 	userInput := flag.Arg(0)
+	if userInput == "" {
+		log.Fatal("Please provide a query")
+	}
+
 	if *ask {
-		agent.AskQuestion(context.Background(), provider, userInput, cfg)
+		result, err := agent.AskQuestion(context.Background(), provider, userInput, cfg)
+		if err != nil {
+			log.Fatalf("Failed to ask question: %v", err)
+		}
+		fmt.Println(result)
 	} else {
-		agent.GenerateCommand(context.Background(), provider, userInput, cfg)
+		result, err := agent.GenerateCommand(context.Background(), provider, userInput, cfg)
+		if err != nil {
+			log.Fatalf("Failed to generate command: %v", err)
+		}
+		fmt.Printf("Command: %s\nComment: %s\n", result.Cmd, result.Comment)
 	}
 }

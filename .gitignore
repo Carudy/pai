@@ -4,8 +4,6 @@
 *.dll
 *.so
 *.dylib
-ai
-aicmd
 
 # Test binary, built with `go test -c`
 *.test
@@ -39,3 +37,7 @@ Thumbs.db
 
 # Temporary files
 *.tmp
+
+ai
+pai
+aicmd
