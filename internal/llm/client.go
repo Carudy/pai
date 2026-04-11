@@ -8,10 +8,10 @@ import (
 	"github.com/mozilla-ai/any-llm-go/providers/deepseek"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 
-	"pai/internal/userconfig"
+	"pai/internal/config"
 )
 
-func NewClient(cfg *userconfig.Config) (anyllm.Provider, error) {
+func NewClient(cfg *config.Config) (anyllm.Provider, error) {
 	apiKey, ok := cfg.APIKeys[cfg.Provider]
 	if !ok {
 		return nil, fmt.Errorf("API key for provider %s not found", cfg.Provider)

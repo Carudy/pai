@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"pai/internal/userconfig"
 	"strings"
 
 	anyllm "github.com/mozilla-ai/any-llm-go"
 
-	"pai/internal/configs"
+	"pai/internal/config"
+	"pai/internal/prompt"
 )
 
 type CmdResult struct {
@@ -27,30 +27,12 @@ func extractJSON(content string) (string, error) {
 	return content[start : end+1], nil
 }
 
-func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput string, cfg *userconfig.Config) (*CmdResult, error) {
-	prompt := fmt.Sprintf("%s\nRemember your env info:\n%s", cfg.CmdPrompt, configs.Get_sys_prompt())
-
-	messages := []anyllm.Message{
-		{Role: anyllm.RoleSystem, Content: prompt},
-		{Role: anyllm.RoleUser, Content: userInput},
-	}
-
-	resp, err := provider.Completion(ctx, anyllm.CompletionParams{
-		Model:    cfg.DefaultModel,
-		Messages: messages,
-	})
+func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput string, cfg *config.Config) (*CmdResult, error) {
+	content, err := completeText(ctx, provider, cfg, prompt.BuildCommandSystemPrompt(cfg.CmdPrompt), userInput)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("no choices in response")
-	}
-
-	content, ok := resp.Choices[0].Message.Content.(string)
-	if !ok {
-		return nil, fmt.Errorf("unexpected content type")
-	}
 	jsonStr, err := extractJSON(content)
 	if err != nil {
 		return nil, fmt.Errorf("AI format error: %s", content)
