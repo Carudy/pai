@@ -3,7 +3,10 @@ package configs
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -19,14 +22,58 @@ const Cmder_prompt = `You are a shell command generator. Rules:
 3. No markdown, no backticks, no extra text.`
 
 func Get_sys_prompt() string {
-	// Inject OS info
-	osInfo := fmt.Sprintf("%s %s", runtime.GOOS, runtime.GOARCH)
-	// Inject User info
-	userInfo := fmt.Sprintf("%s", os.Getenv("USER"))
-	// Inject datetime
+	// Get detailed OS info
+	osDetail := getOSDetail()
+
+	// Get shell info
+	shell := os.Getenv("SHELL")
+	if shell != "" {
+		shell = filepath.Base(shell)
+	} else {
+		shell = "unknown"
+	}
+
+	// User info
+	userInfo := os.Getenv("USER")
+	if userInfo == "" {
+		userInfo = "unknown"
+	}
+
+	// Datetime
 	now := time.Now()
 	dateTime := fmt.Sprintf("%s %s", now.Format("2006-01-02"), now.Format("15:04:05"))
-	// Inject working dir
+
+	// Working dir
 	wd, _ := os.Getwd()
-	return fmt.Sprintf("OS: %s User: %s\nDatetime: %s\nWorking Dir: %s\n", osInfo, userInfo, dateTime, wd)
+
+	return fmt.Sprintf("OS: %s (%s %s)\nShell: %s User: %s\nDatetime: %s\nWorking Dir: %s\n",
+		osDetail, runtime.GOOS, runtime.GOARCH, shell, userInfo, dateTime, wd)
+}
+
+func getOSDetail() string {
+	switch runtime.GOOS {
+	case "linux":
+		data, err := os.ReadFile("/etc/os-release")
+		if err == nil {
+			lines := strings.SplitSeq(string(data), "\n")
+			for line := range lines {
+				if strings.HasPrefix(line, "PRETTY_NAME=") {
+					return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
+				}
+			}
+		}
+		return "Linux"
+	case "darwin":
+		cmd := exec.Command("sw_vers", "-productVersion")
+		out, err := cmd.Output()
+		if err == nil {
+			version := strings.TrimSpace(string(out))
+			return fmt.Sprintf("macOS %s", version)
+		}
+		return "macOS"
+	case "windows":
+		return "Windows"
+	default:
+		return runtime.GOOS
+	}
 }
