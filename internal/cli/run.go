@@ -1,17 +1,14 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
-	"strings"
 
 	"pai/internal/agent"
 	"pai/internal/config"
 	"pai/internal/llm"
+	"pai/internal/tool"
 )
 
 func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) int {
@@ -22,7 +19,7 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
-		ErrorLog(fmt.Sprintf("❌ Error loading config: %v\n", err))
+		fmt.Errorf("Error loading config: %v\n", err)
 		return 1
 	}
 
@@ -31,75 +28,68 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 
 	provider, err := llm.NewClient(cfg)
 	if err != nil {
-		ErrorLog(fmt.Sprintf("❌ Error creating LLM client: %v\n", err))
+		fmt.Errorf("Error creating LLM client: %v\n", err)
 		return 1
 	}
 
 	userInput := Flags.Input
 	if userInput == "" {
-		ErrorLog("Error: Please provide a user input")
+		fmt.Errorf("Error: Please provide a user input")
 		return 1
 	}
 
-	NormalLog("🤖 Processing...\n")
-	if Flags.Action == "ask" {
+	fmt.Printf("🤖 Processing...\n")
+
+	switch Flags.Action {
+	case "ask":
 		result, err := agent.AskQuestion(ctx, provider, userInput, cfg)
 		if err != nil {
-			ErrorLog(fmt.Sprintf("Error asking question: %v\n", err))
+			fmt.Errorf("Error asking question: %v\n", err)
 			return 1
 		}
 
-		NormalLog("%s💡 Answer:%s\n")
-		InfoLog(result)
+		fmt.Printf("💡 Answer:\n")
+		fmt.Printf(Styles.Cmd.Render(result))
 		return 0
-	}
 
-	result, err := agent.GenerateCommand(ctx, provider, userInput, cfg)
-	if err != nil {
-		ErrorLog(fmt.Sprintf("Error generating command: %v\n", err))
+	case "cmd":
+		result, err := agent.GenerateCommand(ctx, provider, userInput, cfg)
+		if err != nil {
+			fmt.Errorf("Error generating command: %v\n", err)
+			return 1
+		}
+
+		fmt.Println(Styles.Title.Render("💡 Comment:"))
+		fmt.Printf("\t%s\n", Styles.Info.Render(result.Comment))
+		fmt.Println(Styles.Title.Render("💻 Command:"))
+		fmt.Printf("\t%s\n", Styles.Cmd.Render(result.Cmd))
+
+		exe_res, err := GetUserSelected("Execute the command ?", []string{"Yes", "No"})
+		if err != nil {
+			fmt.Errorf("Error while interacting with user", err)
+			return 1
+		}
+
+		if exe_res == "No" {
+			fmt.Printf("Execution cancelled.")
+			return 0
+		} else if exe_res == "Yes" {
+			output, err := tool.ExecuteCommand(stdout, result.Cmd)
+			if err != nil {
+				fmt.Errorf("Execution failed: %v\nOutput: %s\n", err, string(output))
+				return 1
+			}
+			fmt.Println(Styles.Success.Render("Executed successfully."))
+			fmt.Printf(fmt.Sprintf("%v\n", output))
+		} else {
+			fmt.Printf("Aborted.")
+			return 0
+		}
+
+		return 0
+
+	default:
+		fmt.Errorf("Unsupported PAI action: %s", Flags.Action)
 		return 1
 	}
-
-	NormalLog("💡 Comment:\n")
-	InfoLog(fmt.Sprintf("\t%s\n", result.Comment))
-	NormalLog("💻 Command:\n")
-	InfoLog(fmt.Sprintf("\t%s\n", result.Cmd))
-
-	WarnLog("Execute? [y/N]")
-	scanner := bufio.NewScanner(stdin)
-	if !scanner.Scan() {
-		return 0
-	}
-
-	input := strings.TrimSpace(strings.ToLower(scanner.Text()))
-	if input != "y" && input != "yes" {
-		return 0
-	}
-
-	if err := executeCommand(stdout, result.Cmd); err != nil {
-		return 1
-	}
-
-	return 0
-}
-
-func executeCommand(stdout io.Writer, command string) error {
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/sh"
-	}
-
-	cmd := exec.Command(shell, "-c", command)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		ErrorLog(fmt.Sprintf("Execution failed: %v\nnOutput: %s\n", err, string(output)))
-		return err
-	}
-
-	SuccessLog("Executed successfully\n")
-	if len(output) > 0 {
-		NormalLog(fmt.Sprintf("Output:\n%s\n", string(output)))
-	}
-
-	return nil
 }
