@@ -1,0 +1,33 @@
+package cli
+
+import (
+	"flag"
+	"io"
+	"strings"
+)
+
+type CliFlags struct {
+	Debug  bool
+	Action string
+	Input  string
+}
+
+var Flags CliFlags
+
+func GetFlags(args []string) error {
+	fs := flag.NewFlagSet("pai", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+
+	fs.BoolVar(&Flags.Debug, "debug", false, "Enable debug mode")
+	fs.BoolVar(&Flags.Debug, "d", false, "Enable debug mode (shorthand)")
+
+	fs.StringVar(&Flags.Action, "action", "cmd", "pai's action")
+	fs.StringVar(&Flags.Action, "a", "cmd", "pai's action (shorthand)")
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	Flags.Input = strings.Join(fs.Args(), " ")
+	return nil
+}

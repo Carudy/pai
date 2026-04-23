@@ -9,6 +9,7 @@ import (
 	"pai/internal/prompt"
 )
 
-func AskQuestion(ctx context.Context, provider anyllm.Provider, userInput string, cfg *config.Config) (string, error) {
-	return completeText(ctx, provider, cfg, prompt.BuildAskSystemPrompt(cfg.AskPrompt), userInput)
+func AskQuestion(ctx context.Context, provider anyllm.Provider, userInput string, cfg *config.UserConfig) (string, error) {
+	resp, _, err := chat(ctx, provider, cfg, prompt.BuildAskSystemPrompt(cfg.AskPrompt), userInput, nil)
+	return resp, err
 }

@@ -27,8 +27,8 @@ func extractJSON(content string) (string, error) {
 	return content[start : end+1], nil
 }
 
-func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput string, cfg *config.Config) (*CmdResult, error) {
-	content, err := completeText(ctx, provider, cfg, prompt.BuildCommandSystemPrompt(cfg.CmdPrompt), userInput)
+func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput string, cfg *config.UserConfig) (*CmdResult, error) {
+	content, _, err := chat(ctx, provider, cfg, prompt.BuildCommandSystemPrompt(cfg.CmdPrompt), userInput, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -11,17 +11,19 @@ import (
 	"pai/internal/prompt"
 )
 
-var SupportedProviders = []string{"openai", "deepseek", "anthropic"}
+var SupportedProviders = []string{"openai", "deepseek", "anthropic", "mistral"}
 
-type Config struct {
-	Provider     string            `yaml:"provider"`
+type UserConfig struct {
 	APIKeys      map[string]string `yaml:"api_keys"`
+	Provider     string            `yaml:"provider"`
 	DefaultModel string            `yaml:"default_model"`
-	AskPrompt    string            `yaml:"ask_prompt"`
-	CmdPrompt    string            `yaml:"cmd_prompt"`
+	Proxy        string            `yaml:"http_proxy"`
+
+	AskPrompt string `yaml:"ask_prompt"`
+	CmdPrompt string `yaml:"cmd_prompt"`
 }
 
-func Load() (*Config, error) {
+func LoadUserConfig() (*UserConfig, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get home dir: %w", err)
@@ -39,22 +41,23 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to read config: %w", err)
 	}
 
+	// env API keys
 	mergeEnvAPIKeys(cfg)
 
 	return cfg, nil
 }
 
-func defaultConfig() *Config {
-	return &Config{
+func defaultConfig() *UserConfig {
+	return &UserConfig{
 		Provider:     "deepseek",
-		APIKeys:      make(map[string]string),
 		DefaultModel: "deepseek-chat",
+		APIKeys:      make(map[string]string),
 		AskPrompt:    prompt.DefaultAskPrompt,
 		CmdPrompt:    prompt.DefaultCommandPrompt,
 	}
 }
 
-func mergeEnvAPIKeys(cfg *Config) {
+func mergeEnvAPIKeys(cfg *UserConfig) {
 	if cfg.APIKeys == nil {
 		cfg.APIKeys = make(map[string]string)
 	}

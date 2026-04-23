@@ -22,6 +22,9 @@ A CLI tool that uses large language models to generate shell commands or answer 
 git clone <repo-url>
 cd pai
 go build -o pai ./cmd/pai
+
+# optional
+mv ./pai ~/.local/bin/
 ```
 
 ## Configuration
