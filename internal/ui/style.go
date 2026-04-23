@@ -1,8 +1,6 @@
-package cli
+package ui
 
 import (
-	"fmt"
-
 	"charm.land/lipgloss/v2"
 )
 
@@ -36,10 +34,4 @@ var Styles = struct {
 		PaddingLeft(0).
 		Foreground(lipgloss.BrightMagenta).
 		Italic(true).Bold(true),
-}
-
-func DebugLog(msg string) {
-	if Flags.Debug {
-		fmt.Print(Styles.Debug.Render(msg))
-	}
 }

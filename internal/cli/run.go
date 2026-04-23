@@ -4,12 +4,20 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"pai/internal/agent"
 	"pai/internal/config"
 	"pai/internal/llm"
 	"pai/internal/tool"
+	"pai/internal/ui"
 )
+
+func DebugLog(msg string) {
+	if Flags.Debug {
+		fmt.Print(ui.Styles.Debug.Render(msg))
+	}
+}
 
 func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) int {
 	GetFlags(args)
@@ -26,14 +34,14 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 	DebugLog(fmt.Sprintf("🔧 User config: %+v", cfg))
 	DebugLog(fmt.Sprintf("🔌 Connecting to %s...", cfg.Provider))
 
-	provider, err := llm.NewClient(cfg)
+	llm_client, err := llm.NewClient(cfg)
 	if err != nil {
 		fmt.Errorf("Error creating LLM client: %v\n", err)
 		return 1
 	}
 
-	userInput := Flags.Input
-	if userInput == "" {
+	user_input := strings.TrimSpace(Flags.Input)
+	if user_input == "" {
 		fmt.Errorf("Error: Please provide a user input")
 		return 1
 	}
@@ -42,29 +50,25 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 
 	switch Flags.Action {
 	case "ask":
-		result, err := agent.AskQuestion(ctx, provider, userInput, cfg)
-		if err != nil {
-			fmt.Errorf("Error asking question: %v\n", err)
+		if err := agent.AskQuestion(ctx, llm_client, cfg, user_input, Flags.Multi); err != nil {
+			fmt.Errorf("Error in asking agent: %v\n", err)
 			return 1
 		}
-
-		fmt.Printf("💡 Answer:\n")
-		fmt.Printf(Styles.Cmd.Render(result))
 		return 0
 
 	case "cmd":
-		result, err := agent.GenerateCommand(ctx, provider, userInput, cfg)
+		result, err := agent.GenerateCommand(ctx, llm_client, user_input, cfg)
 		if err != nil {
 			fmt.Errorf("Error generating command: %v\n", err)
 			return 1
 		}
 
-		fmt.Println(Styles.Title.Render("💡 Comment:"))
-		fmt.Printf("\t%s\n", Styles.Info.Render(result.Comment))
-		fmt.Println(Styles.Title.Render("💻 Command:"))
-		fmt.Printf("\t%s\n", Styles.Cmd.Render(result.Cmd))
+		fmt.Println(ui.Styles.Title.Render("💡 Comment:"))
+		fmt.Printf("\t%s\n", ui.Styles.Info.Render(result.Comment))
+		fmt.Println(ui.Styles.Title.Render("💻 Command:"))
+		fmt.Printf("\t%s\n", ui.Styles.Cmd.Render(result.Cmd))
 
-		exe_res, err := GetUserSelected("Execute the command ?", []string{"Yes", "No"})
+		exe_res, err := ui.GetUserSelected("Execute the command ?", []string{"Yes", "No"})
 		if err != nil {
 			fmt.Errorf("Error while interacting with user", err)
 			return 1
@@ -79,7 +83,7 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 				fmt.Errorf("Execution failed: %v\nOutput: %s\n", err, string(output))
 				return 1
 			}
-			fmt.Println(Styles.Success.Render("Executed successfully."))
+			fmt.Println(ui.Styles.Success.Render("Executed successfully."))
 			fmt.Printf(fmt.Sprintf("%v\n", output))
 		} else {
 			fmt.Printf("Aborted.")

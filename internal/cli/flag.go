@@ -8,6 +8,7 @@ import (
 
 type CliFlags struct {
 	Debug  bool
+	Multi  bool
 	Action string
 	Input  string
 }
@@ -20,6 +21,9 @@ func GetFlags(args []string) error {
 
 	fs.BoolVar(&Flags.Debug, "debug", false, "Enable debug mode")
 	fs.BoolVar(&Flags.Debug, "d", false, "Enable debug mode (shorthand)")
+
+	fs.BoolVar(&Flags.Multi, "inter", false, "Enable multi-turn chat")
+	fs.BoolVar(&Flags.Multi, "i", false, "Enable multi-turn chat (shorthand)")
 
 	fs.StringVar(&Flags.Action, "action", "cmd", "pai's action")
 	fs.StringVar(&Flags.Action, "a", "cmd", "pai's action (shorthand)")
