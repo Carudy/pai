@@ -6,8 +6,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var ()
-
 type selectModel struct {
 	prompt  string
 	choices []string
@@ -48,9 +46,9 @@ func (m selectModel) View() string {
 	}
 
 	return fmt.Sprintf("%s\n%s\n%s\n",
-		Styles.Warn.Render(m.prompt),
-		Styles.Choice.Render(s),
-		Styles.Debug.Render("(Press q or ctrl+c to quit.)"))
+		Styles["Warn"].Render(m.prompt),
+		Styles["Choice"].Render(s),
+		Styles["Debug"].Render("(Press q or ctrl+c to quit.)"))
 }
 
 func GetUserSelected(prompt string, choices []string) (string, error) {

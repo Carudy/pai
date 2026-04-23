@@ -24,19 +24,34 @@ func AskQuestion(ctx context.Context, llm_client anyllm.Provider, cfg *config.Us
 		}
 
 		fmt.Printf("💡 Answer:\n")
-		fmt.Printf(ui.Styles.Cmd.Render(resp))
+		fmt.Printf(ui.Styles["Cmd"].Render(resp))
 		return nil
 	}
 
-	// // interactive mode
-	// history := nil
-	// for {
-	// 	resp, history, err := chat(ctx, llm_client, cfg, sys_prompt, userInput, history)
-	// 	if err != nil {
-	// 		return err
-	// 	}
+	// Interactive mode
+	var history []anyllm.Message
+	var initialMessages []ui.ChatMessage
 
-	// }
+	if userInput != "" {
+		resp, newHistory, err := chat(ctx, llm_client, cfg, sys_prompt, userInput, nil)
+		if err != nil {
+			return err
+		}
+		history = newHistory
+		initialMessages = []ui.ChatMessage{
+			{Role: "user", Content: userInput},
+			{Role: "assistant", Content: resp},
+		}
+	}
 
-	return nil
+	chatFunc := func(input string) (string, error) {
+		resp, newHistory, err := chat(ctx, llm_client, cfg, sys_prompt, input, history)
+		if err != nil {
+			return "", err
+		}
+		history = newHistory
+		return resp, nil
+	}
+
+	return ui.StartChat(chatFunc, initialMessages)
 }

@@ -15,7 +15,7 @@ import (
 
 func DebugLog(msg string) {
 	if Flags.Debug {
-		fmt.Print(ui.Styles.Debug.Render(msg))
+		fmt.Print(ui.Styles["Debug"].Render(msg))
 	}
 }
 
@@ -41,15 +41,16 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 	}
 
 	user_input := strings.TrimSpace(Flags.Input)
-	if user_input == "" {
+	if user_input == "" && !Flags.Multi {
 		fmt.Errorf("Error: Please provide a user input")
 		return 1
 	}
+	DebugLog(fmt.Sprintf("💬 User input: %s...", user_input))
 
 	fmt.Printf("🤖 Processing...\n")
-
 	switch Flags.Action {
 	case "ask":
+		DebugLog(fmt.Sprintf("Entering ask-ans agent; Inter: %v\n", Flags.Multi))
 		if err := agent.AskQuestion(ctx, llm_client, cfg, user_input, Flags.Multi); err != nil {
 			fmt.Errorf("Error in asking agent: %v\n", err)
 			return 1
@@ -63,10 +64,10 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 			return 1
 		}
 
-		fmt.Println(ui.Styles.Title.Render("💡 Comment:"))
-		fmt.Printf("\t%s\n", ui.Styles.Info.Render(result.Comment))
-		fmt.Println(ui.Styles.Title.Render("💻 Command:"))
-		fmt.Printf("\t%s\n", ui.Styles.Cmd.Render(result.Cmd))
+		fmt.Println(ui.Styles["Title"].Render("💡 Comment:"))
+		fmt.Printf("\t%s\n", ui.Styles["Info"].Render(result.Comment))
+		fmt.Println(ui.Styles["Title"].Render("💻 Command:"))
+		fmt.Printf("\t%s\n", ui.Styles["Cmd"].Render(result.Cmd))
 
 		exe_res, err := ui.GetUserSelected("Execute the command ?", []string{"Yes", "No"})
 		if err != nil {
@@ -83,7 +84,7 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 				fmt.Errorf("Execution failed: %v\nOutput: %s\n", err, string(output))
 				return 1
 			}
-			fmt.Println(ui.Styles.Success.Render("Executed successfully."))
+			fmt.Println(ui.Styles["Success"].Render("Executed successfully."))
 			fmt.Printf(fmt.Sprintf("%v\n", output))
 		} else {
 			fmt.Printf("Aborted.")
