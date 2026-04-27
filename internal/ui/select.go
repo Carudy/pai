@@ -46,7 +46,7 @@ func (m selectModel) View() string {
 	}
 
 	return fmt.Sprintf("%s\n%s\n%s\n",
-		Styles["Title"].Render(m.prompt),
+		Styles["ExeAsk"].Render(m.prompt),
 		Styles["Choice"].Render(s),
 		Styles["Debug"].Render("(Press ↑/↓ and Enter to choose; q or ctrl+c to quit.)"))
 }

@@ -87,6 +87,8 @@ func (p *deepSeekProvider) CompletionStream(ctx context.Context, params Completi
 	if p.reasoning {
 		bodyMap["thinking"] = map[string]string{"type": "enabled"}
 		bodyMap["reasoning_effort"] = "high"
+	} else {
+		bodyMap["thinking"] = map[string]string{"type": "disabled"}
 	}
 
 	bodyBytes, err := json.Marshal(bodyMap)

@@ -107,7 +107,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		}
 
 		// ── 2. Show the agent's reasoning ──────────────────────────────
-		if dec.Comment != "" && dec.Action != "cmd" {
+		if dec.Comment != "" && dec.Action != "cmd" && dec.Action != "done" {
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI 🤖]"),
 				ui.Styles["Info"].Render(dec.Comment))
@@ -147,21 +147,21 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 					ui.Styles["Warn"].Render("Command failed"))
 				if output != "" {
 					fmt.Printf("%s\n%s\n",
-						ui.Styles["TagResult"].Render("[RES]"),
+						ui.Styles["TagResult"].Render("[❌ Error Info]"),
 						ui.Styles["Warn"].Render(output))
 				}
 			} else if output == "[user cancelled execution]" {
 				fmt.Printf("%s %s\n",
-					ui.Styles["TagSystem"].Render("[SYS ⏭️]"),
+					ui.Styles["TagSystem"].Render("[SYS]"),
 					ui.Styles["Subdued"].Render("Skipped"))
 			} else {
 				fmt.Printf("%s %s\n",
-					ui.Styles["TagSystem"].Render("[SYS ✅]"),
+					ui.Styles["TagSystem"].Render("[SYS]"),
 					ui.Styles["Success"].Render("Command succeeded"))
 				if output != "" {
 					fmt.Printf("%s\n%s\n",
-						ui.Styles["TagResult"].Render("[RES]"),
-						ui.Styles["Cmd"].Render(output))
+						ui.Styles["TagResult"].Render("[CMD Result]"),
+						ui.Styles["ExeRes"].Render(output))
 				}
 			}
 

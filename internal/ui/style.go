@@ -16,14 +16,13 @@ var Styles = map[string]lipgloss.Style{
 		Foreground(lipgloss.Red).Bold(true),
 	"Success": lipgloss.NewStyle().
 		PaddingLeft(0).
-		Foreground(lipgloss.Green).Bold(true),
+		Foreground(lipgloss.Green),
 	"Info": lipgloss.NewStyle().
 		PaddingLeft(0).
 		Foreground(lipgloss.Color("39")),
 	"Warn": lipgloss.NewStyle().
 		PaddingLeft(0).
-		Foreground(lipgloss.Color("214")).
-		Bold(true),
+		Foreground(lipgloss.Color("214")),
 	"Help": lipgloss.NewStyle().PaddingLeft(0).Foreground(lipgloss.Color("240")).Italic(true),
 	"Subdued": lipgloss.NewStyle().
 		PaddingLeft(0).
@@ -36,6 +35,12 @@ var Styles = map[string]lipgloss.Style{
 		Padding(0, 0),
 	"Content": lipgloss.NewStyle().
 		PaddingLeft(0).Foreground(lipgloss.Color("#ddeeff")),
+	"ExeAsk": lipgloss.NewStyle().
+		PaddingLeft(0).
+		Foreground(lipgloss.Color("#EF65AB")),
+	"ExeRes": lipgloss.NewStyle().
+		PaddingLeft(0).
+		Foreground(lipgloss.Color("#C1E1C1")),
 
 	// Label tags — used as emoji-free [TAG] prefixes to mark output origin
 	"TagSystem": lipgloss.NewStyle().
@@ -58,5 +63,9 @@ var Styles = map[string]lipgloss.Style{
 	"Reasoning": lipgloss.NewStyle().
 		PaddingLeft(0).
 		Foreground(lipgloss.Color("172")).
+		Italic(true),
+	"Thinking": lipgloss.NewStyle().
+		PaddingLeft(0).
+		Foreground(lipgloss.Color("#8E857A")).
 		Italic(true),
 }

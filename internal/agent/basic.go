@@ -41,10 +41,10 @@ func chatStreamWriter(
 			if choice.Delta.Reasoning != nil && choice.Delta.Reasoning.Content != "" {
 				if reasoningW != nil {
 					if !inReasoning {
-						fmt.Fprintf(reasoningW, "\n%s ", ui.Styles["Reasoning"].Render("🤔"))
+						fmt.Fprintf(reasoningW, "\n%s ", ui.Styles["Reasoning"].Render("[PAI 🤔]"))
 						inReasoning = true
 					}
-					fmt.Fprint(reasoningW, ui.Styles["Reasoning"].Render(choice.Delta.Reasoning.Content))
+					fmt.Fprint(reasoningW, ui.Styles["Thinking"].Render(choice.Delta.Reasoning.Content))
 				}
 			}
 
