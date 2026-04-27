@@ -13,17 +13,12 @@ import (
 	"pai/internal/ui"
 )
 
-// DevOpsRes is the unified JSON shape the DevOps LLM returns each iteration.
 type DevOpsRes struct {
-	Action string `json:"action"`
-	Result string `json:"result"`
+	Action  string `json:"action"`
+	Result  string `json:"result"`
+	Comment string `json:"comment"`
 }
 
-// DevOps runs a continuous reason–act–observe loop:
-//  1. Feed the conversation (system + user + assistant history) to the LLM.
-//  2. LLM returns one of:  cmd | ask | info | done | giveup
-//  3. Act on the decision and feed the result back into the conversation.
-//  4. Repeat until done/giveup.
 func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	sysPrompt := BuildAgentPrompt(cfg.Prompts["devops"], "devops")
 
@@ -33,10 +28,10 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 	}
 
 	iterations := 0
-	const maxIterations = 50
+	const maxIterations = 100
 
+	// main loop
 	for {
-		fmt.Printf("🤖 Processing...\n")
 		if iterations >= maxIterations {
 			fmt.Printf("%s\n", ui.Styles["Warn"].Render("⚠️  Reached maximum iteration limit. Stopping."))
 			return nil
@@ -44,6 +39,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		iterations++
 
 		// ── 1. Get the LLM's decision ──────────────────────────────────
+		fmt.Printf("🤖 Processing...\n")
 		content, newHistory, err := chat(ctx, cfg, cfg.Clients["devops"], history)
 		if err != nil {
 			return err
@@ -60,7 +56,12 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			return fmt.Errorf("failed to parse devops JSON: %w", err)
 		}
 
-		// ── 2. Execute the decision ────────────────────────────────────
+		// ── 2. Show the agent's reasoning ──────────────────────────────
+		if dec.Comment != "" {
+			fmt.Printf("💭 %s\n", ui.Styles["Info"].Render(dec.Comment))
+		}
+
+		// ── 3. Execute the decision ────────────────────────────────────
 		switch dec.Action {
 		case "done":
 			fmt.Printf("%s %s\n",
@@ -75,9 +76,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			return nil
 
 		case "info":
-			fmt.Printf("%s\n%s\n",
-				ui.Styles["Title"].Render("ℹ️  "+dec.Result),
-				ui.Styles["Debug"].Render("(continuing…)"))
+			fmt.Printf("ℹ️  %s\n", ui.Styles["Content"].Render(dec.Result))
 
 		case "cmd":
 			cmdRes, err := GenCMD(ctx, cfg, dec.Result)
@@ -85,19 +84,18 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 				return fmt.Errorf("devops → cmd generation failed: %w", err)
 			}
 
-			fmt.Printf("%s\n", ui.Styles["Title"].Render("💡 Agent wanna exec:"))
-			fmt.Printf("    TIP: %s\n", ui.Styles["Info"].Render(cmdRes.Comment))
-			fmt.Printf("    CMD: %s\n", ui.Styles["Cmd"].Render(cmdRes.Cmd))
+			fmt.Printf("%s\n", ui.Styles["Title"].Render("💡 Agent wants to execute command:"))
+			fmt.Printf("    💬 %s\n", ui.Styles["Info"].Render(cmdRes.Comment))
+			fmt.Printf("    $ %s\n", ui.Styles["Cmd"].Render(cmdRes.Cmd))
 
 			output, execErr := tool.ExecuteCommand(os.Stdout, cmdRes.Cmd, true)
 			if execErr != nil {
 				fmt.Printf("%s\n", ui.Styles["Warn"].Render("⚠️  Command failed."))
-			}
-			if output != "[user cancelled execution]" {
-				fmt.Printf("%s\n", ui.Styles["Success"].Render("✅ Command succeeded."))
-				fmt.Printf("Exec Res:\n%s\n", ui.Styles["Cmd"].Render(output))
-			} else {
+			} else if output == "[user cancelled execution]" {
 				fmt.Printf("%s\n", ui.Styles["Info"].Render("Execution skipped by user."))
+			} else {
+				fmt.Printf("%s\n", ui.Styles["Success"].Render("✅ Command succeeded."))
+				fmt.Printf("📄 Output:\n%s\n", ui.Styles["Cmd"].Render(output))
 			}
 
 			observation := fmt.Sprintf(
