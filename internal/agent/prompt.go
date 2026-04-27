@@ -69,6 +69,11 @@ func getOSDetail() string {
 	}
 }
 
+const SelfAware = `
+Your name is PAI (Personal Agent Inside Terminal);
+You're an agent system built upon LLMs, you're developped with Golang;
+`
+
 var DefaultPrompts = map[string]string{
 	// question-answering
 	"qa": `

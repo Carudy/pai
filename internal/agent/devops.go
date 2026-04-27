@@ -132,6 +132,11 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 				ui.Styles["TagAgent"].Render("[PAI ℹ️]"),
 				ui.Styles["Content"].Render(dec.Result))
 
+			history = append(history, llm.Message{
+				Role:    llm.RoleAssistant,
+				Content: "[cmd result]\n" + dec.Result,
+			})
+
 		case "cmd":
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagExec"].Render("[CMD 💬]"),
