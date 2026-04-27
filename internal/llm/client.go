@@ -12,7 +12,7 @@ import (
 	"pai/internal/config"
 )
 
-func NewClient(cfg *config.UserConfig) (anyllm.Provider, error) {
+func CreateClient(cfg *config.UserConfig) (anyllm.Provider, error) {
 	apiKey, ok := cfg.APIKeys[cfg.Provider]
 	if !ok {
 		return nil, fmt.Errorf("API key for provider %s not found", cfg.Provider)

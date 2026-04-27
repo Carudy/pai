@@ -14,12 +14,21 @@ var DefaultPrompts = map[string]string{
 	"qa": `You are a helpful assistant. Answer the user's question directly.
 	Remember you are in a terminal environment. So don't response with markdown-like formatting.
 	Use plain text that is directly readable only.
-	And response concisely, and as short as possible.`,
+	And response concisely, and as short as possible.
+	`,
 
-	"cmder": `You are a shell command generator. Rules:
+	"cmd": `You are a shell command generator. Rules:
 	1. According to the user's request, generate one-line shell command(s) and a brief explanation.
 	2. Output ONLY valid JSON: {\"cmd\": \"your_shell_command\", \"comment\": \"brief explanation\"}
-	3. No markdown, no backticks, no extra text.`,
+	3. No markdown, no backticks, no extra text.
+	EXAMPLE INPUT:
+	sum numbers in 2nd column from last in data.csv
+	EXAMPLE JSON OUTPUT:
+	{
+	    "comment": "Sum numeric values in the second-to-last column of comma-separated data.csv using awk. NF-1 refers to the column before the last.",
+	    "cmd": "awk -F',' '{sum += $(NF-1)} END {print sum}' data.csv"
+	}
+	`,
 }
 
 func BuildSystemContext() string {

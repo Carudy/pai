@@ -9,24 +9,12 @@ import (
 	"pai/internal/config"
 )
 
-func chat(ctx context.Context, provider anyllm.Provider, cfg *config.UserConfig,
-	systemPrompt, userInput string, history []anyllm.Message) (string, []anyllm.Message, error) {
+func chat(ctx context.Context, cfg *config.UserConfig,
+	provider *anyllm.Provider, history []anyllm.Message) (string, []anyllm.Message, error) {
 
-	var messages []anyllm.Message
-	if len(history) == 0 {
-		messages = []anyllm.Message{
-			{Role: anyllm.RoleSystem, Content: systemPrompt},
-			{Role: anyllm.RoleUser, Content: userInput},
-		}
-	} else {
-		messages = make([]anyllm.Message, len(history), len(history)+1)
-		copy(messages, history)
-		messages = append(messages, anyllm.Message{Role: anyllm.RoleUser, Content: userInput})
-	}
-
-	resp, err := provider.Completion(ctx, anyllm.CompletionParams{
+	resp, err := (*provider).Completion(ctx, anyllm.CompletionParams{
 		Model:    cfg.Model,
-		Messages: messages,
+		Messages: history,
 	})
 	if err != nil {
 		return "", nil, err
@@ -40,6 +28,6 @@ func chat(ctx context.Context, provider anyllm.Provider, cfg *config.UserConfig,
 	}
 
 	// Append the assistant reply to build the next history state
-	newHistory := append(messages, anyllm.Message{Role: anyllm.RoleAssistant, Content: content})
+	newHistory := append(history, anyllm.Message{Role: anyllm.RoleAssistant, Content: content})
 	return content, newHistory, nil
 }

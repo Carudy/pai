@@ -10,14 +10,19 @@ import (
 	"pai/internal/ui"
 )
 
-func AskQuestion(ctx context.Context, llm_client anyllm.Provider, cfg *config.UserConfig,
-	userInput string, multi_turn bool) error {
+func QA(ctx context.Context, cfg *config.UserConfig,
+	user_input string, multi_turn bool) error {
 
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
 
+	var history = []anyllm.Message{
+		{Role: anyllm.RoleSystem, Content: sys_prompt},
+		{Role: anyllm.RoleUser, Content: user_input},
+	}
+
 	// One-turn mode
 	if !multi_turn {
-		resp, _, err := chat(ctx, llm_client, cfg, sys_prompt, userInput, nil)
+		resp, _, err := chat(ctx, cfg, cfg.Clients["qa"], history)
 
 		if err != nil {
 			return err
@@ -29,23 +34,22 @@ func AskQuestion(ctx context.Context, llm_client anyllm.Provider, cfg *config.Us
 	}
 
 	// Interactive mode
-	var history []anyllm.Message
 	var initialMessages []ui.ChatMessage
-
-	if userInput != "" {
-		resp, newHistory, err := chat(ctx, llm_client, cfg, sys_prompt, userInput, nil)
+	if user_input != "" {
+		resp, newHistory, err := chat(ctx, cfg, cfg.Clients["qa"], history)
 		if err != nil {
 			return err
 		}
 		history = newHistory
 		initialMessages = []ui.ChatMessage{
-			{Role: "user", Content: userInput},
+			{Role: "user", Content: user_input},
 			{Role: "assistant", Content: resp},
 		}
 	}
 
 	chatFunc := func(input string) (string, error) {
-		resp, newHistory, err := chat(ctx, llm_client, cfg, sys_prompt, input, history)
+		resp, newHistory, err := chat(ctx, cfg, cfg.Clients["qa"],
+			append(history, anyllm.Message{Role: anyllm.RoleUser, Content: user_input}))
 		if err != nil {
 			return "", err
 		}

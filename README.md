@@ -134,10 +134,9 @@ pai -a qa "explain Go goroutines in one sentence"
 
 ## 🛣️ Todo
 - [x] User-friendly TUI/CLI packages
-- [ ] Multi-turn chat/tasks support (ask-ans done)
+- [ ] Multi-turn chat/tasks support
 - [ ] MCP, tools, and skills integration
-- [ ] Daemon mode for persistent sessions/quick start
-- [ ] Local database for memory management
+- [ ] Local database
 - [ ] DevOps enhancements (e.g., learning and invoking CLI tools with RAG/fuzzy search)
 
 

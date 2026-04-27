@@ -26,11 +26,15 @@ func extractJSON(content string) (string, error) {
 	return content[start : end+1], nil
 }
 
-func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput string, cfg *config.UserConfig) (*CmdResult, error) {
+func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) (*CmdResult, error) {
 
-	sys_prompt := BuildAgentPrompt(cfg.Prompts["cmder"], "cmder")
+	sys_prompt := BuildAgentPrompt(cfg.Prompts["cmd"], "cmd")
+	var history = []anyllm.Message{
+		{Role: anyllm.RoleSystem, Content: sys_prompt},
+		{Role: anyllm.RoleUser, Content: user_input},
+	}
 
-	content, _, err := chat(ctx, provider, cfg, sys_prompt, userInput, nil)
+	content, _, err := chat(ctx, cfg, cfg.Clients["cmd"], history)
 	if err != nil {
 		return nil, err
 	}

@@ -13,92 +13,110 @@ import (
 	"pai/internal/ui"
 )
 
-func DebugLog(msg string) {
-	if Flags.Debug {
-		fmt.Print(ui.Styles["Debug"].Render(msg))
+func local_logger(_type string, outio io.Writer) func(format string, a ...any) {
+	if _type == "Debug" {
+		return func(format string, a ...any) {
+			if Flags.Debug {
+				fmt.Fprintf(outio, ui.Styles["Debug"].Render(format), a...)
+			}
+		}
+	}
+
+	if _type == "Normal" {
+		return func(format string, a ...any) {
+			fmt.Fprintf(outio, format, a...)
+		}
+	}
+
+	return func(format string, a ...any) {
+		fmt.Fprintf(outio, ui.Styles[_type].Render(format), a...)
 	}
 }
 
 func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) int {
 	GetFlags(args)
 
-	DebugLog(fmt.Sprintf("📃 User Flags: %v\n", Flags))
+	DebugLog := local_logger("Debug", stdout)
+	ErrorLog := local_logger("Error", stdout)
+	NormalLog := local_logger("Normal", stdout)
+
+	DebugLog("📃 User Flags: %v\n", Flags)
 	DebugLog("🔧 Loading configuration...\n")
 
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
-		fmt.Errorf("Error loading config: %v\n", err)
+		ErrorLog("Error loading config: %v\n", err)
 		return 1
 	}
+	if Flags.Action != "" {
+		cfg.DefaultAgent = Flags.Action
+	}
 
-	DebugLog(fmt.Sprintf("🔧 User config: %+v", cfg))
-	DebugLog(fmt.Sprintf("🔌 Connecting to %s...", cfg.DefaultModel))
+	DebugLog("🔧 User config: %v\n", cfg)
+	DebugLog("🔌 Connecting to %s...\n", cfg.DefaultModel)
 
-	llm_client, err := llm.NewClient(cfg)
+	llm_client, err := llm.CreateClient(cfg)
 	if err != nil {
-		fmt.Errorf("Error creating LLM client: %v\n", err)
+		ErrorLog("Error creating LLM client: %v\n", err)
 		return 1
 	}
+	cfg.Clients[cfg.DefaultAgent] = &llm_client
 
 	user_input := strings.TrimSpace(Flags.Input)
 	if user_input == "" && !Flags.Multi {
-		fmt.Errorf("Error: Please provide a user input")
+		ErrorLog("Error: Please provide a user input\n")
 		return 1
 	}
-	DebugLog(fmt.Sprintf("💬 User input: %s...", user_input))
+	DebugLog("💬 User input: %s...\n", user_input)
 
-	if Flags.Action == "" {
-		Flags.Action = cfg.DefaultAgent
-	}
-
-	fmt.Printf("🤖 Processing...\n")
-	switch Flags.Action {
+	NormalLog("🤖 Processing...\n")
+	switch cfg.DefaultAgent {
 	case "qa":
-		DebugLog(fmt.Sprintf("Entering ask-ans agent; Inter: %v\n", Flags.Multi))
-		if err := agent.AskQuestion(ctx, llm_client, cfg, user_input, Flags.Multi); err != nil {
-			fmt.Errorf("Error in asking agent: %v\n", err)
+		DebugLog("Entering ask-ans agent; Inter: %v\n", Flags.Multi)
+		if err := agent.QA(ctx, cfg, user_input, Flags.Multi); err != nil {
+			ErrorLog("Error in asking agent: %v\n", err)
 			return 1
 		}
 		return 0
 
 	case "cmd":
-		result, err := agent.GenerateCommand(ctx, llm_client, user_input, cfg)
+		result, err := agent.GenCMD(ctx, cfg, user_input)
 		if err != nil {
-			fmt.Errorf("Error generating command: %v\n", err)
+			ErrorLog("Error generating command: %v\n", err)
 			return 1
 		}
 
-		fmt.Println(ui.Styles["Title"].Render("💡 Comment:"))
-		fmt.Printf("\t%s\n", ui.Styles["Info"].Render(result.Comment))
-		fmt.Println(ui.Styles["Title"].Render("💻 Command:"))
-		fmt.Printf("\t%s\n", ui.Styles["Cmd"].Render(result.Cmd))
+		fmt.Fprintf(stdout, "%s\n", ui.Styles["Title"].Render("💡 Comment:"))
+		fmt.Fprintf(stdout, "\t%s\n", ui.Styles["Info"].Render(result.Comment))
+		fmt.Fprintf(stdout, "%s\n", ui.Styles["Title"].Render("💻 Command:"))
+		fmt.Fprintf(stdout, "\t%s\n", ui.Styles["Cmd"].Render(result.Cmd))
 
 		exe_res, err := ui.GetUserSelected("Execute the command ?", []string{"Yes", "No"})
 		if err != nil {
-			fmt.Errorf("Error while interacting with user", err)
+			ErrorLog("Error while interacting with user: %v\n", err)
 			return 1
 		}
 
 		if exe_res == "No" {
-			fmt.Printf("Execution cancelled.")
+			NormalLog("Execution cancelled.\n")
 			return 0
 		} else if exe_res == "Yes" {
 			output, err := tool.ExecuteCommand(stdout, result.Cmd)
 			if err != nil {
-				fmt.Errorf("Execution failed: %v\nOutput: %s\n", err, string(output))
+				ErrorLog("Execution failed: %v\nOutput: %s\n", err, string(output))
 				return 1
 			}
-			fmt.Println(ui.Styles["Success"].Render("Executed successfully."))
-			fmt.Printf(fmt.Sprintf("%v\n", output))
+			fmt.Fprintf(stdout, "%s\n", ui.Styles["Success"].Render("Executed successfully."))
+			NormalLog("%s\n", output)
 		} else {
-			fmt.Printf("Aborted.")
+			NormalLog("Aborted.\n")
 			return 0
 		}
 
 		return 0
 
 	default:
-		fmt.Errorf("Unsupported PAI action: %s", Flags.Action)
+		ErrorLog("Error: Unsupported PAI action: \"%s\"\n", cfg.DefaultAgent)
 		return 1
 	}
 }
