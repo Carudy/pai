@@ -12,8 +12,11 @@ import (
 	"pai/internal/ui"
 )
 
-func QA(ctx context.Context, cfg *config.UserConfig,
-	user_input string, multi_turn bool) error {
+func QA(
+	ctx context.Context,
+	cfg *config.UserConfig,
+	user_input string,
+	multi_turn bool) error {
 
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
 
@@ -24,24 +27,16 @@ func QA(ctx context.Context, cfg *config.UserConfig,
 
 	// One-turn mode
 	if !multi_turn {
-		stop := ui.ShowSpinner("🧠", "Thinking...")
-
-		resp, _, err := chatStdout(ctx, cfg, cfg.Clients["qa"], history, stop, true)
+		resp, _, err := chatStdout(ctx, cfg, cfg.Clients["qa"], history)
 		if err != nil {
 			return err
 		}
 
-		if !cfg.Streaming {
-			// Non-streaming: the response hasn't been shown yet.
-			fmt.Print(ui.Styles["Cmd"].Render(resp))
-			fmt.Println()
-		}
+		fmt.Printf("%s\n%s", ui.Styles["TagAgent"].Render("[PAI 🤖]:"), ui.Styles["Cmd"].Render(resp))
 		return nil
 	}
 
-	// Interactive (TUI) mode — use silent chat so the TUI manages
-	// its own display. Streaming is suppressed even if cfg.Streaming
-	// is true to avoid corrupting the alt-screen rendering.
+	// Multi-turn mode
 	var initialMessages []ui.ChatMessage
 	if user_input != "" {
 		resp, newHistory, err := chat(ctx, cfg, cfg.Clients["qa"], history)

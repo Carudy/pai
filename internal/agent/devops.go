@@ -90,9 +90,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		}
 
 		// ── 1. Get the LLM's decision ──────────────────────────────────
-		stop := ui.ShowSpinner("🤔", "Processing...")
-
-		content, newHistory, err := chatStdout(ctx, cfg, cfg.Clients["devops"], history, stop, false)
+		content, newHistory, err := chatStdout(ctx, cfg, cfg.Clients["devops"], history)
 		if err != nil {
 			return err
 		}
@@ -109,74 +107,67 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		}
 
 		// ── 2. Show the agent's reasoning ──────────────────────────────
-		if dec.Comment != "" {
+		if dec.Comment != "" && dec.Action != "cmd" {
 			fmt.Printf("%s %s\n",
-				ui.Styles["TagAgent"].Render("[PAI]"),
+				ui.Styles["TagAgent"].Render("[PAI 🤖]"),
 				ui.Styles["Info"].Render(dec.Comment))
 		}
 
 		// ── 3. Execute the decision ────────────────────────────────────
 		switch dec.Action {
 		case "done":
-			fmt.Printf("\n%s ✅ %s\n",
-				ui.Styles["TagAgent"].Render("[PAI]"),
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagAgent"].Render("[PAI ✅]"),
 				ui.Styles["Success"].Render(dec.Result))
 			return nil
 
 		case "giveup":
-			fmt.Printf("\n%s 💔 %s\n",
-				ui.Styles["TagAgent"].Render("[PAI]"),
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagAgent"].Render("[PAI 💔]"),
 				ui.Styles["Warn"].Render(dec.Result))
 			return nil
 
 		case "info":
-			fmt.Printf("%s ℹ️ %s\n",
-				ui.Styles["TagAgent"].Render("[PAI]"),
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagAgent"].Render("[PAI ℹ️]"),
 				ui.Styles["Content"].Render(dec.Result))
 
 		case "cmd":
-			cmdRes, err := GenCMD(ctx, cfg, dec.Result)
-			if err != nil {
-				return fmt.Errorf("devops → cmd generation failed: %w", err)
-			}
-
-			// [Exec] lines use a subdued warm-gray for the comment
-			// and yellow for the command itself.
 			fmt.Printf("%s %s\n",
-				ui.Styles["TagExec"].Render("[Exec]"),
-				ui.Styles["Subdued"].Render(cmdRes.Comment))
+				ui.Styles["TagExec"].Render("[CMD 💬]"),
+				ui.Styles["Help"].Render(dec.Comment))
 			fmt.Printf("%s %s\n",
-				ui.Styles["TagExec"].Render("[Exec]"),
-				ui.Styles["Cmd"].Render(cmdRes.Cmd))
+				ui.Styles["TagExec"].Render("[CMD 💻]"),
+				ui.Styles["Info"].Render(dec.Result))
 
-			output, execErr := tool.ExecuteCommand(os.Stdout, cmdRes.Cmd, true)
+			output, execErr := tool.ExecuteCommand(os.Stdout, dec.Result, true)
 			if execErr != nil {
 				fmt.Printf("%s ❌ %s\n",
-					ui.Styles["TagSystem"].Render("[Sys]"),
+					ui.Styles["TagSystem"].Render("[SYS]"),
 					ui.Styles["Warn"].Render("Command failed"))
 				if output != "" {
 					fmt.Printf("%s\n%s\n",
-						ui.Styles["TagResult"].Render("[Res]"),
+						ui.Styles["TagResult"].Render("[RES]"),
 						ui.Styles["Warn"].Render(output))
 				}
 			} else if output == "[user cancelled execution]" {
-				fmt.Printf("%s ⏭️ %s\n",
-					ui.Styles["TagSystem"].Render("[Sys]"),
+				fmt.Printf("%s %s\n",
+					ui.Styles["TagSystem"].Render("[SYS ⏭️]"),
 					ui.Styles["Subdued"].Render("Skipped"))
 			} else {
-				fmt.Printf("%s ✅ %s\n",
-					ui.Styles["TagSystem"].Render("[Sys]"),
+				fmt.Printf("%s %s\n",
+					ui.Styles["TagSystem"].Render("[SYS ✅]"),
 					ui.Styles["Success"].Render("Command succeeded"))
 				if output != "" {
 					fmt.Printf("%s\n%s\n",
-						ui.Styles["TagResult"].Render("[Res]"),
+						ui.Styles["TagResult"].Render("[RES]"),
 						ui.Styles["Cmd"].Render(output))
 				}
 			}
 
 			observation := fmt.Sprintf(
 				"COMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-				cmdRes.Cmd, execErr, TruncateOutput(output, 2000),
+				dec.Result, execErr, TruncateOutput(output, 2000),
 			)
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
@@ -184,8 +175,8 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			})
 
 		case "ask":
-			fmt.Printf("%s ❓ %s\n",
-				ui.Styles["TagAgent"].Render("[PAI]"),
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagAgent"].Render("[PAI 🙋]"),
 				ui.Styles["Warn"].Render(dec.Result))
 
 			answer, err := ui.GetUserTextInput("Your answer:")

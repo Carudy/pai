@@ -13,20 +13,13 @@ import (
 	"pai/internal/ui"
 )
 
-// chatStreamWriter performs streaming completion. Reasoning tokens are
-// always written to reasoningW (if non-nil). Content tokens are written
-// to contentW (if non-nil). When both are non-nil a separator is printed
-// between reasoning and visible content.
-//
-// If stopSpinner is non-nil, it is called once when the first meaningful
-// token (reasoning or content) arrives, allowing a pre-stream spinner to
-// be dismissed.
-//
-// Returns the accumulated visible content and the updated message history.
-func chatStreamWriter(ctx context.Context, cfg *config.UserConfig,
-	provider llm.Provider, history []llm.Message,
-	reasoningW io.Writer, contentW io.Writer,
-	stopSpinner func()) (string, []llm.Message, error) {
+func chatStreamWriter(
+	ctx context.Context,
+	cfg *config.UserConfig,
+	provider llm.Provider,
+	history []llm.Message,
+	reasoningW io.Writer,
+	contentW io.Writer) (string, []llm.Message, error) {
 
 	params := llm.CompletionParams{
 		Model:    cfg.Model,
@@ -41,19 +34,11 @@ func chatStreamWriter(ctx context.Context, cfg *config.UserConfig,
 
 	var fullContent strings.Builder
 	inReasoning := false
-	spinnerStopped := false
-	stopSpinnerOnce := func() {
-		if !spinnerStopped && stopSpinner != nil {
-			spinnerStopped = true
-			stopSpinner()
-		}
-	}
 
 	for chunk := range chunkChan {
 		for _, choice := range chunk.Choices {
 			// ── Reasoning token ─────────────────────────────────────
 			if choice.Delta.Reasoning != nil && choice.Delta.Reasoning.Content != "" {
-				stopSpinnerOnce()
 				if reasoningW != nil {
 					if !inReasoning {
 						fmt.Fprintf(reasoningW, "\n%s ", ui.Styles["Reasoning"].Render("🤔"))
@@ -66,9 +51,8 @@ func chatStreamWriter(ctx context.Context, cfg *config.UserConfig,
 			// ── Content token ────────────────────────────────────────
 			token := choice.Delta.Content
 			if token != "" {
-				stopSpinnerOnce()
-				// Transition from reasoning → content: print separator.
 				if inReasoning && contentW != nil && reasoningW == contentW {
+					// Transition from reasoning → content: print separator.
 					fmt.Fprintf(contentW, "\n%s\n", ui.Styles["Separator"].Render(strings.Repeat("─", 40)))
 					inReasoning = false
 				} else if inReasoning && reasoningW != nil {
@@ -78,9 +62,10 @@ func chatStreamWriter(ctx context.Context, cfg *config.UserConfig,
 					inReasoning = false
 				}
 				fullContent.WriteString(token)
-				if contentW != nil {
-					fmt.Fprint(contentW, token)
-				}
+				// for now, not show any json content
+				// if contentW != nil {
+				// 	fmt.Fprint(contentW, token)
+				// }
 			}
 		}
 	}
@@ -100,14 +85,11 @@ func chatStreamWriter(ctx context.Context, cfg *config.UserConfig,
 	return content, newHistory, nil
 }
 
-// chat performs a chat completion. When cfg.Streaming is true and the
-// provider supports it, tokens are collected silently without any terminal
-// output (the caller manages its own display, e.g. the TUI chat).
-// Otherwise it uses the blocking Completion call.
-//
-// Returns the full response content and the updated message history.
-func chat(ctx context.Context, cfg *config.UserConfig,
-	provider llm.Provider, history []llm.Message) (string, []llm.Message, error) {
+func chat(
+	ctx context.Context,
+	cfg *config.UserConfig,
+	provider llm.Provider,
+	history []llm.Message) (string, []llm.Message, error) {
 
 	params := llm.CompletionParams{
 		Model:    cfg.Model,
@@ -118,7 +100,7 @@ func chat(ctx context.Context, cfg *config.UserConfig,
 	}
 
 	if cfg.Streaming {
-		return chatStreamWriter(ctx, cfg, provider, history, nil, nil, nil)
+		return chatStreamWriter(ctx, cfg, provider, history, nil, nil)
 	}
 
 	resp, err := provider.Completion(ctx, params)
@@ -134,22 +116,11 @@ func chat(ctx context.Context, cfg *config.UserConfig,
 	return content, newHistory, nil
 }
 
-// chatStdout streams the LLM response with appropriate terminal visibility.
-//
-// When showContent is true (QA agent), content tokens are written to stdout
-// in real time alongside reasoning tokens.
-//
-// When showContent is false (cmd / devops agents), only reasoning tokens are
-// displayed on the terminal; the raw content (e.g. JSON) is collected silently
-// so that the caller can render its own structured output afterwards.
-//
-// When streaming is disabled, the entire response arrives at once. In that
-// case reasoning is printed (if any) and content is always returned to the
-// caller. The showContent flag only affects whether raw tokens appear during
-// streaming.
-func chatStdout(ctx context.Context, cfg *config.UserConfig,
-	provider llm.Provider, history []llm.Message,
-	stopSpinner func(), showContent bool) (string, []llm.Message, error) {
+func chatStdout(
+	ctx context.Context,
+	cfg *config.UserConfig,
+	provider llm.Provider,
+	history []llm.Message) (string, []llm.Message, error) {
 
 	params := llm.CompletionParams{
 		Model:    cfg.Model,
@@ -161,33 +132,18 @@ func chatStdout(ctx context.Context, cfg *config.UserConfig,
 
 	// ── Streaming path ─────────────────────────────────────────────────
 	if cfg.Streaming {
-		if showContent {
-			// QA agent: display both reasoning and content on stdout.
-			return chatStreamWriter(ctx, cfg, provider, history, os.Stdout, os.Stdout, stopSpinner)
-		}
-		// CMD / devops: display reasoning only; suppress raw content.
-		return chatStreamWriter(ctx, cfg, provider, history, os.Stdout, nil, stopSpinner)
+		return chatStreamWriter(ctx, cfg, provider, history, os.Stdout, os.Stdout)
 	}
 
 	// ── Blocking path ──────────────────────────────────────────────────
 	resp, err := provider.Completion(ctx, params)
 	if err != nil {
-		if stopSpinner != nil {
-			stopSpinner()
-		}
 		return "", nil, err
 	}
 	if len(resp.Choices) == 0 {
-		if stopSpinner != nil {
-			stopSpinner()
-		}
 		return "", nil, fmt.Errorf("no choices in response")
 	}
 	content := resp.Choices[0].Message.Content
-
-	if stopSpinner != nil {
-		stopSpinner()
-	}
 
 	// Print reasoning content (non-streaming, so it arrives in one block).
 	if cfg.Reasoning && resp.Choices[0].Reasoning != nil && resp.Choices[0].Reasoning.Content != "" {
@@ -200,9 +156,6 @@ func chatStdout(ctx context.Context, cfg *config.UserConfig,
 	return content, newHistory, nil
 }
 
-// ExtractJSON finds the first '{' and last '}' in content and returns the
-// substring between them. Used to extract a JSON object from an LLM response
-// that may include surrounding commentary.
 func ExtractJSON(content string) (string, error) {
 	start := strings.Index(content, "{")
 	end := strings.LastIndex(content, "}")
@@ -212,8 +165,6 @@ func ExtractJSON(content string) (string, error) {
 	return content[start : end+1], nil
 }
 
-// TruncateOutput shortens a string to max bytes, appending a truncation
-// notice if the original was longer.
 func TruncateOutput(s string, max int) string {
 	if len(s) <= max {
 		return s

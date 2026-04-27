@@ -46,9 +46,9 @@ func (m selectModel) View() string {
 	}
 
 	return fmt.Sprintf("%s\n%s\n%s\n",
-		Styles["Warn"].Render(m.prompt),
+		Styles["Title"].Render(m.prompt),
 		Styles["Choice"].Render(s),
-		Styles["Debug"].Render("(Press q or ctrl+c to quit.)"))
+		Styles["Debug"].Render("(Press ↑/↓ and Enter to choose; q or ctrl+c to quit.)"))
 }
 
 func GetUserSelected(prompt string, choices []string) (string, error) {

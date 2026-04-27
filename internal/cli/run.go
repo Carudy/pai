@@ -102,22 +102,22 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 			return 1
 		}
 
-		fmt.Fprintf(stdout, "%s 💬 %s\n", ui.Styles["TagExec"].Render("[Exec]"), ui.Styles["Info"].Render(result.Comment))
-		fmt.Fprintf(stdout, "%s ⌨️ %s\n", ui.Styles["TagExec"].Render("[Exec]"), ui.Styles["Cmd"].Render(result.Cmd))
+		fmt.Fprintf(stdout, "%s %s\n", ui.Styles["TagExec"].Render("[CMD 💬]"), ui.Styles["Info"].Render(result.Comment))
+		fmt.Fprintf(stdout, "%s %s\n", ui.Styles["TagExec"].Render("[CMD 💻]"), ui.Styles["Cmd"].Render(result.Cmd))
 
 		output, execErr := tool.ExecuteCommand(os.Stdout, result.Cmd, true)
 		if execErr != nil {
-			fmt.Fprintf(stdout, "%s ❌ %s\n", ui.Styles["TagSystem"].Render("[Sys]"), ui.Styles["Warn"].Render("Command failed"))
+			fmt.Fprintf(stdout, "%s ❌ %s\n", ui.Styles["TagSystem"].Render("[SYS]"), ui.Styles["Warn"].Render("Command failed"))
 			if output != "" {
-				fmt.Fprintf(stdout, "%s\n%s\n", ui.Styles["TagResult"].Render("[Res]"), ui.Styles["Warn"].Render(output))
+				fmt.Fprintf(stdout, "%s\n%s\n", ui.Styles["TagResult"].Render("[RES]"), ui.Styles["Warn"].Render(output))
 			}
 			return 1
 		}
 		if output != "[user cancelled execution]" {
-			fmt.Fprintf(stdout, "%s ✅ %s\n", ui.Styles["TagSystem"].Render("[Sys]"), ui.Styles["Success"].Render("Command succeeded"))
-			fmt.Fprintf(stdout, "%s\n%s\n", ui.Styles["TagResult"].Render("[Res]"), ui.Styles["Cmd"].Render(output))
+			fmt.Fprintf(stdout, "%s ✅ %s\n", ui.Styles["TagSystem"].Render("[SYS]"), ui.Styles["Success"].Render("Command succeeded"))
+			fmt.Fprintf(stdout, "%s\n%s\n", ui.Styles["TagResult"].Render("[RES]"), ui.Styles["Cmd"].Render(output))
 		} else {
-			fmt.Fprintf(stdout, "%s ⏭️ %s\n", ui.Styles["TagSystem"].Render("[Sys]"), ui.Styles["Subdued"].Render("Skipped"))
+			fmt.Fprintf(stdout, "%s ⏭️ %s\n", ui.Styles["TagSystem"].Render("[SYS]"), ui.Styles["Subdued"].Render("Skipped"))
 		}
 
 		return 0

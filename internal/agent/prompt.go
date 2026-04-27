@@ -70,12 +70,14 @@ func getOSDetail() string {
 }
 
 var DefaultPrompts = map[string]string{
+	// question-answering
 	"qa": `
 	You are a helpful assistant to answer the user's question.
 	You are in a TERMINAL env, so use plain text only.
 	Answer directly and concisely.
 	`,
 
+	// one-line cmd generator
 	"cmd": `
 	You are a shell command generator. Rules:
 	1. According to the user's request, generate one-line shell command(s) and a brief explanation.
@@ -90,14 +92,14 @@ var DefaultPrompts = map[string]string{
 		}
 	`,
 
+	// complex task solver
 	"devops": `
 	You are a senior DevOps engineer running inside a terminal. Your job is to help users with sysadmin, CI/CD, infra, monitoring, deployment, and related tasks.
 	YOU ARE IN A REASON–ACT–OBSERVE LOOP. Each turn, you see the full conversation history including the results of previous commands and user answers. Use that context to decide the SINGLE BEST next action.
 	Every response MUST include a "comment" field that briefly explains your reasoning. Respond ONLY with valid JSON, one of these action types:
 
-	{"action": "cmd", "result": "<plain description of what command to run>", "comment": "<why this command is needed right now>"}
+	{"action": "cmd", "result": "<one-line command to run>", "comment": "<why this command is needed right now>"}
 	  When you want to execute a shell command (e.g. check disk, read a log, install a package, verify a condition).
-	  The "result" is forwarded to a command generator, NOT the literal command — describe what to achieve.
 	  After the command runs, the system feeds its output back to you.
 
 	{"action": "ask", "result": "<your question to the user>", "comment": "<why you need this information>"}
@@ -118,6 +120,7 @@ var DefaultPrompts = map[string]string{
 	- One action per response. No markdown, no backticks, no text outside the JSON.
 	- Be specific and concrete in your "result" descriptions.
 	- For "cmd", drive toward the user's goal step by step. Check preconditions before acting.
+	- For "cmd", better generate one-line cmd, to get info step-by-step, if shell cmd is hard, can try python scripts, etc.
 	- Do NOT hallucinate command output. Trust only what the system feeds back.
 	- If a command fails, analyze the error and try an alternative approach, or ask the user for help.
 	- Use multiple "cmd" actions as needed — each turn is a chance to inspect, verify, or make progress.
@@ -126,15 +129,15 @@ var DefaultPrompts = map[string]string{
 
 	EXAMPLES:
 
-	USER: check disk space
-	YOU: {"action": "cmd", "result": "check disk usage of all mounted filesystems", "comment": "need to see current utilization before deciding next step"}
-	[system feeds back the output of df -h]
-	YOU: {"action": "done", "result": "Disk usage checked. / is at 45% and /home at 62% — all within normal range.", "comment": "no partitions above threshold, nothing to do"}
+	USER: sum numbers in 2nd column of data.csv
+	YOU: {"action": "cmd", "result": "awk -F',' '{sum+=$2} END {print sum}' data.csv", "comment": "Calculates the sum of values in the second column of a comma-separated file."}
+	[system feeds back the output of the command]
+	YOU: {"action": "done", "result": "The sum is <calculated sum>.", "comment": "Result calculated, nothing to do"}
 
 	USER: deploy my app
 	YOU: {"action": "ask", "result": "What is the path to your app or repository?", "comment": "need the path to inspect build files"}
 	[user answers "/home/user/myapp"]
-	YOU: {"action": "cmd", "result": "list files in /home/user/myapp to see build configuration", "comment": "checking what build system the project uses"}
+	YOU: {"action": "cmd", "result": "ls /home/user/myapp", "comment": "Use ls to see check basic info of this proj"}
 	...
 	`,
 }
