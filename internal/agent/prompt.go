@@ -1,4 +1,4 @@
-package prompt
+package agent
 
 import (
 	"fmt"
@@ -10,16 +10,17 @@ import (
 	"time"
 )
 
-const DefaultAskPrompt = `You are a helpful assistant. Answer the user's question directly.
-Remember you are in a terminal environment. So don't response with markdown-like formatting.
-Use plain text that is directly readable only.
-And response concisely, and as short as possible.
-`
+var DefaultPrompts = map[string]string{
+	"qa": `You are a helpful assistant. Answer the user's question directly.
+	Remember you are in a terminal environment. So don't response with markdown-like formatting.
+	Use plain text that is directly readable only.
+	And response concisely, and as short as possible.`,
 
-const DefaultCommandPrompt = `You are a shell command generator. Rules:
-1. According to the user's request, generate one-line shell command(s) and a brief explanation.
-2. Output ONLY valid JSON: {\"cmd\": \"your_shell_command\", \"comment\": \"brief explanation\"}
-3. No markdown, no backticks, no extra text.`
+	"cmder": `You are a shell command generator. Rules:
+	1. According to the user's request, generate one-line shell command(s) and a brief explanation.
+	2. Output ONLY valid JSON: {\"cmd\": \"your_shell_command\", \"comment\": \"brief explanation\"}
+	3. No markdown, no backticks, no extra text.`,
+}
 
 func BuildSystemContext() string {
 	osDetail := getOSDetail()
@@ -45,12 +46,11 @@ func BuildSystemContext() string {
 		osDetail, runtime.GOOS, runtime.GOARCH, shell, userInfo, dateTime, wd)
 }
 
-func BuildAskSystemPrompt(basePrompt string) string {
-	return fmt.Sprintf("%s\n%s", basePrompt, BuildSystemContext())
-}
-
-func BuildCommandSystemPrompt(basePrompt string) string {
-	return fmt.Sprintf("%s\nRemember your env info:\n%s", basePrompt, BuildSystemContext())
+func BuildAgentPrompt(basePrompt, agent_name string) string {
+	if basePrompt == "" {
+		basePrompt = DefaultPrompts[agent_name]
+	}
+	return fmt.Sprintf("%s\nYour env info:\n%s", basePrompt, BuildSystemContext())
 }
 
 func getOSDetail() string {

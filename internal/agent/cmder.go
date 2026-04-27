@@ -9,7 +9,6 @@ import (
 	anyllm "github.com/mozilla-ai/any-llm-go"
 
 	"pai/internal/config"
-	"pai/internal/prompt"
 )
 
 type CmdResult struct {
@@ -28,7 +27,10 @@ func extractJSON(content string) (string, error) {
 }
 
 func GenerateCommand(ctx context.Context, provider anyllm.Provider, userInput string, cfg *config.UserConfig) (*CmdResult, error) {
-	content, _, err := chat(ctx, provider, cfg, prompt.BuildCommandSystemPrompt(cfg.CmdPrompt), userInput, nil)
+
+	sys_prompt := BuildAgentPrompt(cfg.Prompts["cmder"], "cmder")
+
+	content, _, err := chat(ctx, provider, cfg, sys_prompt, userInput, nil)
 	if err != nil {
 		return nil, err
 	}

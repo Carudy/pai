@@ -7,15 +7,15 @@ import (
 	anyllm "github.com/mozilla-ai/any-llm-go"
 
 	"pai/internal/config"
-	"pai/internal/prompt"
 	"pai/internal/ui"
 )
 
 func AskQuestion(ctx context.Context, llm_client anyllm.Provider, cfg *config.UserConfig,
 	userInput string, multi_turn bool) error {
 
-	sys_prompt := prompt.BuildAskSystemPrompt(cfg.AskPrompt)
+	sys_prompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
 
+	// One-turn mode
 	if !multi_turn {
 		resp, _, err := chat(ctx, llm_client, cfg, sys_prompt, userInput, nil)
 

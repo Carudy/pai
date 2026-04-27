@@ -25,7 +25,7 @@ func chat(ctx context.Context, provider anyllm.Provider, cfg *config.UserConfig,
 	}
 
 	resp, err := provider.Completion(ctx, anyllm.CompletionParams{
-		Model:    cfg.DefaultModel,
+		Model:    cfg.Model,
 		Messages: messages,
 	})
 	if err != nil {

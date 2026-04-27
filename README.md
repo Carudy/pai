@@ -127,8 +127,8 @@ Executed successfully.
 ### Question Answering
 Get direct answers to your questions:
 ```bash
-pai --action ask "what is recursion"
-pai --action ask "explain Go goroutines in one sentence"
+pai --action qa "what is recursion"
+pai -a qa "explain Go goroutines in one sentence"
 ```
 
 

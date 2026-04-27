@@ -3,24 +3,24 @@ package config
 import (
 	"fmt"
 	"os"
+
+	// "pai/internal/agent"
 	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
-
-	"pai/internal/prompt"
 )
 
 var SupportedProviders = []string{"openai", "deepseek", "anthropic", "mistral"}
 
 type UserConfig struct {
 	APIKeys      map[string]string `yaml:"api_keys"`
-	Provider     string            `yaml:"provider"`
 	DefaultModel string            `yaml:"default_model"`
-	Proxy        string            `yaml:"http_proxy"`
+	DefaultAgent string            `yaml:"default_agent"`
+	Prompts      map[string]string `yaml:"prompts"`
 
-	AskPrompt string `yaml:"ask_prompt"`
-	CmdPrompt string `yaml:"cmd_prompt"`
+	Provider string
+	Model    string
 }
 
 func LoadUserConfig() (*UserConfig, error) {
@@ -44,16 +44,22 @@ func LoadUserConfig() (*UserConfig, error) {
 	// env API keys
 	mergeEnvAPIKeys(cfg)
 
+	// split provider & model
+	_split := strings.Split(cfg.DefaultModel, ":")
+	_provider := _split[0]
+	_model := strings.Join(_split[1:], "")
+	cfg.Provider = _provider
+	cfg.Model = _model
+
 	return cfg, nil
 }
 
 func defaultConfig() *UserConfig {
 	return &UserConfig{
-		Provider:     "deepseek",
-		DefaultModel: "deepseek-chat",
+		DefaultModel: "deepseek:deepseek-v4-flash",
+		DefaultAgent: "cmder",
 		APIKeys:      make(map[string]string),
-		AskPrompt:    prompt.DefaultAskPrompt,
-		CmdPrompt:    prompt.DefaultCommandPrompt,
+		Prompts:      make(map[string]string),
 	}
 }
 

@@ -25,8 +25,8 @@ func GetFlags(args []string) error {
 	fs.BoolVar(&Flags.Multi, "inter", false, "Enable multi-turn chat")
 	fs.BoolVar(&Flags.Multi, "i", false, "Enable multi-turn chat (shorthand)")
 
-	fs.StringVar(&Flags.Action, "action", "cmd", "pai's action")
-	fs.StringVar(&Flags.Action, "a", "cmd", "pai's action (shorthand)")
+	fs.StringVar(&Flags.Action, "action", "", "pai's action")
+	fs.StringVar(&Flags.Action, "a", "", "pai's action (shorthand)")
 
 	if err := fs.Parse(args); err != nil {
 		return err

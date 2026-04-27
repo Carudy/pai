@@ -32,7 +32,7 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 	}
 
 	DebugLog(fmt.Sprintf("🔧 User config: %+v", cfg))
-	DebugLog(fmt.Sprintf("🔌 Connecting to %s...", cfg.Provider))
+	DebugLog(fmt.Sprintf("🔌 Connecting to %s...", cfg.DefaultModel))
 
 	llm_client, err := llm.NewClient(cfg)
 	if err != nil {
@@ -47,9 +47,13 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 	}
 	DebugLog(fmt.Sprintf("💬 User input: %s...", user_input))
 
+	if Flags.Action == "" {
+		Flags.Action = cfg.DefaultAgent
+	}
+
 	fmt.Printf("🤖 Processing...\n")
 	switch Flags.Action {
-	case "ask":
+	case "qa":
 		DebugLog(fmt.Sprintf("Entering ask-ans agent; Inter: %v\n", Flags.Multi))
 		if err := agent.AskQuestion(ctx, llm_client, cfg, user_input, Flags.Multi); err != nil {
 			fmt.Errorf("Error in asking agent: %v\n", err)
