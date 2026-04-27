@@ -134,7 +134,8 @@ pai -a qa "explain Go goroutines in one sentence"
 
 ## 🛣️ Todo
 - [x] User-friendly TUI/CLI packages
-- [ ] Multi-turn chat/tasks support
+- [x] Multi-turn chat in QA mode
+- [x] DevOps agent for multi-turn tasks 
 - [ ] MCP, tools, and skills integration
 - [ ] Local database
 - [ ] DevOps enhancements (e.g., learning and invoking CLI tools with RAG/fuzzy search)

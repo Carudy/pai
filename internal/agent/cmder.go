@@ -8,6 +8,7 @@ import (
 	anyllm "github.com/mozilla-ai/any-llm-go"
 
 	"pai/internal/config"
+	"pai/internal/ui"
 )
 
 type CmdResult struct {
@@ -16,7 +17,9 @@ type CmdResult struct {
 }
 
 func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) (*CmdResult, error) {
-	fmt.Printf("🤖 Thinking about cmd...\n")
+	fmt.Printf("%s %s\n",
+		ui.Styles["TagSystem"].Render("[Sys]"),
+		ui.Styles["Subdued"].Render("Generating command..."))
 
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["cmd"], "cmd")
 	var history = []anyllm.Message{

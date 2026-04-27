@@ -18,7 +18,11 @@ func local_logger(_type string, outio io.Writer) func(format string, a ...any) {
 	if _type == "Debug" {
 		return func(format string, a ...any) {
 			if Flags.Debug {
-				fmt.Fprintf(outio, ui.Styles["Debug"].Render(format), a...)
+				msg := fmt.Sprintf(format, a...)
+				trimmed := strings.TrimRight(msg, "\n")
+				fmt.Fprint(outio, ui.Styles["Debug"].Render(trimmed))
+				// Restore trailing newlines that were stripped for clean rendering.
+				fmt.Fprint(outio, "\n")
 			}
 		}
 	}
@@ -30,7 +34,10 @@ func local_logger(_type string, outio io.Writer) func(format string, a ...any) {
 	}
 
 	return func(format string, a ...any) {
-		fmt.Fprintf(outio, ui.Styles[_type].Render(format), a...)
+		msg := fmt.Sprintf(format, a...)
+		trimmed := strings.TrimRight(msg, "\n")
+		fmt.Fprint(outio, ui.Styles[_type].Render(trimmed))
+		fmt.Fprint(outio, "\n")
 	}
 }
 
@@ -95,21 +102,22 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 			return 1
 		}
 
-		fmt.Fprintf(stdout, "%s\n", ui.Styles["Title"].Render("💡 Comment:"))
-		fmt.Fprintf(stdout, "\t%s\n", ui.Styles["Info"].Render(result.Comment))
-		fmt.Fprintf(stdout, "%s\n", ui.Styles["Title"].Render("💻 Command:"))
-		fmt.Fprintf(stdout, "\t%s\n", ui.Styles["Cmd"].Render(result.Cmd))
+		fmt.Fprintf(stdout, "%s %s\n", ui.Styles["TagExec"].Render("[Exec]"), ui.Styles["Info"].Render(result.Comment))
+		fmt.Fprintf(stdout, "%s %s\n", ui.Styles["TagExec"].Render("[Exec]"), ui.Styles["Cmd"].Render(result.Cmd))
 
 		output, execErr := tool.ExecuteCommand(os.Stdout, result.Cmd, true)
 		if execErr != nil {
-			fmt.Fprintf(stdout, "%s\n", ui.Styles["Warn"].Render("⚠️  Command failed."))
+			fmt.Fprintf(stdout, "%s %s\n", ui.Styles["TagSystem"].Render("[Sys]"), ui.Styles["Warn"].Render("Command failed"))
+			if output != "" {
+				fmt.Fprintf(stdout, "%s\n%s\n", ui.Styles["TagResult"].Render("[Res]"), ui.Styles["Warn"].Render(output))
+			}
 			return 1
 		}
 		if output != "[user cancelled execution]" {
-			fmt.Fprintf(stdout, "%s\n", ui.Styles["Success"].Render("✅ Command succeeded."))
-			fmt.Fprintf(stdout, "Exec Res:\n%s\n", ui.Styles["Cmd"].Render(output))
+			fmt.Fprintf(stdout, "%s %s\n", ui.Styles["TagSystem"].Render("[Sys]"), ui.Styles["Success"].Render("Command succeeded"))
+			fmt.Fprintf(stdout, "%s\n%s\n", ui.Styles["TagResult"].Render("[Res]"), ui.Styles["Cmd"].Render(output))
 		} else {
-			fmt.Fprintf(stdout, "%s\n", ui.Styles["Info"].Render("Execution aborted."))
+			fmt.Fprintf(stdout, "%s %s\n", ui.Styles["TagSystem"].Render("[Sys]"), ui.Styles["Subdued"].Render("Skipped"))
 		}
 
 		return 0

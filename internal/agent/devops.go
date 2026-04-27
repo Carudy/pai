@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	anyllm "github.com/mozilla-ai/any-llm-go"
 
@@ -13,10 +14,53 @@ import (
 	"pai/internal/ui"
 )
 
+// maxHistoryBytes caps the cumulative history payload sent to the LLM.
+// When exceeded, older messages (beyond the first N) are dropped to keep
+// requests fast and within context windows.
+const maxHistoryBytes = 32_000
+
 type DevOpsRes struct {
 	Action  string `json:"action"`
 	Result  string `json:"result"`
 	Comment string `json:"comment"`
+}
+
+// trimHistory removes old messages when the total content exceeds
+// maxHistoryBytes, always keeping the system prompt and the most recent
+// messages.
+func trimHistory(history []anyllm.Message) []anyllm.Message {
+	contentLen := func(v any) int {
+		if s, ok := v.(string); ok {
+			return len(s)
+		}
+		return 0
+	}
+
+	total := 0
+	for _, m := range history {
+		total += contentLen(m.Content)
+	}
+	if total <= maxHistoryBytes {
+		return history
+	}
+
+	// Always keep index 0 (system prompt).
+	// Walk from the end forward to find how many fit.
+	keep := 1 // system
+	accum := contentLen(history[0].Content)
+	for i := len(history) - 1; i > 0 && accum < maxHistoryBytes; i-- {
+		accum += contentLen(history[i].Content)
+		keep++
+	}
+	// keep is now the count of trailing messages we want.
+	start := len(history) - (keep - 1) // minus the system message already counted
+	if start < 1 {
+		start = 1
+	}
+	trimmed := make([]anyllm.Message, 0, 1+keep)
+	trimmed = append(trimmed, history[0])
+	trimmed = append(trimmed, history[start:]...)
+	return trimmed
 }
 
 func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error {
@@ -33,13 +77,25 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 	// main loop
 	for {
 		if iterations >= maxIterations {
-			fmt.Printf("%s\n", ui.Styles["Warn"].Render("⚠️  Reached maximum iteration limit. Stopping."))
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagSystem"].Render("[Sys]"),
+				ui.Styles["Warn"].Render("Reached maximum iteration limit. Stopping."))
 			return nil
 		}
 		iterations++
 
+		// ── Turn separator ─────────────────────────────────────────────
+		if iterations > 1 {
+			fmt.Printf("%s\n", ui.Styles["Separator"].Render(strings.Repeat("─", 40)))
+		}
+
 		// ── 1. Get the LLM's decision ──────────────────────────────────
-		fmt.Printf("🤖 Processing...\n")
+		fmt.Printf("%s %s\n",
+			ui.Styles["TagSystem"].Render("[Sys]"),
+			ui.Styles["Subdued"].Render("Thinking..."))
+
+		// history = trimHistory(history)
+
 		content, newHistory, err := chat(ctx, cfg, cfg.Clients["devops"], history)
 		if err != nil {
 			return err
@@ -58,25 +114,29 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 
 		// ── 2. Show the agent's reasoning ──────────────────────────────
 		if dec.Comment != "" {
-			fmt.Printf("💭 %s\n", ui.Styles["Info"].Render(dec.Comment))
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagAgent"].Render("[PAI]"),
+				ui.Styles["Info"].Render(dec.Comment))
 		}
 
 		// ── 3. Execute the decision ────────────────────────────────────
 		switch dec.Action {
 		case "done":
-			fmt.Printf("%s %s\n",
-				ui.Styles["Success"].Render("✅ Done:"),
-				ui.Styles["Info"].Render(dec.Result))
+			fmt.Printf("\n%s %s\n",
+				ui.Styles["TagAgent"].Render("[PAI]"),
+				ui.Styles["Success"].Render(dec.Result))
 			return nil
 
 		case "giveup":
-			fmt.Printf("%s %s\n",
-				ui.Styles["Warn"].Render("⚠️  Giving up:"),
-				ui.Styles["Info"].Render(dec.Result))
+			fmt.Printf("\n%s %s\n",
+				ui.Styles["TagAgent"].Render("[PAI]"),
+				ui.Styles["Warn"].Render(dec.Result))
 			return nil
 
 		case "info":
-			fmt.Printf("ℹ️  %s\n", ui.Styles["Content"].Render(dec.Result))
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagAgent"].Render("[PAI]"),
+				ui.Styles["Content"].Render(dec.Result))
 
 		case "cmd":
 			cmdRes, err := GenCMD(ctx, cfg, dec.Result)
@@ -84,18 +144,38 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 				return fmt.Errorf("devops → cmd generation failed: %w", err)
 			}
 
-			fmt.Printf("%s\n", ui.Styles["Title"].Render("💡 Agent wants to execute command:"))
-			fmt.Printf("    💬 %s\n", ui.Styles["Info"].Render(cmdRes.Comment))
-			fmt.Printf("    $ %s\n", ui.Styles["Cmd"].Render(cmdRes.Cmd))
+			// [Exec] lines use a subdued warm-gray for the comment
+			// and yellow for the command itself.
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagExec"].Render("[Exec]"),
+				ui.Styles["Subdued"].Render(cmdRes.Comment))
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagExec"].Render("[Exec]"),
+				ui.Styles["Cmd"].Render(cmdRes.Cmd))
 
 			output, execErr := tool.ExecuteCommand(os.Stdout, cmdRes.Cmd, true)
 			if execErr != nil {
-				fmt.Printf("%s\n", ui.Styles["Warn"].Render("⚠️  Command failed."))
+				fmt.Printf("%s %s\n",
+					ui.Styles["TagSystem"].Render("[Sys]"),
+					ui.Styles["Warn"].Render("Command failed"))
+				if output != "" {
+					fmt.Printf("%s\n%s\n",
+						ui.Styles["TagResult"].Render("[Res]"),
+						ui.Styles["Warn"].Render(output))
+				}
 			} else if output == "[user cancelled execution]" {
-				fmt.Printf("%s\n", ui.Styles["Info"].Render("Execution skipped by user."))
+				fmt.Printf("%s %s\n",
+					ui.Styles["TagSystem"].Render("[Sys]"),
+					ui.Styles["Subdued"].Render("Skipped"))
 			} else {
-				fmt.Printf("%s\n", ui.Styles["Success"].Render("✅ Command succeeded."))
-				fmt.Printf("📄 Output:\n%s\n", ui.Styles["Cmd"].Render(output))
+				fmt.Printf("%s %s\n",
+					ui.Styles["TagSystem"].Render("[Sys]"),
+					ui.Styles["Success"].Render("Command succeeded"))
+				if output != "" {
+					fmt.Printf("%s\n%s\n",
+						ui.Styles["TagResult"].Render("[Res]"),
+						ui.Styles["Cmd"].Render(output))
+				}
 			}
 
 			observation := fmt.Sprintf(
@@ -109,8 +189,8 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 
 		case "ask":
 			fmt.Printf("%s %s\n",
-				ui.Styles["Warn"].Render("🤔 Agent asks:"),
-				ui.Styles["Content"].Render(dec.Result))
+				ui.Styles["TagAgent"].Render("[PAI]"),
+				ui.Styles["Warn"].Render(dec.Result))
 
 			answer, err := ui.GetUserTextInput("Your answer:")
 			if err != nil {

@@ -13,7 +13,9 @@ import (
 func QA(ctx context.Context, cfg *config.UserConfig,
 	user_input string, multi_turn bool) error {
 
-	fmt.Printf("🤖 Thinking...\n")
+	fmt.Printf("%s %s\n",
+		ui.Styles["TagSystem"].Render("[Sys]"),
+		ui.Styles["Subdued"].Render("Thinking..."))
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
 
 	var history = []anyllm.Message{
