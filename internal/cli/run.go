@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"pai/internal/agent"
@@ -38,7 +39,6 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 
 	DebugLog := local_logger("Debug", stdout)
 	ErrorLog := local_logger("Error", stdout)
-	NormalLog := local_logger("Normal", stdout)
 
 	DebugLog("📃 User Flags: %v\n", Flags)
 	DebugLog("🔧 Loading configuration...\n")
@@ -69,7 +69,6 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 	}
 	DebugLog("💬 User input: %s...\n", user_input)
 
-	NormalLog("🤖 Processing...\n")
 	switch cfg.DefaultAgent {
 	case "qa":
 		DebugLog("Entering ask-ans agent; Inter: %v\n", Flags.Multi)
@@ -79,7 +78,17 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 		}
 		return 0
 
+	case "devops":
+		DebugLog("Entering devops agent\n")
+		cfg.Clients["cmd"] = cfg.Clients["devops"]
+		if err := agent.DevOps(ctx, cfg, user_input); err != nil {
+			ErrorLog("Error in devops agent: %v\n", err)
+			return 1
+		}
+		return 0
+
 	case "cmd":
+		DebugLog("Entering cmd-gen agent\n")
 		result, err := agent.GenCMD(ctx, cfg, user_input)
 		if err != nil {
 			ErrorLog("Error generating command: %v\n", err)
@@ -91,26 +100,16 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 		fmt.Fprintf(stdout, "%s\n", ui.Styles["Title"].Render("💻 Command:"))
 		fmt.Fprintf(stdout, "\t%s\n", ui.Styles["Cmd"].Render(result.Cmd))
 
-		exe_res, err := ui.GetUserSelected("Execute the command ?", []string{"Yes", "No"})
-		if err != nil {
-			ErrorLog("Error while interacting with user: %v\n", err)
+		output, execErr := tool.ExecuteCommand(os.Stdout, result.Cmd, true)
+		if execErr != nil {
+			fmt.Fprintf(stdout, "%s\n", ui.Styles["Warn"].Render("⚠️  Command failed."))
 			return 1
 		}
-
-		if exe_res == "No" {
-			NormalLog("Execution cancelled.\n")
-			return 0
-		} else if exe_res == "Yes" {
-			output, err := tool.ExecuteCommand(stdout, result.Cmd)
-			if err != nil {
-				ErrorLog("Execution failed: %v\nOutput: %s\n", err, string(output))
-				return 1
-			}
-			fmt.Fprintf(stdout, "%s\n", ui.Styles["Success"].Render("Executed successfully."))
-			NormalLog("%s\n", output)
+		if output != "[user cancelled execution]" {
+			fmt.Fprintf(stdout, "%s\n", ui.Styles["Success"].Render("✅ Command succeeded."))
+			fmt.Fprintf(stdout, "Exec Res:\n%s\n", ui.Styles["Cmd"].Render(output))
 		} else {
-			NormalLog("Aborted.\n")
-			return 0
+			fmt.Fprintf(stdout, "%s\n", ui.Styles["Info"].Render("Execution aborted."))
 		}
 
 		return 0

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	anyllm "github.com/mozilla-ai/any-llm-go"
 
@@ -16,17 +15,8 @@ type CmdResult struct {
 	Comment string `json:"comment"`
 }
 
-func extractJSON(content string) (string, error) {
-	// Robust extraction: find the first '{' and last '}'
-	start := strings.Index(content, "{")
-	end := strings.LastIndex(content, "}")
-	if start == -1 || end == -1 || end < start {
-		return "", fmt.Errorf("no JSON found in AI response")
-	}
-	return content[start : end+1], nil
-}
-
 func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) (*CmdResult, error) {
+	fmt.Printf("🤖 Thinking about cmd...\n")
 
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["cmd"], "cmd")
 	var history = []anyllm.Message{
@@ -39,7 +29,7 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) (*Cm
 		return nil, err
 	}
 
-	jsonStr, err := extractJSON(content)
+	jsonStr, err := ExtractJSON(content)
 	if err != nil {
 		return nil, fmt.Errorf("AI format error: %s", content)
 	}

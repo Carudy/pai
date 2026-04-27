@@ -13,6 +13,7 @@ import (
 func QA(ctx context.Context, cfg *config.UserConfig,
 	user_input string, multi_turn bool) error {
 
+	fmt.Printf("🤖 Thinking...\n")
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
 
 	var history = []anyllm.Message{
