@@ -62,12 +62,12 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 	DebugLog("🔧 User config: %v\n", cfg)
 	DebugLog("🔌 Connecting to %s...\n", cfg.DefaultModel)
 
-	llm_client, err := llm.CreateClient(cfg)
+	llm_client, err := llm.CreateClient(cfg.Provider, cfg.APIKeys[cfg.Provider], cfg.Model, cfg.Reasoning)
 	if err != nil {
 		ErrorLog("Error creating LLM client: %v\n", err)
 		return 1
 	}
-	cfg.Clients[cfg.DefaultAgent] = &llm_client
+	cfg.Clients[cfg.DefaultAgent] = llm_client
 
 	user_input := strings.TrimSpace(Flags.Input)
 	if user_input == "" && !Flags.Multi {

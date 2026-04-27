@@ -15,6 +15,8 @@ An ultra-lightweight, module-decoupled, highly customizable CLI tool that levera
 - **Interactive Command Execution**: Safe command generation with user confirmation
 - **Multi-turn Chat UI**: Full bubbletea TUI for interactive QA sessions (scrollable, word-wrapped)
 - **Context-Aware**: Automatically detects OS, shell, working directory, and timestamp for better LLM responses
+- **Streaming Output**: Optional token-by-token streaming when supported by the LLM provider — set `streaming: true` in config
+- **Reasoning/Thinking Mode**: Optional `reasoning: true` enables LLM thinking output — shown with `🤔` prefix during thinking, then a separator before the final response (works with or without streaming). For DeepSeek, injects the `thinking` toggle + `reasoning_effort: high` to explicitly enable thinking; for OpenAI, passes `reasoning_effort: high`.
 - **Flexible Configuration**: Environment variables or YAML config for easy setup
 
 ## 📦 Installation
@@ -53,7 +55,8 @@ api_keys:
 
 default_model: "deepseek:deepseek-chat"
 default_agent: "cmd"   # can be "cmd", "qa", or "devops"
-streaming: true        # enable token-by-token streaming output (default: false) streaming will make user see full output instead of proceessed
+streaming: true        # token-by-token streaming (default: false)
+reasoning: true        # enable thinking/reasoning mode (default: false)
 
 # Optional: override default prompts per agent
 # Currently not suggested for "devops", for may corrupt built-in logic

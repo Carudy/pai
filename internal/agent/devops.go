@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	"pai/internal/llm"
 
 	"pai/internal/config"
 	"pai/internal/tool"
@@ -28,7 +28,7 @@ type DevOpsRes struct {
 // trimHistory removes old messages when the total content exceeds
 // maxHistoryBytes, always keeping the system prompt and the most recent
 // messages.
-func trimHistory(history []anyllm.Message) []anyllm.Message {
+func trimHistory(history []llm.Message) []llm.Message {
 	contentLen := func(v any) int {
 		if s, ok := v.(string); ok {
 			return len(s)
@@ -57,7 +57,7 @@ func trimHistory(history []anyllm.Message) []anyllm.Message {
 	if start < 1 {
 		start = 1
 	}
-	trimmed := make([]anyllm.Message, 0, 1+keep)
+	trimmed := make([]llm.Message, 0, 1+keep)
 	trimmed = append(trimmed, history[0])
 	trimmed = append(trimmed, history[start:]...)
 	return trimmed
@@ -66,9 +66,9 @@ func trimHistory(history []anyllm.Message) []anyllm.Message {
 func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	sysPrompt := BuildAgentPrompt(cfg.Prompts["devops"], "devops")
 
-	history := []anyllm.Message{
-		{Role: anyllm.RoleSystem, Content: sysPrompt},
-		{Role: anyllm.RoleUser, Content: userInput},
+	history := []llm.Message{
+		{Role: llm.RoleSystem, Content: sysPrompt},
+		{Role: llm.RoleUser, Content: userInput},
 	}
 
 	iterations := 0
@@ -92,7 +92,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		// ── 1. Get the LLM's decision ──────────────────────────────────
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagSystem"].Render("[Sys]"),
-			ui.Styles["Subdued"].Render("Thinking..."))
+			ui.Styles["Subdued"].Render("Processing..."))
 
 		// history = trimHistory(history)
 
@@ -182,8 +182,8 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 				"COMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
 				cmdRes.Cmd, execErr, TruncateOutput(output, 2000),
 			)
-			history = append(history, anyllm.Message{
-				Role:    anyllm.RoleUser,
+			history = append(history, llm.Message{
+				Role:    llm.RoleUser,
 				Content: "[cmd result]\n" + observation,
 			})
 
@@ -199,8 +199,8 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			if answer == "" {
 				answer = "[user cancelled / no answer]"
 			}
-			history = append(history, anyllm.Message{
-				Role:    anyllm.RoleUser,
+			history = append(history, llm.Message{
+				Role:    llm.RoleUser,
 				Content: "[user answer]\n" + answer,
 			})
 

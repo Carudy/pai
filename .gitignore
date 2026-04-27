@@ -30,3 +30,6 @@ Thumbs.db
 *.tmp
 
 pai
+
+# Vendor directory (not used; dependencies resolved from module cache)
+vendor/

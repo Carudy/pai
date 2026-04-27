@@ -1,33 +1,77 @@
 package llm
 
-import (
-	"fmt"
+import "fmt"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
-	"github.com/mozilla-ai/any-llm-go/providers/anthropic"
-	"github.com/mozilla-ai/any-llm-go/providers/deepseek"
-	"github.com/mozilla-ai/any-llm-go/providers/mistral"
-	"github.com/mozilla-ai/any-llm-go/providers/openai"
+// ProviderConfig holds common configuration for creating a provider.
+type ProviderConfig struct {
+	APIKey    string
+	Model     string
+	BaseURL   string
+	Reasoning bool
+}
 
-	"pai/internal/config"
-)
-
-func CreateClient(cfg *config.UserConfig) (anyllm.Provider, error) {
-	apiKey, ok := cfg.APIKeys[cfg.Provider]
-	if !ok {
-		return nil, fmt.Errorf("API key for provider %s not found", cfg.Provider)
+// NewDeepSeekProvider creates a new DeepSeek provider.
+func NewDeepSeekProvider(cfg ProviderConfig) Provider {
+	baseURL := cfg.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.deepseek.com"
 	}
+	return &deepSeekProvider{
+		apiKey:    cfg.APIKey,
+		model:     cfg.Model,
+		baseURL:   baseURL,
+		reasoning: cfg.Reasoning,
+	}
+}
 
-	switch cfg.Provider {
+// NewMistralProvider creates a new Mistral provider.
+func NewMistralProvider(cfg ProviderConfig) Provider {
+	baseURL := cfg.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.mistral.ai"
+	}
+	return &mistralProvider{
+		apiKey:  cfg.APIKey,
+		model:   cfg.Model,
+		baseURL: baseURL,
+	}
+}
+
+// NewOpenAIProvider creates a new OpenAI provider.
+func NewOpenAIProvider(cfg ProviderConfig) Provider {
+	baseURL := cfg.BaseURL
+	if baseURL == "" {
+		baseURL = "https://api.openai.com"
+	}
+	return &openaiProvider{
+		apiKey:    cfg.APIKey,
+		model:     cfg.Model,
+		baseURL:   baseURL,
+		reasoning: cfg.Reasoning,
+	}
+}
+
+// CreateClient creates the appropriate Provider based on provider name.
+func CreateClient(providerName string, apiKey string, model string, reasoning bool) (Provider, error) {
+	switch providerName {
 	case "openai":
-		return openai.New(anyllm.WithAPIKey(apiKey))
-	case "anthropic":
-		return anthropic.New(anyllm.WithAPIKey(apiKey))
+		return NewOpenAIProvider(ProviderConfig{
+			APIKey:    apiKey,
+			Model:     model,
+			Reasoning: reasoning,
+		}), nil
 	case "deepseek":
-		return deepseek.New(anyllm.WithAPIKey(apiKey))
+		return NewDeepSeekProvider(ProviderConfig{
+			APIKey:    apiKey,
+			Model:     model,
+			Reasoning: reasoning,
+		}), nil
 	case "mistral":
-		return mistral.New(anyllm.WithAPIKey(apiKey))
+		return NewMistralProvider(ProviderConfig{
+			APIKey: apiKey,
+			Model:  model,
+		}), nil
 	default:
-		return nil, fmt.Errorf("unsupported provider: %s", cfg.Provider)
+		return nil, fmt.Errorf("unsupported provider: %s", providerName)
 	}
 }

@@ -27,7 +27,7 @@ var Styles = map[string]lipgloss.Style{
 	"Help": lipgloss.NewStyle().PaddingLeft(0).Foreground(lipgloss.Color("240")).Italic(true),
 	"Subdued": lipgloss.NewStyle().
 		PaddingLeft(0).
-		Foreground(lipgloss.Color("243")),
+		Foreground(lipgloss.Color("#ABFAE1")),
 	"Separator": lipgloss.NewStyle().
 		PaddingLeft(0).
 		Foreground(lipgloss.Color("236")),
@@ -46,11 +46,17 @@ var Styles = map[string]lipgloss.Style{
 		Foreground(lipgloss.Color("78")).Bold(true),
 	"TagExec": lipgloss.NewStyle().
 		PaddingLeft(0).
-		Foreground(lipgloss.Color("215")).Bold(true),
+		Foreground(lipgloss.Color("#05AB6A")).Bold(true),
 	"TagUser": lipgloss.NewStyle().
 		PaddingLeft(0).
 		Foreground(lipgloss.Color("147")).Bold(true),
 	"TagResult": lipgloss.NewStyle().
 		PaddingLeft(0).
 		Foreground(lipgloss.Color("222")).Bold(true),
+
+	// Reasoning style for thinking/reasoning content (warm amber, italic)
+	"Reasoning": lipgloss.NewStyle().
+		PaddingLeft(0).
+		Foreground(lipgloss.Color("172")).
+		Italic(true),
 }

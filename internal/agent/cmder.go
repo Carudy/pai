@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	"pai/internal/llm"
 
 	"pai/internal/config"
 	"pai/internal/ui"
@@ -22,9 +22,9 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) (*Cm
 		ui.Styles["Subdued"].Render("Generating command..."))
 
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["cmd"], "cmd")
-	var history = []anyllm.Message{
-		{Role: anyllm.RoleSystem, Content: sys_prompt},
-		{Role: anyllm.RoleUser, Content: user_input},
+	var history = []llm.Message{
+		{Role: llm.RoleSystem, Content: sys_prompt},
+		{Role: llm.RoleUser, Content: user_input},
 	}
 
 	content, _, err := chatStdout(ctx, cfg, cfg.Clients["cmd"], history)

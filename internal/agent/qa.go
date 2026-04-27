@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	"pai/internal/llm"
 
 	"pai/internal/config"
 	"pai/internal/ui"
@@ -20,9 +20,9 @@ func QA(ctx context.Context, cfg *config.UserConfig,
 		ui.Styles["Subdued"].Render("Thinking..."))
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
 
-	var history = []anyllm.Message{
-		{Role: anyllm.RoleSystem, Content: sys_prompt},
-		{Role: anyllm.RoleUser, Content: user_input},
+	var history = []llm.Message{
+		{Role: llm.RoleSystem, Content: sys_prompt},
+		{Role: llm.RoleUser, Content: user_input},
 	}
 
 	// One-turn mode
@@ -64,7 +64,7 @@ func QA(ctx context.Context, cfg *config.UserConfig,
 
 	chatFunc := func(input string) (string, error) {
 		resp, newHistory, err := chat(ctx, cfg, cfg.Clients["qa"],
-			append(history, anyllm.Message{Role: anyllm.RoleUser, Content: input}))
+			append(history, llm.Message{Role: llm.RoleUser, Content: input}))
 		if err != nil {
 			return "", err
 		}

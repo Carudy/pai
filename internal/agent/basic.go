@@ -7,36 +7,65 @@ import (
 	"os"
 	"strings"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	"pai/internal/llm"
 
 	"pai/internal/config"
+	"pai/internal/ui"
 )
 
-// chatStreamWriter performs streaming completion and writes each token to w.
-// If w is nil, tokens are silently collected without printing to the terminal.
-// Returns the full content and updated history, following the same contract as chat().
+// chatStreamWriter performs streaming completion. Each content token is
+// written to w (if non-nil). When cfg.Reasoning is true, reasoning tokens
+// are displayed with a "🤔" prefix and the Reasoning style, followed by a
+// separator when the visible response begins.
+//
+// Returns the accumulated visible content and the updated message history.
 func chatStreamWriter(ctx context.Context, cfg *config.UserConfig,
-	provider *anyllm.Provider, history []anyllm.Message, w io.Writer) (string, []anyllm.Message, error) {
+	provider llm.Provider, history []llm.Message, w io.Writer) (string, []llm.Message, error) {
 
-	chunkChan, errChan := (*provider).CompletionStream(ctx, anyllm.CompletionParams{
+	params := llm.CompletionParams{
 		Model:    cfg.Model,
 		Messages: history,
 		Stream:   true,
-	})
+	}
+	if cfg.Reasoning {
+		params.ReasoningEffort = llm.ReasoningEffortHigh
+	}
+
+	chunkChan, errChan := provider.CompletionStream(ctx, params)
 
 	var fullContent strings.Builder
+	inReasoning := false
 
 	for chunk := range chunkChan {
 		for _, choice := range chunk.Choices {
+			// ── Reasoning token ─────────────────────────────────────
+			if choice.Delta.Reasoning != nil && choice.Delta.Reasoning.Content != "" {
+				if w != nil {
+					if !inReasoning {
+						fmt.Fprintf(w, "\n%s ", ui.Styles["Reasoning"].Render("🤔"))
+						inReasoning = true
+					}
+					fmt.Fprint(w, ui.Styles["Reasoning"].Render(choice.Delta.Reasoning.Content))
+				}
+			}
+
+			// ── Content token ────────────────────────────────────────
 			token := choice.Delta.Content
-			fullContent.WriteString(token)
-			if w != nil {
-				fmt.Fprint(w, token)
+			if token != "" {
+				// Transition from reasoning → content: print separator.
+				if inReasoning && w != nil {
+					fmt.Fprintf(w, "\n%s\n", ui.Styles["Separator"].Render(strings.Repeat("─", 40)))
+					inReasoning = false
+				}
+				fullContent.WriteString(token)
+				if w != nil {
+					fmt.Fprint(w, token)
+				}
 			}
 		}
 	}
 
-	// Trailing newline if we were streaming to the terminal.
+	// Trailing newline after stream ends.
 	if w != nil {
 		fmt.Fprintln(w)
 	}
@@ -47,59 +76,92 @@ func chatStreamWriter(ctx context.Context, cfg *config.UserConfig,
 	}
 
 	content := fullContent.String()
-	newHistory := append(history, anyllm.Message{Role: anyllm.RoleAssistant, Content: content})
+	newHistory := append(history, llm.Message{Role: llm.RoleAssistant, Content: content})
 	return content, newHistory, nil
 }
 
 // chat performs a chat completion. When cfg.Streaming is true and the
-// provider supports it, tokens are collected silently without printing
-// (the caller manages its own display, e.g. the TUI chat).
+// provider supports it, tokens are collected silently without any terminal
+// output (the caller manages its own display, e.g. the TUI chat).
 // Otherwise it uses the blocking Completion call.
 //
 // Returns the full response content and the updated message history.
 func chat(ctx context.Context, cfg *config.UserConfig,
-	provider *anyllm.Provider, history []anyllm.Message) (string, []anyllm.Message, error) {
+	provider llm.Provider, history []llm.Message) (string, []llm.Message, error) {
+
+	params := llm.CompletionParams{
+		Model:    cfg.Model,
+		Messages: history,
+	}
+	if cfg.Reasoning {
+		params.ReasoningEffort = llm.ReasoningEffortHigh
+	}
 
 	if cfg.Streaming {
 		return chatStreamWriter(ctx, cfg, provider, history, nil)
 	}
 
-	resp, err := (*provider).Completion(ctx, anyllm.CompletionParams{
-		Model:    cfg.Model,
-		Messages: history,
-	})
+	resp, err := provider.Completion(ctx, params)
 	if err != nil {
 		return "", nil, err
 	}
 	if len(resp.Choices) == 0 {
 		return "", nil, fmt.Errorf("no choices in response")
 	}
-	content, ok := resp.Choices[0].Message.Content.(string)
-	if !ok {
-		return "", nil, fmt.Errorf("unexpected content type: %T", resp.Choices[0].Message.Content)
-	}
+	content := resp.Choices[0].Message.Content
 
-	newHistory := append(history, anyllm.Message{Role: anyllm.RoleAssistant, Content: content})
+	newHistory := append(history, llm.Message{Role: llm.RoleAssistant, Content: content})
 	return content, newHistory, nil
 }
 
-// chatStdout is a convenience wrapper around chat that streams tokens to
-// os.Stdout in real time when cfg.Streaming is true. Use this for agents
-// that render their own structured output *after* the LLM response (cmd,
-// devops, QA single-turn). Use chat() directly when the caller manages
-// its own display (QA multi-turn TUI).
+// chatStdout is a convenience wrapper that streams tokens to os.Stdout in
+// real time when cfg.Streaming is true. For non-streaming completions it
+// still prints reasoning content (if any) so the user always sees the
+// "thinking" output.
+//
+// Use this for agents that render their own structured output *after* the
+// LLM response (cmd, devops, QA single-turn). Use chat() directly for the
+// TUI multi-turn chat which manages its own display.
 func chatStdout(ctx context.Context, cfg *config.UserConfig,
-	provider *anyllm.Provider, history []anyllm.Message) (string, []anyllm.Message, error) {
+	provider llm.Provider, history []llm.Message) (string, []llm.Message, error) {
 
+	params := llm.CompletionParams{
+		Model:    cfg.Model,
+		Messages: history,
+	}
+	if cfg.Reasoning {
+		params.ReasoningEffort = llm.ReasoningEffortHigh
+	}
+
+	// Streaming path — chatStreamWriter handles reasoning display inline.
 	if cfg.Streaming {
 		return chatStreamWriter(ctx, cfg, provider, history, os.Stdout)
 	}
-	return chat(ctx, cfg, provider, history)
+
+	// Blocking path — do the call directly so we can inspect reasoning.
+	resp, err := provider.Completion(ctx, params)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(resp.Choices) == 0 {
+		return "", nil, fmt.Errorf("no choices in response")
+	}
+	content := resp.Choices[0].Message.Content
+
+	// Print reasoning content (non-streaming, so it arrives in one block).
+	if cfg.Reasoning && resp.Choices[0].Reasoning != nil && resp.Choices[0].Reasoning.Content != "" {
+		fmt.Fprintf(os.Stdout, "\n%s %s\n\n",
+			ui.Styles["Reasoning"].Render("🤔"),
+			ui.Styles["Reasoning"].Render(resp.Choices[0].Reasoning.Content))
+	}
+
+	newHistory := append(history, llm.Message{Role: llm.RoleAssistant, Content: content})
+	return content, newHistory, nil
 }
 
 // ExtractJSON finds the first '{' and last '}' in content and returns the
-// substring between them. This is used to extract a JSON object from an
-// LLM response that may include surrounding commentary.
+// substring between them. Used to extract a JSON object from an LLM response
+// that may include surrounding commentary.
 func ExtractJSON(content string) (string, error) {
 	start := strings.Index(content, "{")
 	end := strings.LastIndex(content, "}")

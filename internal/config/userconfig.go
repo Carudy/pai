@@ -8,7 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	anyllm "github.com/mozilla-ai/any-llm-go"
+	"pai/internal/llm"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,10 +21,11 @@ type UserConfig struct {
 	DefaultAgent string            `yaml:"default_agent"`
 	Prompts      map[string]string `yaml:"prompts"`
 	Streaming    bool              `yaml:"streaming"`
+	Reasoning    bool              `yaml:"reasoning"`
 
 	Provider string
 	Model    string
-	Clients  map[string]*anyllm.Provider
+	Clients  map[string]llm.Provider
 }
 
 func LoadUserConfig() (*UserConfig, error) {
@@ -62,9 +64,10 @@ func defaultConfig() *UserConfig {
 		DefaultModel: "deepseek:deepseek-v4-flash",
 		DefaultAgent: "devops",
 		Streaming:    false,
+		Reasoning:    false,
 		APIKeys:      make(map[string]string),
 		Prompts:      make(map[string]string),
-		Clients:      make(map[string]*anyllm.Provider),
+		Clients:      make(map[string]llm.Provider),
 	}
 }
 
