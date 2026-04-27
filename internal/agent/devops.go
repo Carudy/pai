@@ -79,7 +79,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		if iterations >= maxIterations {
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagSystem"].Render("[Sys]"),
-				ui.Styles["Warn"].Render("Reached maximum iteration limit. Stopping."))
+				ui.Styles["Warn"].Render("⚠️ Reached maximum iteration limit. Stopping."))
 			return nil
 		}
 		iterations++
@@ -90,13 +90,9 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		}
 
 		// ── 1. Get the LLM's decision ──────────────────────────────────
-		fmt.Printf("%s %s\n",
-			ui.Styles["TagSystem"].Render("[Sys]"),
-			ui.Styles["Subdued"].Render("Processing..."))
+		stop := ui.ShowSpinner("🤔", "Processing...")
 
-		// history = trimHistory(history)
-
-		content, newHistory, err := chatStdout(ctx, cfg, cfg.Clients["devops"], history)
+		content, newHistory, err := chatStdout(ctx, cfg, cfg.Clients["devops"], history, stop, false)
 		if err != nil {
 			return err
 		}
@@ -122,19 +118,19 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		// ── 3. Execute the decision ────────────────────────────────────
 		switch dec.Action {
 		case "done":
-			fmt.Printf("\n%s %s\n",
+			fmt.Printf("\n%s ✅ %s\n",
 				ui.Styles["TagAgent"].Render("[PAI]"),
 				ui.Styles["Success"].Render(dec.Result))
 			return nil
 
 		case "giveup":
-			fmt.Printf("\n%s %s\n",
+			fmt.Printf("\n%s 💔 %s\n",
 				ui.Styles["TagAgent"].Render("[PAI]"),
 				ui.Styles["Warn"].Render(dec.Result))
 			return nil
 
 		case "info":
-			fmt.Printf("%s %s\n",
+			fmt.Printf("%s ℹ️ %s\n",
 				ui.Styles["TagAgent"].Render("[PAI]"),
 				ui.Styles["Content"].Render(dec.Result))
 
@@ -155,7 +151,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 
 			output, execErr := tool.ExecuteCommand(os.Stdout, cmdRes.Cmd, true)
 			if execErr != nil {
-				fmt.Printf("%s %s\n",
+				fmt.Printf("%s ❌ %s\n",
 					ui.Styles["TagSystem"].Render("[Sys]"),
 					ui.Styles["Warn"].Render("Command failed"))
 				if output != "" {
@@ -164,11 +160,11 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 						ui.Styles["Warn"].Render(output))
 				}
 			} else if output == "[user cancelled execution]" {
-				fmt.Printf("%s %s\n",
+				fmt.Printf("%s ⏭️ %s\n",
 					ui.Styles["TagSystem"].Render("[Sys]"),
 					ui.Styles["Subdued"].Render("Skipped"))
 			} else {
-				fmt.Printf("%s %s\n",
+				fmt.Printf("%s ✅ %s\n",
 					ui.Styles["TagSystem"].Render("[Sys]"),
 					ui.Styles["Success"].Render("Command succeeded"))
 				if output != "" {
@@ -188,7 +184,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			})
 
 		case "ask":
-			fmt.Printf("%s %s\n",
+			fmt.Printf("%s ❓ %s\n",
 				ui.Styles["TagAgent"].Render("[PAI]"),
 				ui.Styles["Warn"].Render(dec.Result))
 

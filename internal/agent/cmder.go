@@ -17,9 +17,7 @@ type CmdResult struct {
 }
 
 func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) (*CmdResult, error) {
-	fmt.Printf("%s %s\n",
-		ui.Styles["TagSystem"].Render("[Sys]"),
-		ui.Styles["Subdued"].Render("Generating command..."))
+	stop := ui.ShowSpinner("⚙️", "Generating command...")
 
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["cmd"], "cmd")
 	var history = []llm.Message{
@@ -27,7 +25,7 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) (*Cm
 		{Role: llm.RoleUser, Content: user_input},
 	}
 
-	content, _, err := chatStdout(ctx, cfg, cfg.Clients["cmd"], history)
+	content, _, err := chatStdout(ctx, cfg, cfg.Clients["cmd"], history, stop, false)
 	if err != nil {
 		return nil, err
 	}

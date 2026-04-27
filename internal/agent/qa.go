@@ -15,9 +15,6 @@ import (
 func QA(ctx context.Context, cfg *config.UserConfig,
 	user_input string, multi_turn bool) error {
 
-	fmt.Printf("%s %s\n",
-		ui.Styles["TagSystem"].Render("[Sys]"),
-		ui.Styles["Subdued"].Render("Thinking..."))
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
 
 	var history = []llm.Message{
@@ -27,19 +24,15 @@ func QA(ctx context.Context, cfg *config.UserConfig,
 
 	// One-turn mode
 	if !multi_turn {
-		resp, _, err := chatStdout(ctx, cfg, cfg.Clients["qa"], history)
+		stop := ui.ShowSpinner("🧠", "Thinking...")
+
+		resp, _, err := chatStdout(ctx, cfg, cfg.Clients["qa"], history, stop, true)
 		if err != nil {
 			return err
 		}
-		// In streaming mode the tokens already appeared on the terminal,
-		// so we just show a lightweight label.
-		// In non-streaming mode the response hasn't been shown yet.
-		if cfg.Streaming {
-			fmt.Printf("%s %s\n",
-				ui.Styles["TagSystem"].Render("[Sys]"),
-				ui.Styles["Subdued"].Render("Done"))
-		} else {
-			fmt.Printf("💡 Answer:\n")
+
+		if !cfg.Streaming {
+			// Non-streaming: the response hasn't been shown yet.
 			fmt.Print(ui.Styles["Cmd"].Render(resp))
 			fmt.Println()
 		}
