@@ -96,7 +96,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 
 		// history = trimHistory(history)
 
-		content, newHistory, err := chat(ctx, cfg, cfg.Clients["devops"], history)
+		content, newHistory, err := chatStdout(ctx, cfg, cfg.Clients["devops"], history)
 		if err != nil {
 			return err
 		}

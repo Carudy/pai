@@ -27,7 +27,7 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) (*Cm
 		{Role: anyllm.RoleUser, Content: user_input},
 	}
 
-	content, _, err := chat(ctx, cfg, cfg.Clients["cmd"], history)
+	content, _, err := chatStdout(ctx, cfg, cfg.Clients["cmd"], history)
 	if err != nil {
 		return nil, err
 	}

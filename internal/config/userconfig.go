@@ -19,6 +19,7 @@ type UserConfig struct {
 	DefaultModel string            `yaml:"default_model"`
 	DefaultAgent string            `yaml:"default_agent"`
 	Prompts      map[string]string `yaml:"prompts"`
+	Streaming    bool              `yaml:"streaming"`
 
 	Provider string
 	Model    string
@@ -59,7 +60,8 @@ func LoadUserConfig() (*UserConfig, error) {
 func defaultConfig() *UserConfig {
 	return &UserConfig{
 		DefaultModel: "deepseek:deepseek-v4-flash",
-		DefaultAgent: "cmd",
+		DefaultAgent: "devops",
+		Streaming:    false,
 		APIKeys:      make(map[string]string),
 		Prompts:      make(map[string]string),
 		Clients:      make(map[string]*anyllm.Provider),

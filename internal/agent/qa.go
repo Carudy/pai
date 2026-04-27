@@ -1,3 +1,5 @@
+// pai/internal/agent/qa.go
+
 package agent
 
 import (
@@ -25,18 +27,28 @@ func QA(ctx context.Context, cfg *config.UserConfig,
 
 	// One-turn mode
 	if !multi_turn {
-		resp, _, err := chat(ctx, cfg, cfg.Clients["qa"], history)
-
+		resp, _, err := chatStdout(ctx, cfg, cfg.Clients["qa"], history)
 		if err != nil {
 			return err
 		}
-
-		fmt.Printf("💡 Answer:\n")
-		fmt.Printf(ui.Styles["Cmd"].Render(resp))
+		// In streaming mode the tokens already appeared on the terminal,
+		// so we just show a lightweight label.
+		// In non-streaming mode the response hasn't been shown yet.
+		if cfg.Streaming {
+			fmt.Printf("%s %s\n",
+				ui.Styles["TagSystem"].Render("[Sys]"),
+				ui.Styles["Subdued"].Render("Done"))
+		} else {
+			fmt.Printf("💡 Answer:\n")
+			fmt.Print(ui.Styles["Cmd"].Render(resp))
+			fmt.Println()
+		}
 		return nil
 	}
 
-	// Interactive mode
+	// Interactive (TUI) mode — use silent chat so the TUI manages
+	// its own display. Streaming is suppressed even if cfg.Streaming
+	// is true to avoid corrupting the alt-screen rendering.
 	var initialMessages []ui.ChatMessage
 	if user_input != "" {
 		resp, newHistory, err := chat(ctx, cfg, cfg.Clients["qa"], history)
@@ -52,7 +64,7 @@ func QA(ctx context.Context, cfg *config.UserConfig,
 
 	chatFunc := func(input string) (string, error) {
 		resp, newHistory, err := chat(ctx, cfg, cfg.Clients["qa"],
-			append(history, anyllm.Message{Role: anyllm.RoleUser, Content: user_input}))
+			append(history, anyllm.Message{Role: anyllm.RoleUser, Content: input}))
 		if err != nil {
 			return "", err
 		}
