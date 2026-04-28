@@ -11,8 +11,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var SupportedProviders = []string{"openai", "deepseek", "anthropic", "mistral"}
-
 type UserConfig struct {
 	APIKeys      map[string]string `yaml:"api_keys"`
 	DefaultModel string            `yaml:"default_model"`
@@ -24,6 +22,20 @@ type UserConfig struct {
 	Provider string
 	Model    string
 	Clients  map[string]llm.Provider
+	Flags    *CliFlags
+}
+
+func defaultConfig() *UserConfig {
+	return &UserConfig{
+		DefaultModel: "deepseek:deepseek-v4-flash",
+		DefaultAgent: "devops",
+		Streaming:    false,
+		Reasoning:    false,
+		APIKeys:      make(map[string]string),
+		Prompts:      make(map[string]string),
+		Clients:      make(map[string]llm.Provider),
+		Flags:        nil,
+	}
 }
 
 func LoadUserConfig() (*UserConfig, error) {
@@ -55,18 +67,6 @@ func LoadUserConfig() (*UserConfig, error) {
 	cfg.Model = _model
 
 	return cfg, nil
-}
-
-func defaultConfig() *UserConfig {
-	return &UserConfig{
-		DefaultModel: "deepseek:deepseek-v4-flash",
-		DefaultAgent: "devops",
-		Streaming:    false,
-		Reasoning:    false,
-		APIKeys:      make(map[string]string),
-		Prompts:      make(map[string]string),
-		Clients:      make(map[string]llm.Provider),
-	}
 }
 
 func mergeEnvAPIKeys(cfg *UserConfig) {

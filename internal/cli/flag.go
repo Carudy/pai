@@ -4,34 +4,27 @@ import (
 	"flag"
 	"io"
 	"strings"
+
+	"github.com/Carudy/pai/internal/config"
 )
-
-type CliFlags struct {
-	Debug  bool
-	Multi  bool
-	Action string
-	Input  string
-}
-
-var Flags CliFlags
 
 func GetFlags(args []string) error {
 	fs := flag.NewFlagSet("pai", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
-	fs.BoolVar(&Flags.Debug, "debug", false, "Enable debug mode")
-	fs.BoolVar(&Flags.Debug, "d", false, "Enable debug mode (shorthand)")
+	fs.BoolVar(&config.AppFlags.Debug, "debug", false, "Enable debug mode")
+	fs.BoolVar(&config.AppFlags.Debug, "d", false, "Enable debug mode (shorthand)")
 
-	fs.BoolVar(&Flags.Multi, "inter", false, "Enable multi-turn chat")
-	fs.BoolVar(&Flags.Multi, "i", false, "Enable multi-turn chat (shorthand)")
+	fs.BoolVar(&config.AppFlags.Inter, "inter", false, "Enable multi-turn chat")
+	fs.BoolVar(&config.AppFlags.Inter, "i", false, "Enable multi-turn chat (shorthand)")
 
-	fs.StringVar(&Flags.Action, "action", "", "pai's action")
-	fs.StringVar(&Flags.Action, "a", "", "pai's action (shorthand)")
+	fs.StringVar(&config.AppFlags.Agent, "agent", "", "pai's agent")
+	fs.StringVar(&config.AppFlags.Agent, "a", "", "pai's agent (shorthand)")
 
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	Flags.Input = strings.Join(fs.Args(), " ")
+	config.AppFlags.Input = strings.Join(fs.Args(), " ")
 	return nil
 }

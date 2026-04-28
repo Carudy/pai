@@ -14,8 +14,7 @@ import (
 func QA(
 	ctx context.Context,
 	cfg *config.UserConfig,
-	user_input string,
-	multi_turn bool) error {
+	user_input string) error {
 
 	sys_prompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
 
@@ -25,7 +24,7 @@ func QA(
 	}
 
 	// One-turn mode
-	if !multi_turn {
+	if !cfg.Flags.Inter {
 		resp, _, err := chatStdout(ctx, cfg, cfg.Clients["qa"], history)
 		if err != nil {
 			return err

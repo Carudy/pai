@@ -2,14 +2,13 @@ package tool
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 
 	"github.com/Carudy/pai/internal/ui"
 )
 
-func ExecuteCommand(stdout io.Writer, command string, user_confirm bool) (string, error) {
+func ExecuteCommand(command string, user_confirm bool) (string, error) {
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/sh"

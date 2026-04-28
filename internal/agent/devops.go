@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
@@ -144,7 +143,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 				ui.Styles["TagExec"].Render("[CMD 💻]"),
 				ui.Styles["Info"].Render(dec.Result))
 
-			output, execErr := tool.ExecuteCommand(os.Stdout, dec.Result, true)
+			output, execErr := tool.ExecuteCommand(dec.Result, true)
 			if execErr != nil {
 				fmt.Printf("%s ❌ %s\n",
 					ui.Styles["TagSystem"].Render("[SYS]"),
