@@ -17,10 +17,52 @@ import (
 // requests fast and within context windows.
 const maxHistoryBytes = 32_000
 
+// DevOpsRes is the JSON envelope the LLM must return each turn.
+// Result is stored as json.RawMessage so models that return a JSON object
+// or array (instead of a plain string) don't cause a parse error.
 type DevOpsRes struct {
-	Action  string `json:"action"`
-	Result  string `json:"result"`
-	Comment string `json:"comment"`
+	Action  string          `json:"action"`
+	Result  json.RawMessage `json:"result"`
+	Comment string          `json:"comment"`
+}
+
+// ResultStr returns dec.Result as a string, collapsed for display.
+//
+//   - If Result is a JSON string literal, the surrounding quotes are stripped
+//     and the string is trimmed (leading/trailing whitespace removed).
+//   - If Result is a JSON object, array, number, or boolean, it is
+//     re-serialized to its compact JSON representation (e.g. the model
+//     returned {"key":"val"} → `{"key":"val"}`).
+//   - If Result is empty, an empty string is returned.
+//
+// In all cases two or more consecutive newlines are collapsed into one to
+// avoid ugly gaps in the terminal output.
+func (d *DevOpsRes) ResultStr() string {
+	if len(d.Result) == 0 {
+		return ""
+	}
+	var s string
+	// Try plain string first (the expected case).
+	if err := json.Unmarshal(d.Result, &s); err != nil {
+		// Non-string value (e.g. a JSON object/array) — compact it so
+		// pretty-printed multi-line JSON collapses to a single line.
+		var raw any
+		if err2 := json.Unmarshal(d.Result, &raw); err2 == nil {
+			if compact, err3 := json.Marshal(raw); err3 == nil {
+				s = string(compact)
+			} else {
+				s = string(d.Result)
+			}
+		} else {
+			s = string(d.Result)
+		}
+	}
+	// Collapse all consecutive newlines into a single one.
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	for strings.Contains(s, "\n\n") {
+		s = strings.ReplaceAll(s, "\n\n", "\n")
+	}
+	return strings.TrimSpace(s)
 }
 
 // trimHistory removes old messages when the total content exceeds
@@ -92,7 +134,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 
 		var dec DevOpsRes
 		if err := json.Unmarshal([]byte(jsonStr), &dec); err != nil {
-			return fmt.Errorf("failed to parse devops JSON: %w", err)
+			return fmt.Errorf("failed to parse devops JSON: %w\nraw: %s", err, jsonStr)
 		}
 
 		// ── 2. Show the agent's reasoning ──────────────────────────────
@@ -107,23 +149,25 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		case "done":
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI ✅]"),
-				ui.Styles["Success"].Render(dec.Result))
+				ui.Styles["Success"].Render(dec.ResultStr()))
 			return nil
 
 		case "giveup":
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI 💔]"),
-				ui.Styles["Warn"].Render(dec.Result))
+				ui.Styles["Warn"].Render(dec.ResultStr()))
 			return nil
 
 		case "info":
+			infoResult := dec.ResultStr()
+
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI ℹ️]"),
-				ui.Styles["Content"].Render(dec.Result))
+				ui.Styles["Content"].Render(infoResult))
 
 			history = append(history, llm.Message{
 				Role:    llm.RoleAssistant,
-				Content: "[cmd result]\n" + dec.Result,
+				Content: "[cmd result]\n" + infoResult,
 			})
 			if cfg.Provider == "mistral" {
 				history = append(history, llm.Message{
@@ -133,14 +177,15 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			}
 
 		case "cmd":
+			cmdResult := dec.ResultStr()
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagExec"].Render("[CMD 💬]"),
 				ui.Styles["Help"].Render(dec.Comment))
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagExec"].Render("[CMD 💻]"),
-				ui.Styles["Info"].Render(dec.Result))
+				ui.Styles["Info"].Render(cmdResult))
 
-			output, execErr := tool.ExecuteCommand(dec.Result, true)
+			output, execErr := tool.ExecuteCommand(cmdResult, true)
 			if execErr != nil {
 				fmt.Printf("%s ❌ %s\n",
 					ui.Styles["TagSystem"].Render("[SYS]"),
@@ -167,7 +212,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 
 			observation := fmt.Sprintf(
 				"COMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-				dec.Result, execErr, TruncateOutput(output, 2000),
+				cmdResult, execErr, TruncateOutput(output, 2000),
 			)
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
@@ -177,7 +222,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		case "ask":
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI 🙋]"),
-				ui.Styles["Warn"].Render(dec.Result))
+				ui.Styles["Warn"].Render(dec.ResultStr()))
 
 			answer, err := ui.GetUserTextInput("Your answer:")
 			if err != nil {

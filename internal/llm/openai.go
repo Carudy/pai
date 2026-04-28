@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-	"github.com/tidwall/gjson"
 )
 
 // ---------------------------------------------------------------------------
@@ -238,71 +236,118 @@ func buildRequestBody(params CompletionParams, stream bool, spec providerSpec) m
 // Response parsing (standard OpenAI-compatible JSON → typed structs)
 // ---------------------------------------------------------------------------
 
+// rawCompletion mirrors the OpenAI-compatible chat completion JSON shape.
+type rawCompletion struct {
+	ID      string      `json:"id"`
+	Choices []rawChoice `json:"choices"`
+	Usage   *rawUsage   `json:"usage,omitempty"`
+}
+
+type rawChoice struct {
+	Index            int        `json:"index"`
+	FinishReason     string     `json:"finish_reason"`
+	Message          rawMessage `json:"message"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+}
+
+type rawMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type rawUsage struct {
+	PromptTokens            int              `json:"prompt_tokens"`
+	CompletionTokens        int              `json:"completion_tokens"`
+	TotalTokens             int              `json:"total_tokens"`
+	CompletionTokensDetails *rawUsageDetails `json:"completion_tokens_details,omitempty"`
+}
+
+type rawUsageDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+}
+
 func parseCompletion(raw []byte) *ChatCompletion {
-	result := gjson.ParseBytes(raw)
+	var r rawCompletion
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil
+	}
 
 	cc := &ChatCompletion{
-		ID: result.Get("id").String(),
+		ID: r.ID,
 	}
 
-	// Usage
-	if usage := result.Get("usage"); usage.Exists() {
-		cc.Usage = &Usage{
-			PromptTokens:     int(usage.Get("prompt_tokens").Int()),
-			CompletionTokens: int(usage.Get("completion_tokens").Int()),
-			TotalTokens:      int(usage.Get("total_tokens").Int()),
+	if r.Usage != nil {
+		u := &Usage{
+			PromptTokens:     r.Usage.PromptTokens,
+			CompletionTokens: r.Usage.CompletionTokens,
+			TotalTokens:      r.Usage.TotalTokens,
 		}
-		if rt := usage.Get("completion_tokens_details.reasoning_tokens"); rt.Exists() {
-			cc.Usage.ReasoningTokens = int(rt.Int())
+		if d := r.Usage.CompletionTokensDetails; d != nil {
+			u.ReasoningTokens = d.ReasoningTokens
 		}
+		cc.Usage = u
 	}
 
-	// Choices
-	result.Get("choices").ForEach(func(_, choice gjson.Result) bool {
+	for _, rc := range r.Choices {
 		c := Choice{
-			Index:        int(choice.Get("index").Int()),
-			FinishReason: choice.Get("finish_reason").String(),
+			Index:        rc.Index,
+			FinishReason: rc.FinishReason,
 			Message: Message{
-				Role:    choice.Get("message.role").String(),
-				Content: choice.Get("message.content").String(),
+				Role:    rc.Message.Role,
+				Content: rc.Message.Content,
 			},
 		}
-
-		if rc := choice.Get("reasoning_content"); rc.Exists() && rc.String() != "" {
-			c.Reasoning = &Reasoning{Content: rc.String()}
+		if rc.ReasoningContent != "" {
+			c.Reasoning = &Reasoning{Content: rc.ReasoningContent}
 		}
-
 		cc.Choices = append(cc.Choices, c)
-		return true
-	})
+	}
 
 	return cc
 }
 
-func parseChunk(data string) ChatCompletionChunk {
-	result := gjson.Parse(data)
+// rawChunk mirrors the OpenAI-compatible streaming chunk JSON shape.
+type rawChunk struct {
+	ID      string           `json:"id"`
+	Choices []rawChunkChoice `json:"choices"`
+}
 
-	cc := ChatCompletionChunk{
-		ID: result.Get("id").String(),
+type rawChunkChoice struct {
+	Index        int           `json:"index"`
+	FinishReason string        `json:"finish_reason"`
+	Delta        rawChunkDelta `json:"delta"`
+}
+
+type rawChunkDelta struct {
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+}
+
+func parseChunk(data string) ChatCompletionChunk {
+	var r rawChunk
+	if err := json.Unmarshal([]byte(data), &r); err != nil {
+		return ChatCompletionChunk{}
 	}
 
-	result.Get("choices").ForEach(func(_, choice gjson.Result) bool {
+	cc := ChatCompletionChunk{
+		ID: r.ID,
+	}
+
+	for _, rc := range r.Choices {
 		chunk := ChunkChoice{
-			Index:        int(choice.Get("index").Int()),
-			FinishReason: choice.Get("finish_reason").String(),
+			Index:        rc.Index,
+			FinishReason: rc.FinishReason,
 			Delta: ChunkDelta{
-				Role:    choice.Get("delta.role").String(),
-				Content: choice.Get("delta.content").String(),
+				Role:    rc.Delta.Role,
+				Content: rc.Delta.Content,
 			},
 		}
-
-		if rc := choice.Get("delta.reasoning_content"); rc.Exists() && rc.String() != "" {
-			chunk.Delta.Reasoning = &Reasoning{Content: rc.String()}
+		if rc.Delta.ReasoningContent != "" {
+			chunk.Delta.Reasoning = &Reasoning{Content: rc.Delta.ReasoningContent}
 		}
-
 		cc.Choices = append(cc.Choices, chunk)
-		return true
-	})
+	}
 
 	return cc
 }

@@ -38,7 +38,7 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error
 
 	var result CmdResult
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-		return fmt.Errorf("failed to parse command JSON: %w", err)
+		return fmt.Errorf("failed to parse command JSON: %w\nraw: %s", err, jsonStr)
 	}
 
 	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💬]"), ui.Styles["Help"].Render(result.Comment))
