@@ -20,7 +20,7 @@ An ultra-lightweight, module-decoupled, highly customizable CLI tool that levera
 ## 📦 Installation
 
 ### Prerequisites
-- Go 1.21 or later
+- Go 1.26 or later
 - API key for at least one supported LLM provider
 
 ### Build from Source
@@ -81,18 +81,19 @@ prompts:
 
 ## 📖 Usage
 
-### Command Generation (Default Action)
+### Command Generation (Default Agent)
 Generate and optionally execute shell commands:
 ```bash
 # Basic usage
 pai "list all go files in this proj"
+pai "<whatever-your-target>"
 
 # Quotes aren't needed in most cases
 # but for beautiful and not mis-understanding by shell we recommend using quotes
 # below will generate "find . -name '*.go' | nl"-like command
 pai -a cmd list all .go files recursively and numbering them
 
-pai --action cmd "sum numbers in column 3 of data.csv"
+pai --agent cmd "sum numbers in column 3 of data.csv"
 # "awk -F',' '{sum += $3} END {print sum}' data.csv"
 
 # Enable debug mode
@@ -128,7 +129,7 @@ Execute the command ?
 Get direct answers to your questions, or start an interactive multi-turn session:
 ```bash
 # Single turn
-pai --action qa "what is recursion"
+pai --agent qa "what is recursion"
 pai -a qa "explain Go goroutines in one sentence"
 
 # Interactive multi-turn chat (full TUI with scrolling)
