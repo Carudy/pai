@@ -1,4 +1,4 @@
-module pai
+module github.com/Carudy/pai
 
 go 1.26.1
 

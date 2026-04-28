@@ -5,7 +5,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"pai/internal/ui"
+
+	"github.com/Carudy/pai/internal/ui"
 )
 
 func ExecuteCommand(stdout io.Writer, command string, user_confirm bool) (string, error) {

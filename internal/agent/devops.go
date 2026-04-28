@@ -7,11 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"pai/internal/llm"
-
-	"pai/internal/config"
-	"pai/internal/tool"
-	"pai/internal/ui"
+	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/llm"
+	"github.com/Carudy/pai/internal/tool"
+	"github.com/Carudy/pai/internal/ui"
 )
 
 // maxHistoryBytes caps the cumulative history payload sent to the LLM.

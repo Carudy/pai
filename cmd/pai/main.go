@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"pai/internal/cli"
+	"github.com/Carudy/pai/internal/cli"
 )
 
 func main() {

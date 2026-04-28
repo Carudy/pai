@@ -5,9 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"pai/internal/llm"
-
-	"pai/internal/config"
+	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/llm"
 )
 
 type CmdResult struct {

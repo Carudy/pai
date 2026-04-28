@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"pai/internal/llm"
+	"github.com/Carudy/pai/internal/llm"
 
-	"pai/internal/config"
-	"pai/internal/ui"
+	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/ui"
 )
 
 func chatStreamWriter(

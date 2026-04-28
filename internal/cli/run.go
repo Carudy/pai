@@ -7,11 +7,11 @@ import (
 	"os"
 	"strings"
 
-	"pai/internal/agent"
-	"pai/internal/config"
-	"pai/internal/llm"
-	"pai/internal/tool"
-	"pai/internal/ui"
+	"github.com/Carudy/pai/internal/agent"
+	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/llm"
+	"github.com/Carudy/pai/internal/tool"
+	"github.com/Carudy/pai/internal/ui"
 )
 
 func local_logger(_type string, outio io.Writer) func(format string, a ...any) {

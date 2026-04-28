@@ -157,6 +157,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- [any-llm-go](https://github.com/mozilla-ai/any-llm-go) - Multi-provider LLM client
 - [Bubbletea](https://github.com/charmbracelet/bubbletea) - Terminal UI framework
 - [Lipgloss](https://github.com/charmbracelet/lipgloss) - Style definitions for terminal output

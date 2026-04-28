@@ -4,12 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	// "pai/internal/agent"
 	"path/filepath"
 	"strings"
 
-	"pai/internal/llm"
-
+	"github.com/Carudy/pai/internal/llm"
 	"gopkg.in/yaml.v3"
 )
 
