@@ -12,6 +12,9 @@ func GetFlags(args []string) error {
 	fs := flag.NewFlagSet("pai", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
+	fs.BoolVar(&config.AppFlags.Version, "version", false, "pai's version")
+	fs.BoolVar(&config.AppFlags.Version, "v", false, "pai's version (shorthand)")
+
 	fs.BoolVar(&config.AppFlags.Debug, "debug", false, "Enable debug mode")
 	fs.BoolVar(&config.AppFlags.Debug, "d", false, "Enable debug mode (shorthand)")
 

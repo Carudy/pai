@@ -7,13 +7,16 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
+const PAI_VERSION = "v0.2.0"
+
 var SupportedProviders = []string{"deepseek", "mistral"}
 
 type CliFlags struct {
-	Debug bool
-	Inter bool
-	Agent string
-	Input string
+	Version bool
+	Debug   bool
+	Inter   bool
+	Agent   string
+	Input   string
 }
 
 var AppFlags CliFlags

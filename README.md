@@ -148,7 +148,7 @@ pai -a devops "set up a new nginx reverse proxy for myapp on port 3000"
 - [x] User-friendly TUI/CLI packages
 - [x] Multi-turn chat in QA mode
 - [x] DevOps agent for multi-turn tasks
-- [ ] MCP, tools, and skills integration
+- [ ] MCP, tools integration
 - [ ] Local database for sessions, memory, etc.
 - [ ] DevOps enhancements (e.g., learning and invoking CLI tools with RAG/fuzzy search)
 

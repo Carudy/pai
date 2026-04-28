@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,48 +27,46 @@ type DevOpsRes struct {
 	Comment string          `json:"comment"`
 }
 
-// ResultStr returns dec.Result as a string, collapsed for display.
-//
-//   - If Result is a JSON string literal, the surrounding quotes are stripped
-//     and the string is trimmed (leading/trailing whitespace removed).
-//   - If Result is a JSON object, array, number, or boolean, it is
-//     re-serialized to its compact JSON representation (e.g. the model
-//     returned {"key":"val"} → `{"key":"val"}`).
-//   - If Result is empty, an empty string is returned.
-//
-// In all cases two or more consecutive newlines are collapsed into one to
-// avoid ugly gaps in the terminal output.
-func (d *DevOpsRes) ResultStr() string {
+func (d *DevOpsRes) ResultCMD() string {
 	if len(d.Result) == 0 {
 		return ""
 	}
-	var s string
-	// Try plain string first (the expected case).
-	if err := json.Unmarshal(d.Result, &s); err != nil {
-		// Non-string value (e.g. a JSON object/array) — compact it so
-		// pretty-printed multi-line JSON collapses to a single line.
-		var raw any
-		if err2 := json.Unmarshal(d.Result, &raw); err2 == nil {
-			if compact, err3 := json.Marshal(raw); err3 == nil {
-				s = string(compact)
-			} else {
-				s = string(d.Result)
+
+	var cmd string
+	if err := json.Unmarshal(d.Result, &cmd); err == nil {
+		return strings.TrimSpace(cmd)
+	}
+
+	var obj map[string]any
+	if err := json.Unmarshal(d.Result, &obj); err == nil {
+		// Priority list of common keys an AI might use
+		keys := []string{"command", "cmd", "exec", "shell"}
+		for _, k := range keys {
+			if v, ok := obj[k].(string); ok {
+				return strings.TrimSpace(v)
 			}
-		} else {
-			s = string(d.Result)
 		}
 	}
-	// Collapse all consecutive newlines into a single one.
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	for strings.Contains(s, "\n\n") {
-		s = strings.ReplaceAll(s, "\n\n", "\n")
-	}
-	return strings.TrimSpace(s)
+
+	s := string(d.Result)
+	return strings.Trim(s, "\" ")
 }
 
-// trimHistory removes old messages when the total content exceeds
-// maxHistoryBytes, always keeping the system prompt and the most recent
-// messages.
+func (d *DevOpsRes) ResultPretty() string {
+	if len(d.Result) == 0 {
+		return ""
+	}
+	var indentBuffer bytes.Buffer
+	err := json.Indent(&indentBuffer, d.Result, "", "  ")
+
+	if err != nil {
+		// If it's not valid JSON (just a plain string), return it trimmed
+		return strings.TrimSpace(string(d.Result))
+	}
+
+	return indentBuffer.String()
+}
+
 func trimHistory(history []llm.Message) []llm.Message {
 	total := 0
 	for _, m := range history {
@@ -149,17 +148,17 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		case "done":
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI ✅]"),
-				ui.Styles["Success"].Render(dec.ResultStr()))
+				ui.Styles["Success"].Render(dec.ResultPretty()))
 			return nil
 
 		case "giveup":
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI 💔]"),
-				ui.Styles["Warn"].Render(dec.ResultStr()))
+				ui.Styles["Warn"].Render(dec.ResultPretty()))
 			return nil
 
 		case "info":
-			infoResult := dec.ResultStr()
+			infoResult := dec.ResultPretty()
 
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI ℹ️]"),
@@ -177,25 +176,25 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			}
 
 		case "cmd":
-			cmdResult := dec.ResultStr()
+			to_exe_cmd := dec.ResultCMD()
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagExec"].Render("[CMD 💬]"),
 				ui.Styles["Help"].Render(dec.Comment))
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagExec"].Render("[CMD 💻]"),
-				ui.Styles["Info"].Render(cmdResult))
+				ui.Styles["Info"].Render(to_exe_cmd))
 
-			output, execErr := tool.ExecuteCommand(cmdResult, true)
+			output, execErr := tool.ExecuteCommand(to_exe_cmd, true)
 			if execErr != nil {
 				fmt.Printf("%s ❌ %s\n",
 					ui.Styles["TagSystem"].Render("[SYS]"),
 					ui.Styles["Warn"].Render("Command failed"))
-				if output != "" {
+				if output.Output != "" {
 					fmt.Printf("%s\n%s\n",
 						ui.Styles["TagResult"].Render("[❌ Error Info]"),
-						ui.Styles["Warn"].Render(output))
+						ui.Styles["Warn"].Render(output.Output))
 				}
-			} else if output == "[user cancelled execution]" {
+			} else if output.Output == "[user cancelled execution]" {
 				fmt.Printf("%s %s\n",
 					ui.Styles["TagSystem"].Render("[SYS]"),
 					ui.Styles["Subdued"].Render("Skipped"))
@@ -203,16 +202,16 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 				fmt.Printf("%s %s\n",
 					ui.Styles["TagSystem"].Render("[SYS]"),
 					ui.Styles["Success"].Render("Command succeeded"))
-				if output != "" {
+				if output.Output != "" {
 					fmt.Printf("%s\n%s\n",
 						ui.Styles["TagResult"].Render("[CMD Result]"),
-						ui.Styles["ExeRes"].Render(output))
+						ui.Styles["ExeRes"].Render(output.Output))
 				}
 			}
 
 			observation := fmt.Sprintf(
 				"COMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-				cmdResult, execErr, TruncateOutput(output, 2000),
+				to_exe_cmd, execErr, TruncateOutput(output.String(), 2000),
 			)
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
@@ -222,7 +221,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		case "ask":
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI 🙋]"),
-				ui.Styles["Warn"].Render(dec.ResultStr()))
+				ui.Styles["Warn"].Render(dec.ResultPretty()))
 
 			answer, err := ui.GetUserTextInput("Your answer:")
 			if err != nil {

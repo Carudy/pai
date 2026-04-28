@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 
@@ -17,13 +18,19 @@ var AgentMap = map[string]func(ctx context.Context, cfg *config.UserConfig, user
 }
 
 func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) int {
+	GetFlags(args)
+
+	if config.AppFlags.Version {
+		fmt.Fprintf(stdout, "Pai verion: %s\n", config.PAI_VERSION)
+		return 0
+	}
+
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
 		config.ErrorLog(stdout, "Error loading config: %v\n", err)
 		return 1
 	}
 
-	GetFlags(args)
 	cfg.Flags = &config.AppFlags
 
 	config.DebugLog(stdout, "📃 User Flags: %v\n", config.AppFlags)

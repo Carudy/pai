@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -36,18 +37,18 @@ func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m selectModel) View() string {
-	s := ""
+	var s []string
 	for i, choice := range m.choices {
 		cursor := " "
 		if m.cursor == i {
 			cursor = "*"
 		}
-		s += fmt.Sprintf("[%s] %s\n", cursor, choice)
+		s = append(s, fmt.Sprintf("[%s] %s", cursor, choice))
 	}
 
 	return fmt.Sprintf("%s\n%s\n%s\n",
 		Styles["ExeAsk"].Render(m.prompt),
-		Styles["Choice"].Render(s),
+		Styles["Choice"].Render(strings.Join(s, "\n")),
 		Styles["Debug"].Render("(Press ↑/↓ and Enter to choose; q or ctrl+c to quit.)"))
 }
 

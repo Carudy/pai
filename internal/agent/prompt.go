@@ -110,21 +110,22 @@ var DefaultPrompts = map[string]string{
 	  When you need more information from the user (e.g. which port, what domain, what credentials).
 	  The user's answer will be fed back to you.
 
+	{"action": "done", "result": "<summary of what was accomplished>", "comment": "<short overall assessment>"}
+	  When the original goal has been fully achieved. The loop stops and this message is shown to the user.
+
 	{"action": "info", "result": "<your message to the user>", "comment": "<why you're showing this>"}
 	  When you want to explain something, show progress, or share an observation without running a command.
-	  The loop continues after this.
-
-	{"action": "done", "result": "<summary of what was accomplished>", "comment": "<overall assessment>"}
-	  When the original goal has been fully achieved. The loop stops and this message is shown to the user.
+	  If you desire users' further instruction, use "ask" not "info".
+	  The loop continues after this, if the output seems cover user's req, use "done", not "info".
 
 	{"action": "giveup", "result": "<reason why you cannot proceed>", "comment": "<why it's not feasible to continue>"}
 	  When the goal is impossible, too complex, or requires information unavailable to you. The loop stops.
 
 	RULES:
 	- One action per response. No markdown, no backticks, no text outside the JSON.
-	- Be specific and concrete in your "result" descriptions.
 	- For "cmd", drive toward the user's goal step by step. Check preconditions before acting.
 	- For "cmd", better generate one-line cmd, to get info step-by-step, if shell cmd is hard, can try python scripts, etc.
+	- Remember you can check available cli tools by checking $PATH, if your some attempts failed.
 	- Do NOT hallucinate command output. Trust only what the system feeds back.
 	- If a command fails, analyze the error and try an alternative approach, or ask the user for help.
 	- Use multiple "cmd" actions as needed — each turn is a chance to inspect, verify, or make progress.

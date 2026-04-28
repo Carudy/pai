@@ -48,9 +48,9 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error
 	if execErr != nil {
 		return fmt.Errorf("Execution Error: %v", execErr)
 	}
-	if output != "[user cancelled execution]" {
+	if output.Output != "[user cancelled execution]" {
 		fmt.Printf("%s ✅ %s\n", ui.Styles["TagSystem"].Render("[SYS]"), ui.Styles["Success"].Render("Command succeeded"))
-		fmt.Printf("%s\n%s\n", ui.Styles["TagResult"].Render("[RES]"), ui.Styles["Cmd"].Render(output))
+		fmt.Printf("%s\n%s\n", ui.Styles["TagResult"].Render("[RES]"), ui.Styles["Cmd"].Render(output.String()))
 	} else {
 		fmt.Printf("%s ⏭️ %s\n", ui.Styles["TagSystem"].Render("[SYS]"), ui.Styles["Subdued"].Render("Skipped"))
 	}
