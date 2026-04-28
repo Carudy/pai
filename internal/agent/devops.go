@@ -27,16 +27,9 @@ type DevOpsRes struct {
 // maxHistoryBytes, always keeping the system prompt and the most recent
 // messages.
 func trimHistory(history []llm.Message) []llm.Message {
-	contentLen := func(v any) int {
-		if s, ok := v.(string); ok {
-			return len(s)
-		}
-		return 0
-	}
-
 	total := 0
 	for _, m := range history {
-		total += contentLen(m.Content)
+		total += len(m.Content)
 	}
 	if total <= maxHistoryBytes {
 		return history
@@ -45,13 +38,12 @@ func trimHistory(history []llm.Message) []llm.Message {
 	// Always keep index 0 (system prompt).
 	// Walk from the end forward to find how many fit.
 	keep := 1 // system
-	accum := contentLen(history[0].Content)
+	accum := len(history[0].Content)
 	for i := len(history) - 1; i > 0 && accum < maxHistoryBytes; i-- {
-		accum += contentLen(history[i].Content)
+		accum += len(history[i].Content)
 		keep++
 	}
-	// keep is now the count of trailing messages we want.
-	start := len(history) - (keep - 1) // minus the system message already counted
+	start := len(history) - (keep - 1)
 	if start < 1 {
 		start = 1
 	}
@@ -72,7 +64,6 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 	iterations := 0
 	const maxIterations = 100
 
-	// main loop
 	for {
 		if iterations >= maxIterations {
 			fmt.Printf("%s %s\n",
@@ -82,13 +73,13 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		}
 		iterations++
 
-		// ── Turn separator ─────────────────────────────────────────────
+		// Turn separator.
 		if iterations > 1 {
 			fmt.Printf("%s\n", ui.Styles["Separator"].Render(strings.Repeat("─", 40)))
 		}
 
 		// ── 1. Get the LLM's decision ──────────────────────────────────
-		content, newHistory, err := chatStdout(ctx, cfg, cfg.Clients["devops"], history)
+		content, newHistory, err := chatStr(ctx, cfg, cfg.Clients["devops"], history)
 		if err != nil {
 			return err
 		}
@@ -134,6 +125,12 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 				Role:    llm.RoleAssistant,
 				Content: "[cmd result]\n" + dec.Result,
 			})
+			if cfg.Provider == "mistral" {
+				history = append(history, llm.Message{
+					Role:    llm.RoleUser,
+					Content: "got it",
+				})
+			}
 
 		case "cmd":
 			fmt.Printf("%s %s\n",
@@ -197,5 +194,8 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		default:
 			return fmt.Errorf("unknown devops action %q", dec.Action)
 		}
+
+		// Trim history to stay within context window.
+		history = trimHistory(history)
 	}
 }

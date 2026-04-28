@@ -51,13 +51,13 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 	if agent_func, ok := AgentMap[cfg.DefaultAgent]; ok {
 		config.DebugLog(stdout, "Entering %s agent\n", cfg.DefaultAgent)
 		if err := agent_func(ctx, cfg, user_input); err != nil {
-			config.ErrorLog(stdout, "Error in asking agent: %v\n", err)
+			config.ErrorLog(stdout, "Error in %s agent: %v\n", cfg.DefaultAgent, err)
 			return 1
 		}
 		config.DebugLog(stdout, "Agent %s exit successfully.\n", cfg.DefaultAgent)
 		return 0
 	} else {
-		config.ErrorLog(stdout, "Error: Unsupported PAI action: \"%s\"\n", cfg.DefaultAgent)
+		config.ErrorLog(stdout, "Error: Unsupported PAI agent: \"%s\"\n", cfg.DefaultAgent)
 		return 1
 	}
 }

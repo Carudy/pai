@@ -13,61 +13,78 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// openaiProvider implements Provider for the OpenAI API.
-type openaiProvider struct {
-	apiKey    string
-	model     string
-	baseURL   string
-	reasoning bool
+// ---------------------------------------------------------------------------
+// Built-in provider specs
+// ---------------------------------------------------------------------------
+
+var (
+	openaiSpec = providerSpec{
+		name:         "openai",
+		baseURL:      "https://api.openai.com",
+		apiPath:      "/v1/chat/completions",
+		hasReasoning: true,
+	}
+
+	deepSeekSpec = providerSpec{
+		name:         "deepseek",
+		baseURL:      "https://api.deepseek.com",
+		apiPath:      "/chat/completions",
+		hasReasoning: true,
+		bodyEnricher: func(body map[string]any, reasoning bool) {
+			if reasoning {
+				body["thinking"] = map[string]string{"type": "enabled"}
+				body["reasoning_effort"] = "high"
+			} else {
+				body["thinking"] = map[string]string{"type": "disabled"}
+			}
+		},
+	}
+
+	mistralSpec = providerSpec{
+		name:         "mistral",
+		baseURL:      "https://api.mistral.ai",
+		apiPath:      "/v1/chat/completions",
+		hasReasoning: false,
+	}
+)
+
+// ---------------------------------------------------------------------------
+// Generic OpenAI-compatible provider
+// ---------------------------------------------------------------------------
+
+// openAIProvider implements the Provider interface for any OpenAI-compatible
+// API (OpenAI, DeepSeek, Mistral, etc.).
+type openAIProvider struct {
+	apiKey string
+	model  string
+	spec   providerSpec
 }
 
-func (p *openaiProvider) Completion(ctx context.Context, params CompletionParams) (*ChatCompletion, error) {
+// newOpenAIProvider creates a new provider from the given spec.
+func newOpenAIProvider(apiKey, model string, spec providerSpec) *openAIProvider {
+	return &openAIProvider{apiKey: apiKey, model: model, spec: spec}
+}
+
+func (p *openAIProvider) Completion(ctx context.Context, params CompletionParams) (*ChatCompletion, error) {
 	if params.Model == "" {
 		params.Model = p.model
 	}
 
-	bodyMap := map[string]any{
-		"model":    params.Model,
-		"messages": params.Messages,
-		"stream":   false,
-	}
-
-	if p.reasoning {
-		bodyMap["reasoning_effort"] = "high"
-	}
-
+	bodyMap := buildRequestBody(params, false, p.spec)
 	bodyBytes, err := json.Marshal(bodyMap)
 	if err != nil {
-		return nil, fmt.Errorf("openai: marshal request: %w", err)
+		return nil, fmt.Errorf("%s: marshal request: %w", p.spec.name, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/chat/completions", bytes.NewReader(bodyBytes))
+	rawBody, err := p.doRequest(ctx, bodyBytes)
 	if err != nil {
-		return nil, fmt.Errorf("openai: create request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("openai: do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("openai: API error (status %d): %s", resp.StatusCode, string(body))
+		return nil, err
 	}
 
-	rawBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("openai: read response: %w", err)
-	}
-
-	return parseOpenAICompletion(rawBody), nil
+	return parseCompletion(rawBody), nil
 }
 
-func (p *openaiProvider) CompletionStream(ctx context.Context, params CompletionParams) (<-chan ChatCompletionChunk, <-chan error) {
+func (p *openAIProvider) CompletionStream(ctx context.Context, params CompletionParams) (<-chan ChatCompletionChunk, <-chan error) {
 	chunkChan := make(chan ChatCompletionChunk)
 	errChan := make(chan error, 1)
 
@@ -75,97 +92,173 @@ func (p *openaiProvider) CompletionStream(ctx context.Context, params Completion
 		params.Model = p.model
 	}
 
-	bodyMap := map[string]any{
-		"model":    params.Model,
-		"messages": params.Messages,
-		"stream":   true,
-	}
-
-	if p.reasoning {
-		bodyMap["reasoning_effort"] = "high"
-	}
-
+	bodyMap := buildRequestBody(params, true, p.spec)
 	bodyBytes, err := json.Marshal(bodyMap)
 	if err != nil {
-		errChan <- fmt.Errorf("openai: marshal request: %w", err)
+		errChan <- fmt.Errorf("%s: marshal request: %w", p.spec.name, err)
 		close(chunkChan)
 		return chunkChan, errChan
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/v1/chat/completions", bytes.NewReader(bodyBytes))
+	resp, err := p.doRequestRaw(ctx, bodyBytes)
 	if err != nil {
-		errChan <- fmt.Errorf("openai: create request: %w", err)
-		close(chunkChan)
-		return chunkChan, errChan
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		errChan <- fmt.Errorf("openai: do request: %w", err)
+		errChan <- err
 		close(chunkChan)
 		return chunkChan, errChan
 	}
 
-	go func() {
-		defer resp.Body.Close()
-		defer close(chunkChan)
-
-		scanner := bufio.NewScanner(resp.Body)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			if line == "" {
-				continue
-			}
-
-			if !strings.HasPrefix(line, "data: ") {
-				continue
-			}
-
-			data := strings.TrimPrefix(line, "data: ")
-
-			if data == "[DONE]" {
-				errChan <- nil
-				return
-			}
-
-			chunk := parseOpenAIChunk(data)
-			chunkChan <- chunk
-		}
-
-		if err := scanner.Err(); err != nil {
-			errChan <- fmt.Errorf("openai: scan stream: %w", err)
-		} else {
-			errChan <- nil
-		}
-	}()
+	go streamReader(ctx, resp, p.spec, chunkChan, errChan)
 
 	return chunkChan, errChan
 }
 
-// parseOpenAICompletion parses a standard OpenAI-compatible blocking response.
-func parseOpenAICompletion(raw []byte) *ChatCompletion {
+// ---------------------------------------------------------------------------
+// Streaming goroutine
+// ---------------------------------------------------------------------------
+
+func streamReader(ctx context.Context, resp *http.Response, spec providerSpec, chunkChan chan<- ChatCompletionChunk, errChan chan<- error) {
+	defer resp.Body.Close()
+	defer close(chunkChan)
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			errChan <- nil
+			return
+		}
+
+		chunk := parseChunk(data)
+		chunkChan <- chunk
+	}
+
+	if err := scanner.Err(); err != nil {
+		errChan <- fmt.Errorf("%s: scan stream: %w", spec.name, err)
+	} else {
+		errChan <- nil
+	}
+}
+
+// ---------------------------------------------------------------------------
+// HTTP helpers
+// ---------------------------------------------------------------------------
+
+func (p *openAIProvider) doRequest(ctx context.Context, bodyBytes []byte) ([]byte, error) {
+	req, err := p.newRequest(ctx, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: do request: %w", p.spec.name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%s: API error (status %d): %s", p.spec.name, resp.StatusCode, string(body))
+	}
+
+	rawBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%s: read response: %w", p.spec.name, err)
+	}
+	return rawBody, nil
+}
+
+func (p *openAIProvider) doRequestRaw(ctx context.Context, bodyBytes []byte) (*http.Response, error) {
+	req, err := p.newRequest(ctx, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s: do request: %w", p.spec.name, err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("%s: API error (status %d): %s", p.spec.name, resp.StatusCode, string(body))
+	}
+	return resp, nil
+}
+
+func (p *openAIProvider) newRequest(ctx context.Context, bodyBytes []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.spec.baseURL+p.spec.apiPath, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("%s: create request: %w", p.spec.name, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.apiKey)
+	return req, nil
+}
+
+// ---------------------------------------------------------------------------
+// Request body construction
+// ---------------------------------------------------------------------------
+
+func buildRequestBody(params CompletionParams, stream bool, spec providerSpec) map[string]any {
+	body := map[string]any{
+		"model":    params.Model,
+		"messages": params.Messages,
+		"stream":   stream,
+	}
+
+	if params.ResponseFormat != nil {
+		body["response_format"] = params.ResponseFormat
+	}
+
+	if spec.hasReasoning {
+		if spec.bodyEnricher != nil {
+			spec.bodyEnricher(body, params.ReasoningEffort != ReasoningEffortNone)
+		} else {
+			// Default: standard OpenAI reasoning_effort.
+			if params.ReasoningEffort != "" && params.ReasoningEffort != ReasoningEffortNone {
+				body["reasoning_effort"] = "high"
+			}
+		}
+	}
+
+	return body
+}
+
+// ---------------------------------------------------------------------------
+// Response parsing (standard OpenAI-compatible JSON → typed structs)
+// ---------------------------------------------------------------------------
+
+func parseCompletion(raw []byte) *ChatCompletion {
 	result := gjson.ParseBytes(raw)
 
 	cc := &ChatCompletion{
 		ID: result.Get("id").String(),
 	}
 
+	// Usage
 	if usage := result.Get("usage"); usage.Exists() {
 		cc.Usage = &Usage{
 			PromptTokens:     int(usage.Get("prompt_tokens").Int()),
 			CompletionTokens: int(usage.Get("completion_tokens").Int()),
 			TotalTokens:      int(usage.Get("total_tokens").Int()),
-			ReasoningTokens:  int(usage.Get("completion_tokens_details.reasoning_tokens").Int()),
+		}
+		if rt := usage.Get("completion_tokens_details.reasoning_tokens"); rt.Exists() {
+			cc.Usage.ReasoningTokens = int(rt.Int())
 		}
 	}
 
-	choices := result.Get("choices")
-	choices.ForEach(func(_, choice gjson.Result) bool {
+	// Choices
+	result.Get("choices").ForEach(func(_, choice gjson.Result) bool {
 		c := Choice{
 			Index:        int(choice.Get("index").Int()),
 			FinishReason: choice.Get("finish_reason").String(),
@@ -175,8 +268,7 @@ func parseOpenAICompletion(raw []byte) *ChatCompletion {
 			},
 		}
 
-		// Extract reasoning_content from the message (non-standard field).
-		if rc := choice.Get("message.reasoning_content"); rc.Exists() && rc.String() != "" {
+		if rc := choice.Get("reasoning_content"); rc.Exists() && rc.String() != "" {
 			c.Reasoning = &Reasoning{Content: rc.String()}
 		}
 
@@ -187,16 +279,14 @@ func parseOpenAICompletion(raw []byte) *ChatCompletion {
 	return cc
 }
 
-// parseOpenAIChunk parses a standard OpenAI-compatible streaming chunk.
-func parseOpenAIChunk(data string) ChatCompletionChunk {
+func parseChunk(data string) ChatCompletionChunk {
 	result := gjson.Parse(data)
 
 	cc := ChatCompletionChunk{
 		ID: result.Get("id").String(),
 	}
 
-	choices := result.Get("choices")
-	choices.ForEach(func(_, choice gjson.Result) bool {
+	result.Get("choices").ForEach(func(_, choice gjson.Result) bool {
 		chunk := ChunkChoice{
 			Index:        int(choice.Get("index").Int()),
 			FinishReason: choice.Get("finish_reason").String(),
@@ -206,7 +296,6 @@ func parseOpenAIChunk(data string) ChatCompletionChunk {
 			},
 		}
 
-		// Extract reasoning_content from delta (non-standard field).
 		if rc := choice.Get("delta.reasoning_content"); rc.Exists() && rc.String() != "" {
 			chunk.Delta.Reasoning = &Reasoning{Content: rc.String()}
 		}

@@ -38,7 +38,7 @@ func BuildAgentPrompt(basePrompt, agent_name string) string {
 	if basePrompt == "" {
 		basePrompt = DefaultPrompts[agent_name]
 	}
-	return fmt.Sprintf("%s\nYour env info:\n%s", basePrompt, BuildSystemContext())
+	return fmt.Sprintf("%s\n%s\nYour env info:\n%s", SelfAware, basePrompt, BuildSystemContext())
 }
 
 func getOSDetail() string {
@@ -80,21 +80,20 @@ var DefaultPrompts = map[string]string{
 	You are a helpful assistant to answer the user's question.
 	You are in a TERMINAL env, so use plain text only.
 	Answer directly and concisely.
+	Output ONLY valid JSON: {"answer": "your answer here"}
+	No markdown, no backticks, no extra text outside the JSON.
 	`,
 
 	// one-line cmd generator
 	"cmd": `
 	You are a shell command generator. Rules:
 	1. According to the user's request, generate one-line shell command(s) and a brief explanation.
-	2. Output ONLY valid JSON: {'cmd': '...', 'comment': '...'}
+	2. Output ONLY valid JSON: {"cmd": "...", "comment": "..."}
 	3. No markdown, no backticks, no extra text outside the JSON.
 	EXAMPLE:
 		Input: sum numbers in 2nd column from last in data.csv
 		Output:
-		{
-		    "comment": "Sum the second-to-last column in data.csv using awk. NF-1 targets the column before the last.",
-		    "cmd": "awk -F',' '{sum += $(NF-1)} END {print sum}' data.csv"
-		}
+		{"comment": "Sum the second-to-last column in data.csv using awk. NF-1 targets the column before the last.", "cmd": "awk -F',' '{sum += $(NF-1)} END {print sum}' data.csv"}
 	`,
 
 	// complex task solver

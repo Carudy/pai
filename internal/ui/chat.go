@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -12,10 +13,15 @@ type ChatMessage struct {
 	Content string
 }
 
+// ChatFunc is a synchronous chat callback (non-streaming).
 type ChatFunc func(userInput string) (string, error)
 
+// StreamChatFunc is a streaming chat callback. It receives the user input and a
+// token handler. The handler is called with each content token as it arrives.
+// The return value is the full response text (same as what was sent via onToken).
+type StreamChatFunc func(ctx context.Context, userInput string, onToken func(string)) (string, error)
+
 // reservedLines: title(1) + separator(1) + input(1) + help(1) = 4
-// The message area fills everything else.
 const (
 	reservedLines = 4
 	prefixLen     = 6 // len("[PAI] ") == len("[You] ")
@@ -25,12 +31,17 @@ type chatModel struct {
 	messages     []ChatMessage
 	input        string
 	cursor       int
-	scrollOffset int // display lines scrolled up from the bottom; 0 = newest visible
+	scrollOffset int
 	width        int
 	height       int
 	chatFunc     ChatFunc
+	streamFunc   StreamChatFunc
+	ctx          context.Context
 	quitting     bool
 	waiting      bool
+	partial      *strings.Builder // pointer to avoid illegal copy panics
+	tokenCh      chan string
+	errCh        chan error
 }
 
 func (m chatModel) Init() tea.Cmd { return nil }
@@ -47,8 +58,6 @@ func clamp(v, lo, hi int) int {
 	return v
 }
 
-// wrapText splits text into display lines no wider than width runes,
-// honouring existing newlines and preferring word boundaries.
 func wrapText(text string, width int) []string {
 	if width <= 0 {
 		return []string{text}
@@ -70,7 +79,7 @@ func wrapText(text string, width int) []string {
 				breakAt--
 			}
 			if breakAt == 0 {
-				breakAt = width // hard-break: no space found
+				breakAt = width
 			}
 			result = append(result, string(runes[:breakAt]))
 			runes = runes[breakAt:]
@@ -82,13 +91,12 @@ func wrapText(text string, width int) []string {
 	return result
 }
 
-// renderAllLines converts messages into wrapped display lines ready for slicing.
 func renderAllLines(messages []ChatMessage, contentWidth int) []string {
 	tagFor := map[string]string{
 		"assistant": "[PAI]",
 		"user":      "[You]",
 	}
-	const indent = "      " // 6 spaces — aligns with "[PAI] "
+	const indent = "      "
 
 	var lines []string
 	for _, msg := range messages {
@@ -104,12 +112,11 @@ func renderAllLines(messages []ChatMessage, contentWidth int) []string {
 				lines = append(lines, indent+l)
 			}
 		}
-		lines = append(lines, "") // blank separator between messages
+		lines = append(lines, "")
 	}
 	return lines
 }
 
-// msgAreaHeight returns the number of lines available for chat content.
 func (m chatModel) msgAreaHeight() int {
 	h := m.height - reservedLines
 	if h < 1 {
@@ -118,20 +125,32 @@ func (m chatModel) msgAreaHeight() int {
 	return h
 }
 
-// allDisplayLines returns the full rendered line slice (including waiting indicator).
 func (m chatModel) allDisplayLines() []string {
 	contentWidth := m.width - prefixLen
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
 	lines := renderAllLines(m.messages, contentWidth)
-	if m.waiting {
+
+	// Render partial (in-flight) streaming content.
+	if m.partial != nil && m.partial.Len() > 0 {
+		wrapped := wrapText(m.partial.String(), contentWidth)
+		for i, l := range wrapped {
+			if i == 0 {
+				lines = append(lines, "[PAI] "+l)
+			} else {
+				lines = append(lines, "      "+l)
+			}
+		}
+		lines = append(lines, "")
+	}
+
+	if m.waiting && (m.partial == nil || m.partial.Len() == 0) {
 		lines = append(lines, "      ⏳ waiting for response…")
 	}
 	return lines
 }
 
-// maxScroll returns the maximum valid scrollOffset for the current state.
 func (m chatModel) maxScroll() int {
 	n := len(m.allDisplayLines()) - m.msgAreaHeight()
 	if n < 0 {
@@ -140,9 +159,23 @@ func (m chatModel) maxScroll() int {
 	return n
 }
 
-// scrollBy adjusts scrollOffset by delta lines, clamped to valid range.
 func (m *chatModel) scrollBy(delta int) {
 	m.scrollOffset = clamp(m.scrollOffset+delta, 0, m.maxScroll())
+}
+
+// ── Messages ─────────────────────────────────────────────────────────────────
+
+type chatResponseMsg struct {
+	response string
+	err      error
+}
+
+type chatStreamTokenMsg struct {
+	token string
+}
+
+type chatStreamDoneMsg struct {
+	err error
 }
 
 // ── Update ───────────────────────────────────────────────────────────────────
@@ -152,7 +185,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Re-clamp after resize — terminal shrink can leave offset out of range.
 		m.scrollOffset = clamp(m.scrollOffset, 0, m.maxScroll())
 
 	case tea.KeyMsg:
@@ -174,7 +206,18 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = 0
 			m.scrollOffset = 0
 			m.waiting = true
-			return m, m.sendChatCmd(trimmed)
+			// Set up streaming channels and start the goroutine.
+			m.tokenCh = make(chan string)
+			m.errCh = make(chan error, 1)
+			m.partial = new(strings.Builder)
+			go func() {
+				defer close(m.tokenCh)
+				_, err := m.streamFunc(m.ctx, trimmed, func(tok string) {
+					m.tokenCh <- tok
+				})
+				m.errCh <- err
+			}()
+			return m, m.waitForNextToken()
 
 		case "backspace":
 			if m.cursor > 0 {
@@ -224,8 +267,30 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages = append(m.messages, ChatMessage{Role: "assistant", Content: msg.response})
 		}
-		m.scrollOffset = 0 // snap to bottom on new message
+		m.scrollOffset = 0
 
+	case chatStreamTokenMsg:
+		m.partial.WriteString(msg.token)
+		m.scrollOffset = 0
+		return m, m.waitForNextToken()
+
+	case chatStreamDoneMsg:
+		m.waiting = false
+		if msg.err != nil {
+			m.messages = append(m.messages, ChatMessage{
+				Role:    "assistant",
+				Content: fmt.Sprintf("[error: %v]", msg.err),
+			})
+		} else if m.partial.Len() > 0 {
+			m.messages = append(m.messages, ChatMessage{
+				Role:    "assistant",
+				Content: m.partial.String(),
+			})
+		}
+		m.partial = new(strings.Builder)
+		m.tokenCh = nil
+		m.errCh = nil
+		m.scrollOffset = 0
 	}
 
 	return m, nil
@@ -241,14 +306,12 @@ func (m chatModel) View() string {
 	msgH := m.msgAreaHeight()
 	allLines := m.allDisplayLines()
 
-	// Final clamp (View may be called before the first WindowSizeMsg).
 	maxScroll := len(allLines) - msgH
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
 	offset := clamp(m.scrollOffset, 0, maxScroll)
 
-	// Slice the visible window: offset=0 → newest lines at bottom.
 	end := len(allLines) - offset
 	start := end - msgH
 	if start < 0 {
@@ -256,7 +319,6 @@ func (m chatModel) View() string {
 	}
 	visible := allLines[start:end]
 
-	// Render message area, padding the top when content is short.
 	var msgBuf strings.Builder
 	for i := 0; i < msgH-len(visible); i++ {
 		msgBuf.WriteByte('\n')
@@ -271,7 +333,6 @@ func (m chatModel) View() string {
 		}
 	}
 
-	// Title — show scroll hint when not at the bottom.
 	titleText := "🤖 Interactive Asking Mode"
 	if offset > 0 {
 		titleText += fmt.Sprintf("  ↑ +%d lines", offset)
@@ -290,30 +351,57 @@ func (m chatModel) View() string {
 		inputDisplay = m.input[:m.cursor] + "█" + m.input[m.cursor:]
 	}
 
-	// Layout: title + msgArea (already \n-terminated) + sep + input
-	// = reservedLines(4) + msgH lines total — matches terminal height exactly.
 	return fmt.Sprintf("%s\n%s%s\n%s", title, msgBuf.String(), sep, inputDisplay)
 }
 
-// ── Cmd ──────────────────────────────────────────────────────────────────────
+// ── Cmd helpers ──────────────────────────────────────────────────────────────
 
-type chatResponseMsg struct {
-	response string
-	err      error
+// waitForNextToken returns a tea.Cmd that blocks until the next token or
+// stream-done signal arrives on m.tokenCh / m.errCh.
+func (m chatModel) waitForNextToken() tea.Cmd {
+	if m.tokenCh == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		tok, ok := <-m.tokenCh
+		if ok {
+			return chatStreamTokenMsg{token: tok}
+		}
+		// tokenCh closed → stream finished, drain errCh.
+		err := <-m.errCh
+		return chatStreamDoneMsg{err: err}
+	}
 }
 
 func (m chatModel) sendChatCmd(userInput string) tea.Cmd {
+	// Legacy blocking path (non-streaming).
 	return func() tea.Msg {
 		response, err := m.chatFunc(userInput)
 		return chatResponseMsg{response: response, err: err}
 	}
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
+// ── Entry points ─────────────────────────────────────────────────────────────
 
+// StartChat starts a chat TUI with a blocking ChatFunc (non-streaming).
 func StartChat(chatFunc ChatFunc, initialMessages []ChatMessage) error {
 	p := tea.NewProgram(
 		chatModel{messages: initialMessages, chatFunc: chatFunc},
+		tea.WithAltScreen(),
+	)
+	_, err := p.Run()
+	return err
+}
+
+// StartStreamChat starts a chat TUI with a streaming StreamChatFunc.
+// Tokens are rendered incrementally as they arrive.
+func StartStreamChat(ctx context.Context, streamFunc StreamChatFunc, initialMessages []ChatMessage) error {
+	p := tea.NewProgram(
+		chatModel{
+			messages:   initialMessages,
+			streamFunc: streamFunc,
+			ctx:        ctx,
+		},
 		tea.WithAltScreen(),
 	)
 	_, err := p.Run()

@@ -32,12 +32,18 @@ type Message struct {
 	Content string `json:"content"`
 }
 
+// ResponseFormat specifies the expected response format.
+type ResponseFormat struct {
+	Type string `json:"type"`
+}
+
 // CompletionParams for chat completion requests.
 type CompletionParams struct {
 	Model           string          `json:"model"`
 	Messages        []Message       `json:"messages"`
 	Stream          bool            `json:"stream,omitempty"`
 	ReasoningEffort ReasoningEffort `json:"reasoning_effort,omitempty"`
+	ResponseFormat  *ResponseFormat `json:"response_format,omitempty"`
 }
 
 // ChatCompletion for blocking responses.

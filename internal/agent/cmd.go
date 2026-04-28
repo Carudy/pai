@@ -1,3 +1,5 @@
+// pai/internal/agent/cmd.go
+
 package agent
 
 import (
@@ -16,15 +18,15 @@ type CmdResult struct {
 	Comment string `json:"comment"`
 }
 
-func GenCMD(ctx context.Context, cfg *config.UserConfig, user_input string) error {
+func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 
-	sys_prompt := BuildAgentPrompt(cfg.Prompts["cmd"], "cmd")
-	var history = []llm.Message{
-		{Role: llm.RoleSystem, Content: sys_prompt},
-		{Role: llm.RoleUser, Content: user_input},
+	sysPrompt := BuildAgentPrompt(cfg.Prompts["cmd"], "cmd")
+	history := []llm.Message{
+		{Role: llm.RoleSystem, Content: sysPrompt},
+		{Role: llm.RoleUser, Content: userInput},
 	}
 
-	content, _, err := chatStdout(ctx, cfg, cfg.Clients["cmd"], history)
+	content, _, err := chatStr(ctx, cfg, cfg.Clients["cmd"], history)
 	if err != nil {
 		return err
 	}
