@@ -56,15 +56,25 @@ func (d *DevOpsRes) ResultPretty() string {
 	if len(d.Result) == 0 {
 		return ""
 	}
-	var indentBuffer bytes.Buffer
-	err := json.Indent(&indentBuffer, d.Result, "", "  ")
 
-	if err != nil {
-		// If it's not valid JSON (just a plain string), return it trimmed
-		return strings.TrimSpace(string(d.Result))
+	// Case 1: try pretty-printing as a JSON object/array
+	var indentBuffer bytes.Buffer
+	if err := json.Indent(&indentBuffer, d.Result, "", "  "); err == nil {
+		// Only use indented JSON if it's actually an object or array
+		trimmed := bytes.TrimSpace(d.Result)
+		if len(trimmed) > 0 && (trimmed[0] == '{' || trimmed[0] == '[') {
+			return indentBuffer.String()
+		}
 	}
 
-	return indentBuffer.String()
+	// Case 2: try unquoting a JSON-encoded string (e.g. "foo\nbar")
+	var str string
+	if err := json.Unmarshal(d.Result, &str); err == nil {
+		return strings.TrimSpace(str)
+	}
+
+	// Case 3: plain text fallback
+	return strings.TrimSpace(string(d.Result))
 }
 
 func trimHistory(history []llm.Message) []llm.Message {
@@ -149,13 +159,51 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI ✅]"),
 				ui.Styles["Success"].Render(dec.ResultPretty()))
-			return nil
+
+			if cfg.Flags.Inter {
+				fmt.Printf("%s %s\n",
+					ui.Styles["TagAgent"].Render("[PAI]"),
+					ui.Styles["Info"].Render("[Awaiting for new instructions.]"))
+
+				input, err := ui.GetUserTextInput("Input:")
+				if err != nil {
+					return fmt.Errorf("user input error: %w", err)
+				}
+				if input == "" {
+					return nil
+				}
+				history = append(history, llm.Message{
+					Role:    llm.RoleUser,
+					Content: input,
+				})
+			} else {
+				return nil
+			}
 
 		case "giveup":
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI 💔]"),
 				ui.Styles["Warn"].Render(dec.ResultPretty()))
-			return nil
+
+			if cfg.Flags.Inter {
+				fmt.Printf("%s %s\n",
+					ui.Styles["TagAgent"].Render("[PAI]"),
+					ui.Styles["Info"].Render("[Awaiting for new instructions.]"))
+
+				input, err := ui.GetUserTextInput("Input:")
+				if err != nil {
+					return fmt.Errorf("user input error: %w", err)
+				}
+				if input == "" {
+					return nil
+				}
+				history = append(history, llm.Message{
+					Role:    llm.RoleUser,
+					Content: input,
+				})
+			} else {
+				return nil
+			}
 
 		case "info":
 			infoResult := dec.ResultPretty()
@@ -239,7 +287,6 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			return fmt.Errorf("unknown devops action %q", dec.Action)
 		}
 
-		// Trim history to stay within context window.
-		history = trimHistory(history)
+		// history = trimHistory(history)
 	}
 }

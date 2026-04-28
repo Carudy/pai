@@ -7,7 +7,7 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
-const PAI_VERSION = "v0.2.0"
+const PAI_VERSION = "v0.2.2"
 
 var SupportedProviders = []string{"deepseek", "mistral"}
 
