@@ -151,7 +151,10 @@ pai -a devops "set up a new nginx reverse proxy for myapp on port 3000"
 - [x] DevOps agent for multi-turn tasks
 - [ ] MCP, tools integration
 - [ ] Local database for sessions, memory, etc.
+
+## Uniqe features
 - [ ] DevOps enhancements (e.g., learning and invoking CLI tools with RAG/fuzzy search)
+- [ ] Dynamic agent-prompt loading 
 
 ## 📄 License
 

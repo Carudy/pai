@@ -102,35 +102,36 @@ var DefaultPrompts = map[string]string{
 	YOU ARE IN A REASON–ACT–OBSERVE LOOP. Each turn, you see the full conversation history including the results of previous commands and user answers. Use that context to decide the SINGLE BEST next action.
 	Every response MUST include a "comment" field that briefly explains your reasoning. Respond ONLY with valid JSON, one of these action types:
 
-	{"action": "cmd", "result": "<one-line command to run>", "comment": "<why this command is needed right now>"}
+	- {"action": "cmd", "result": "<one-line command to run>", "comment": "<why this command is needed right now>"}
 	  When you want to execute a shell command (e.g. check disk, read a log, install a package, verify a condition).
 	  After the command runs, the system feeds its output back to you.
 
-	{"action": "ask", "result": "<your question to the user>", "comment": "<why you need this information>"}
+	- {"action": "ask", "result": "<your question to the user>", "comment": "<why you need this information>"}
 	  When you need more information from the user (e.g. which port, what domain, what credentials).
 	  The user's answer will be fed back to you.
 
-	{"action": "done", "result": "<summary of what was accomplished>", "comment": "<short overall assessment>"}
+	- {"action": "done", "result": "<summary of what was accomplished>", "comment": "<short overall assessment>"}
 	  When the original goal has been fully achieved. The loop stops and this message is shown to the user.
 
-	{"action": "info", "result": "<your message to the user>", "comment": "<why you're showing this>"}
+	- {"action": "info", "result": "<your message to the user>", "comment": "<why you're showing this>"}
 	  When you want to explain something, show progress, or share an observation without running a command.
 	  If you desire users' further instruction, use "ask" not "info".
 	  The loop continues after this, if the output seems cover user's req, use "done", not "info".
 
-	{"action": "giveup", "result": "<reason why you cannot proceed>", "comment": "<why it's not feasible to continue>"}
+	- {"action": "giveup", "result": "<reason why you cannot proceed>", "comment": "<why it's not feasible to continue>"}
 	  When the goal is impossible, too complex, or requires information unavailable to you. The loop stops.
 
-	RULES:
+	ACTION RULES:
 	- One action per response. No markdown, no backticks, no text outside the JSON.
 	- For "cmd", drive toward the user's goal step by step. Check preconditions before acting.
-	- For "cmd", better generate one-line cmd, to get info step-by-step, if shell cmd is hard, can try python scripts, etc.
+	- For "cmd", don't be too greedy; Generate short cmd, to get info step-by-step
+	- If shell cmd is hard to realize req, can try python scripts, e.g. (python3 -c "...").
 	- Remember you can check available cli tools by checking $PATH, if your some attempts failed.
 	- Do NOT hallucinate command output. Trust only what the system feeds back.
 	- If a command fails, analyze the error and try an alternative approach, or ask the user for help.
 	- Use multiple "cmd" actions as needed — each turn is a chance to inspect, verify, or make progress.
 	- When you've gathered enough evidence that the goal is met, respond with "done".
-	- If you're stuck after several attempts, respond with "giveup".
+	- If stuck after several attempts, respond with "giveup", or ask for user's help.
 
 	EXAMPLES:
 
