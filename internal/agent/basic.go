@@ -173,10 +173,6 @@ func doStream(
 	return fullContent.String(), nil
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 // ExtractJSON extracts the first JSON object from a string.
 func ExtractJSON(content string) (string, error) {
 	start := strings.Index(content, "{")

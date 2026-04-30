@@ -10,7 +10,7 @@ var Styles = map[string]lipgloss.Style{
 	"Choice": lipgloss.NewStyle().PaddingLeft(0).Foreground(lipgloss.Magenta),
 	"Debug": lipgloss.NewStyle().
 		PaddingLeft(0).
-		Foreground(lipgloss.Color("245")),
+		Foreground(lipgloss.Color("245")).Italic(true),
 	"Error": lipgloss.NewStyle().
 		PaddingLeft(0).
 		Foreground(lipgloss.Red).Bold(true),

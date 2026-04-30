@@ -40,6 +40,14 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 		cfg.DefaultAgent = config.AppFlags.Agent
 	}
 
+	// Lazily load the custom prompt for the resolved agent only.
+	customPrompt, err := config.LoadCustomPrompt(cfg.DefaultAgent)
+	if err != nil {
+		config.ErrorLog(stdout, "Error loading custom prompt: %v\n", err)
+		return 1
+	}
+	cfg.CustomPrompt = customPrompt
+
 	config.DebugLog(stdout, "🔌 Connecting to %s...\n", cfg.DefaultModel)
 	llm_client, err := llm.CreateClient(cfg.Provider, cfg.APIKeys[cfg.Provider], cfg.Model, cfg.Reasoning)
 	if err != nil {

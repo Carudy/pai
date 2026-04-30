@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/Carudy/pai/internal/config"
@@ -10,13 +9,12 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
-// qaResponse is the expected JSON envelope for the QA agent.
-type qaResponse struct {
-	Answer string `json:"answer"`
-}
-
 func QA(ctx context.Context, cfg *config.UserConfig, userInput string) error {
-	sysPrompt := BuildAgentPrompt(cfg.Prompts["qa"], "qa")
+	sysPrompt, err := LoadAgentPrompt("qa", cfg.CustomPrompt)
+	if err != nil {
+		return fmt.Errorf("failed to load qa prompt: %w", err)
+	}
+
 	history := []llm.Message{
 		{Role: llm.RoleSystem, Content: sysPrompt},
 		{Role: llm.RoleUser, Content: userInput},
@@ -24,11 +22,19 @@ func QA(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 
 	// ── One-turn mode (stdout) ─────────────────────────────────────────
 	if !cfg.Flags.Inter {
-		content, _, err := chatStdout(ctx, cfg, cfg.Clients["qa"], history)
+		content, history, err := chatStr(ctx, cfg, cfg.Clients["qa"], history)
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%s\n%s", ui.Styles["TagAgent"].Render("[PAI 🤖]:"), ui.Styles["Cmd"].Render(extractAnswer(content)))
+		resp, _, err := parseResponseWithRetry(ctx, cfg, cfg.Clients["qa"], content, history)
+		if err != nil {
+			return err
+		}
+		answer, err := resp.GetPayload()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s\n%s", ui.Styles["TagAgent"].Render("[PAI 🤖]:"), ui.Styles["Cmd"].Render(answer))
 		return nil
 	}
 
@@ -64,16 +70,16 @@ func QA(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	return ui.StartStreamChat(ctx, streamFunc, initialMessages)
 }
 
-// extractAnswer parses the JSON envelope and returns just the answer text.
-// If parsing fails, returns the raw content as a fallback.
+// extractAnswer parses the unified agent JSON envelope and returns the payload
+// text. Falls back to returning raw content if parsing fails.
 func extractAnswer(raw string) string {
-	jsonStr, err := ExtractJSON(raw)
+	resp, err := ParseAgentResponse(raw)
 	if err != nil {
 		return raw
 	}
-	var resp qaResponse
-	if err := json.Unmarshal([]byte(jsonStr), &resp); err != nil {
+	answer, err := resp.GetPayload()
+	if err != nil {
 		return raw
 	}
-	return resp.Answer
+	return answer
 }

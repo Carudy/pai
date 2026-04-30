@@ -4,7 +4,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/Carudy/pai/internal/config"
@@ -13,38 +12,36 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
-type CmdResult struct {
-	Cmd     string `json:"cmd"`
-	Comment string `json:"comment"`
-}
-
 func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error {
+	sysPrompt, err := LoadAgentPrompt("cmd", cfg.CustomPrompt)
+	if err != nil {
+		return fmt.Errorf("failed to load cmd prompt: %w", err)
+	}
 
-	sysPrompt := BuildAgentPrompt(cfg.Prompts["cmd"], "cmd")
 	history := []llm.Message{
 		{Role: llm.RoleSystem, Content: sysPrompt},
 		{Role: llm.RoleUser, Content: userInput},
 	}
 
-	content, _, err := chatStr(ctx, cfg, cfg.Clients["cmd"], history)
+	content, history, err := chatStr(ctx, cfg, cfg.Clients["cmd"], history)
 	if err != nil {
 		return err
 	}
 
-	jsonStr, err := ExtractJSON(content)
+	resp, _, err := parseResponseWithRetry(ctx, cfg, cfg.Clients["cmd"], content, history)
 	if err != nil {
-		return fmt.Errorf("AI format error: %s", content)
+		return err
 	}
 
-	var result CmdResult
-	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
-		return fmt.Errorf("failed to parse command JSON: %w\nraw: %s", err, jsonStr)
+	cmd, err := resp.GetPayload()
+	if err != nil {
+		return fmt.Errorf("failed to get command from response: %w", err)
 	}
 
-	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💬]"), ui.Styles["Help"].Render(result.Comment))
-	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💻]"), ui.Styles["Info"].Render(result.Cmd))
+	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💬]"), ui.Styles["Help"].Render(resp.Reason))
+	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💻]"), ui.Styles["Info"].Render(cmd))
 
-	output, execErr := tool.ExecuteCommand(result.Cmd, true)
+	output, execErr := tool.ExecuteCommand(cmd, true)
 	if execErr != nil {
 		return fmt.Errorf("Execution Error: %v", execErr)
 	}

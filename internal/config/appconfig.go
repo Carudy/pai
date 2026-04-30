@@ -3,11 +3,12 @@ package config
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/Carudy/pai/internal/ui"
 )
 
-const PAI_VERSION = "v0.2.3"
+const PAI_VERSION = "v0.2.6"
 
 var SupportedProviders = []string{"deepseek", "mistral"}
 
@@ -23,7 +24,14 @@ var AppFlags CliFlags
 
 func DebugLog(outio io.Writer, format string, a ...any) {
 	if AppFlags.Debug {
-		fmt.Fprintf(outio, ui.Styles["Debug"].Render(format), a...)
+		msg := fmt.Sprintf(format, a...)
+		// Trim trailing newline before splitting to avoid a spurious empty last line
+		for _, line := range strings.Split(strings.TrimRight(msg, "\n"), "\n") {
+			if line != "" {
+				// Style each line individually to avoid Lip Gloss block-width padding
+				fmt.Fprintln(outio, ui.Styles["Debug"].Render("[DEBUG] "+line))
+			}
+		}
 	}
 }
 

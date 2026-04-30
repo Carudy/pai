@@ -12,7 +12,7 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
-func one_loop(
+func singleDevOpsLoop(
 	ctx context.Context,
 	cfg *config.UserConfig,
 	history []llm.Message) (bool, []llm.Message, error) {
@@ -23,9 +23,11 @@ func one_loop(
 	}
 	history = newHistory
 
-	resp, err := ParseAgentResponse(content)
+	config.DebugLog(os.Stdout, "[AI Output]:\n%s\n", content)
+
+	resp, history, err := parseResponseWithRetry(ctx, cfg, cfg.Clients["devops"], content, history)
 	if err != nil {
-		return false, nil, fmt.Errorf("AI format error: %s", content)
+		return false, nil, err
 	}
 
 	if resp.Reason != "" && resp.Action != ActionExecute && resp.Action != ActionDone {
@@ -34,40 +36,42 @@ func one_loop(
 			ui.Styles["Info"].Render(resp.Reason))
 	}
 
+	config.DebugLog(os.Stdout, "[Action]: %s\n[Reason]: %s\n", resp.Action, resp.Reason)
+
 	switch resp.Action {
 	case ActionDone:
-		info, _ := resp.GetInfo()
+		info, _ := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagAgent"].Render("[PAI ✅]"),
 			ui.Styles["Success"].Render(info))
 		return false, history, nil
 
 	case ActionTerminate:
-		info, _ := resp.GetInfo()
+		info, _ := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagAgent"].Render("[PAI 💔]"),
 			ui.Styles["Warn"].Render(info))
 		return false, history, nil
 
 	case ActionInfo:
-		info, _ := resp.GetInfo()
+		info, _ := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagAgent"].Render("[PAI ℹ️]"),
 			ui.Styles["Content"].Render(info))
 
-		history = append(history, llm.Message{
-			Role:    llm.RoleAssistant,
-			Content: "[cmd result]\n" + info,
-		})
-		if cfg.Provider == "mistral" {
-			history = append(history, llm.Message{
+		history = append(history,
+			llm.Message{
+				Role:    llm.RoleAssistant,
+				Content: "[cmd result]\n" + info,
+			},
+			llm.Message{
 				Role:    llm.RoleUser,
-				Content: "continue",
-			})
-		}
+				Content: "got it",
+			},
+		)
 
 	case ActionExecute:
-		cmd, _ := resp.GetCommand()
+		cmd, _ := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagExec"].Render("[CMD 💬]"),
 			ui.Styles["Help"].Render(resp.Reason))
@@ -106,7 +110,7 @@ func one_loop(
 		})
 
 	case ActionAsk:
-		q, _ := resp.GetQuestion()
+		q, _ := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagAgent"].Render("[PAI 🙋]"),
 			ui.Styles["Warn"].Render(q))
@@ -132,7 +136,7 @@ func one_loop(
 
 func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 
-	agent_prompt, err := LoadAgentPrompt("devops")
+	agent_prompt, err := LoadAgentPrompt("devops", cfg.CustomPrompt)
 	if err != nil {
 		return fmt.Errorf("failed to load devops prompt: %w", err)
 	}
@@ -145,7 +149,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 	}
 
 	for {
-		next_loop, new_history, err := one_loop(ctx, cfg, history)
+		next_loop, new_history, err := singleDevOpsLoop(ctx, cfg, history)
 		if err != nil {
 			return err
 		}
