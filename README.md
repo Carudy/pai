@@ -101,49 +101,7 @@ pai --debug "find large files in current directory"
 ```
 
 ### Example — CMD Agent
-```bash
-> pai -a cmd "randomly generated 3x3 numbers and write to data.csv"
-[Sys] Generating command...
-[Exec] Generates a 3x3 grid of random integers (0-9) and writes it to data.csv as comma-separated values without newline at end.
-[Exec] python3 -c "import csv,random; d=[[random.randint(0,9) for _ in range(3)] for _ in range(3)]; open('data.csv','w').write('\n'.join([','.join(map(str,r)) for r in d]))"
-Execute the command ?
-[*] Yes
-[ ] No
-  (Press q or ctrl+c to quit.)
-[Sys] Command succeeded
-[Res] (output shown here)
-
-> pai -a cmd "sum numbers in 2nd column of data.csv"
-[Sys] Generating command...
-[Exec] Calculates the sum of values in the second column of a comma-separated file.
-[Exec] awk -F',' '{sum+=$2} END {print sum}' data.csv
-Execute the command ?
-[*] Yes
-[ ] No
-  (Press q or ctrl+c to quit.)
-[Sys] Command succeeded
-[Res] 14
-```
-
-### Question Answering — QA Agent
-Get direct answers to your questions, or start an interactive multi-turn session:
-```bash
-# Single turn
-pai --agent qa "what is recursion"
-pai -a qa "explain Go goroutines in one sentence"
-
-# Interactive multi-turn chat (full TUI with scrolling)
-pai -a qa -i "help me understand Kubernetes pods"
-# Or with the short flag:
-pai -a qa -i
-```
-
-### DevOps Agent — Multi-step Autonomous Tasks
-The devops agent runs a reason–act–observe loop — it can run commands, inspect output, ask you questions, and iterate until the goal is achieved:
-```bash
-pai -a devops "check disk usage and alert if any partition is above 80%"
-pai -a devops "set up a new nginx reverse proxy for myapp on port 3000"
-```
+See examples/
 
 ## 🛣️ Todo
 - [x] User-friendly TUI/CLI packages

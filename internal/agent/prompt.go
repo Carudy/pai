@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,14 @@ import (
 	"strings"
 	"time"
 )
+
+const SelfAware = `
+Your name is PAI (Personal Agent Inside Terminal);
+You're an agent system built upon LLMs, you're developped with Golang;
+`
+
+//go:embed prompts/*.md
+var embeddedPrompts embed.FS
 
 func BuildSystemContext() string {
 	osDetail := getOSDetail()
@@ -69,10 +78,19 @@ func getOSDetail() string {
 	}
 }
 
-const SelfAware = `
-Your name is PAI (Personal Agent Inside Terminal);
-You're an agent system built upon LLMs, you're developped with Golang;
-`
+func LoadAgentPrompt(name string) (string, error) {
+	embedPath := fmt.Sprintf("prompts/%s.md", name)
+
+	if content, err := embeddedPrompts.ReadFile(embedPath); err == nil {
+		total_prompt := fmt.Sprintf("%s\n%s\nYour Terminal Info:\n%s",
+			SelfAware,
+			string(content),
+			BuildSystemContext())
+		return total_prompt, nil
+	} else {
+		return "", err
+	}
+}
 
 var DefaultPrompts = map[string]string{
 	// question-answering

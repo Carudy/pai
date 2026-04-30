@@ -33,8 +33,8 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 
 	cfg.Flags = &config.AppFlags
 
-	config.DebugLog(stdout, "📃 User Flags: %v\n", config.AppFlags)
-	config.DebugLog(stdout, "🔧 User config: %v\n", cfg)
+	config.DebugLog(stdout, "📃 User Flags: %s\n", config.AppFlags)
+	config.DebugLog(stdout, "🔧 User config: %s\n", cfg)
 
 	if config.AppFlags.Agent != "" {
 		cfg.DefaultAgent = config.AppFlags.Agent
