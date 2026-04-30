@@ -73,6 +73,7 @@ Every response MUST be a valid JSON object following schema:
 
 ## Action Rules
 - Choose ONE action per response. No markdown, backticks, or text outside the JSON.
+- For `info`, if you expect user's input, use `ask` immediately; else, continue your job, or use `done` if finished.
 - For `execute`, check preconditions first, don't be too greedy, drive toward the goal step by step. 
 - If a shell command is hard to create, try Python scripts (e.g., `python3 -c "..."`).
 - You can check available CLI tools by checking $PATH, or using `which <cli>` if some attempts fail.

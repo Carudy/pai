@@ -55,7 +55,7 @@ func singleDevOpsLoop(
 
 	case ActionInfo:
 		info := resp.GetPayload()
-		fmt.Printf("%s %s\n",
+		fmt.Printf("%s\n%s\n",
 			ui.Styles["TagAgent"].Render("[PAI ℹ️]"),
 			ui.Styles["Content"].Render(info))
 
@@ -64,11 +64,16 @@ func singleDevOpsLoop(
 				Role:    llm.RoleAssistant,
 				Content: "[cmd result]\n" + info,
 			},
+		)
+
+		// if cfg.Provider == "mistral" {
+		history = append(history,
 			llm.Message{
 				Role:    llm.RoleUser,
-				Content: "got it",
+				Content: "i see",
 			},
 		)
+		// }
 
 	case ActionExecute:
 		cmd := resp.GetPayload()

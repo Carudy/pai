@@ -24,7 +24,7 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	}
 
 	if config.AppFlags.Version {
-		fmt.Fprintf(stdout, "Pai version: %s\n", config.PAI_VERSION)
+		fmt.Fprintf(stdout, "PAI version: %s\n", config.PAI_VERSION)
 		return 0
 	}
 
@@ -37,8 +37,8 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	flags := config.AppFlags
 	cfg.Flags = &flags
 
-	config.DebugLog(stdout, "📃 User Flags: %s\n", config.AppFlags)
-	config.DebugLog(stdout, "🔧 User config: %s\n", cfg)
+	config.DebugLog(stdout, "📃 User Flags: %#v\n", config.AppFlags)
+	config.DebugLog(stdout, "🔧 User config: %#v\n", cfg)
 
 	if config.AppFlags.Agent != "" {
 		cfg.DefaultAgent = config.AppFlags.Agent
@@ -59,7 +59,7 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	}
 	cfg.CustomPrompt = customPrompt
 
-	config.DebugLog(stdout, "🔌 Connecting to %s...\n", cfg.DefaultModel)
+	config.DebugLog(stdout, "🔌 Connecting to %#v...\n", cfg.DefaultModel)
 	providerCfg := cfg.ProvidersConfigs[cfg.Provider]
 	llmClient, err := llm.CreateClient(cfg.Provider, providerCfg.APIKey, cfg.Model, providerCfg.BaseURL)
 	if err != nil {
@@ -73,7 +73,7 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 		config.ErrorLog(stdout, "Error: Please provide a user input\n")
 		return 1
 	}
-	config.DebugLog(stdout, "💬 User input: %s...\n", userInput)
+	config.DebugLog(stdout, "💬 User input: %#v...\n", userInput)
 
 	config.DebugLog(stdout, "Entering %s agent\n", cfg.DefaultAgent)
 	if err := agentFunc(ctx, cfg, userInput); err != nil {

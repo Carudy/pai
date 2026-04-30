@@ -37,9 +37,20 @@ type AgentResponse struct {
 func (r *AgentResponse) GetPayload() string {
 	var s string
 	if err := json.Unmarshal(r.Payload, &s); err == nil {
-		return s
+		return strings.TrimRight(strings.TrimSpace(s), "\n")
 	}
-	return strings.Trim(string(r.Payload), `"`)
+
+	var v any
+	if err := json.Unmarshal(r.Payload, &v); err != nil {
+		return strings.TrimRight(string(r.Payload), "\n")
+	}
+
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return strings.TrimRight(string(r.Payload), "\n")
+	}
+
+	return string(b)
 }
 
 // validActions is the set of allowed action values (matches schema.md)
