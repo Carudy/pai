@@ -39,20 +39,19 @@ func chat(
 ) (content string, newHistory []llm.Message, err error) {
 
 	params := llm.CompletionParams{
-		Model:          cfg.Model,
-		Messages:       history,
-		Stream:         opts.Stream,
-		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
-	}
-
-	if cfg.Reasoning {
-		params.ReasoningEffort = llm.ReasoningEffortHigh
+		Model:           cfg.Model,
+		Messages:        history,
+		Stream:          opts.Stream,
+		ResponseFormat:  &llm.ResponseFormat{Type: "json_object"},
+		ReasoningEffort: cfg.ReasoningEffort,
 	}
 
 	var resp *llm.ChatCompletion
 
 	if opts.Stream {
-		content, err = doStream(ctx, provider, params, opts.ReasonW, opts.OnToken, cfg.Reasoning)
+		content, err = doStream(ctx, provider, params,
+			opts.ReasonW, opts.OnToken,
+			cfg.ReasoningEffort != llm.ReasoningEffortNone)
 	} else {
 		resp, err = provider.Completion(ctx, params)
 	}
@@ -69,7 +68,7 @@ func chat(
 
 		// Print reasoning content (non-streaming, arrives in one block).
 		// Always print to stdout when reasoning is enabled, regardless of opts.
-		if cfg.Reasoning &&
+		if cfg.ReasoningEffort != llm.ReasoningEffortNone &&
 			resp.Choices[0].Reasoning != nil && resp.Choices[0].Reasoning.Content != "" {
 			fmt.Fprintf(os.Stdout, "\n%s %s\n\n",
 				ui.Styles["Reasoning"].Render("🤔"),

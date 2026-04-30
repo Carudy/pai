@@ -13,8 +13,10 @@ const (
 type ReasoningEffort string
 
 const (
-	ReasoningEffortHigh ReasoningEffort = "high"
-	ReasoningEffortNone ReasoningEffort = "none"
+	ReasoningEffortLow    ReasoningEffort = "low"
+	ReasoningEffortMedium ReasoningEffort = "medium"
+	ReasoningEffortHigh   ReasoningEffort = "high"
+	ReasoningEffortNone   ReasoningEffort = "none"
 )
 
 // Message in a chat conversation.

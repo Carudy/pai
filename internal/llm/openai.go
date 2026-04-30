@@ -7,48 +7,36 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 )
 
-// Debug enables debug logging of request URLs and other internals.
-var Debug bool
-
 // ---------------------------------------------------------------------------
 // Built-in provider specs
+// // bodyEnricher: func(body map[string]any, reasoning bool) {
+// // 	if reasoning {
+// // 		body["thinking"] = map[string]string{"type": "enabled"}
+// // 		body["reasoning_effort"] = "low"
+// // 	} else {
+// // 		body["thinking"] = map[string]string{"type": "disabled"}
+// // 	}
+// //},
 // ---------------------------------------------------------------------------
 
-var (
-	openaiSpec = providerSpec{
-		name:         "openai",
-		baseURL:      "https://api.openai.com",
-		apiPath:      "/v1/chat/completions",
-		hasReasoning: true,
-	}
-
-	deepSeekSpec = providerSpec{
-		name:         "deepseek",
-		baseURL:      "https://api.deepseek.com",
-		apiPath:      "/chat/completions",
-		hasReasoning: true,
-		bodyEnricher: func(body map[string]any, reasoning bool) {
-			if reasoning {
-				body["thinking"] = map[string]string{"type": "enabled"}
-				body["reasoning_effort"] = "high"
-			} else {
-				body["thinking"] = map[string]string{"type": "disabled"}
-			}
-		},
-	}
-
-	mistralSpec = providerSpec{
-		name:         "mistral",
-		baseURL:      "https://api.mistral.ai",
-		apiPath:      "/v1/chat/completions",
-		hasReasoning: false,
-	}
-)
+var builtInProviders = map[string]providerSpec{
+	"openai": {
+		name:    "openai",
+		baseURL: "https://api.openai.com/v1/chat/completions",
+	},
+	"deepseek": {
+		name:    "deepseek",
+		baseURL: "https://api.deepseek.com/chat/completions",
+	},
+	"mistral": {
+		name:    "mistral",
+		baseURL: "https://api.mistral.ai/v1/chat/completions",
+	},
+}
 
 // ---------------------------------------------------------------------------
 // Generic OpenAI-compatible provider
@@ -150,10 +138,7 @@ func streamReader(ctx context.Context, resp *http.Response, spec providerSpec, c
 	}
 }
 
-// ---------------------------------------------------------------------------
-// HTTP helpers
-// ---------------------------------------------------------------------------
-
+// ----------------------
 // apiError reads the error body from a non-200 response, closes it, and
 // returns a formatted error. Used by both doRequest and doRequestRaw.
 func (p *openAIProvider) apiError(resp *http.Response) error {
@@ -203,10 +188,7 @@ func (p *openAIProvider) doRequestRaw(ctx context.Context, bodyBytes []byte) (*h
 }
 
 func (p *openAIProvider) newRequest(ctx context.Context, bodyBytes []byte) (*http.Request, error) {
-	url := p.spec.baseURL + p.spec.apiPath
-	if Debug {
-		log.Printf("[LLM] %s request URL: %s", p.spec.name, url)
-	}
+	url := p.spec.baseURL
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("%s: create request: %w", p.spec.name, err)
@@ -231,14 +213,11 @@ func buildRequestBody(params CompletionParams, stream bool, spec providerSpec) m
 		body["response_format"] = params.ResponseFormat
 	}
 
-	if spec.hasReasoning {
-		if spec.bodyEnricher != nil {
-			spec.bodyEnricher(body, params.ReasoningEffort != ReasoningEffortNone)
-		} else {
-			// Default: standard OpenAI reasoning_effort.
-			if params.ReasoningEffort != "" && params.ReasoningEffort != ReasoningEffortNone {
-				body["reasoning_effort"] = string(params.ReasoningEffort)
-			}
+	if spec.bodyEnricher != nil {
+		spec.bodyEnricher(body, params.ReasoningEffort != ReasoningEffortNone)
+	} else {
+		if params.ReasoningEffort != "" && params.ReasoningEffort != ReasoningEffortNone {
+			body["reasoning_effort"] = string(params.ReasoningEffort)
 		}
 	}
 

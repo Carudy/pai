@@ -37,9 +37,6 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	flags := config.AppFlags
 	cfg.Flags = &flags
 
-	// Enable low-level LLM debug logging when --debug is set.
-	llm.Debug = config.AppFlags.Debug
-
 	config.DebugLog(stdout, "📃 User Flags: %s\n", config.AppFlags)
 	config.DebugLog(stdout, "🔧 User config: %s\n", cfg)
 
@@ -63,7 +60,7 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	cfg.CustomPrompt = customPrompt
 
 	config.DebugLog(stdout, "🔌 Connecting to %s...\n", cfg.DefaultModel)
-	providerCfg := cfg.Providers[cfg.Provider]
+	providerCfg := cfg.ProvidersConfigs[cfg.Provider]
 	llmClient, err := llm.CreateClient(cfg.Provider, providerCfg.APIKey, cfg.Model, providerCfg.BaseURL)
 	if err != nil {
 		config.ErrorLog(stdout, "Error creating LLM client: %v\n", err)

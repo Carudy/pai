@@ -18,11 +18,11 @@ type ProviderConfig struct {
 
 type UserConfig struct {
 	// --- from ~/.config/pai/config.yml ---
-	Providers    map[string]ProviderConfig `yaml:"providers"`
-	DefaultModel string                    `yaml:"default_model"`
-	DefaultAgent string                    `yaml:"default_agent"`
-	Streaming    bool                      `yaml:"streaming"`
-	Reasoning    bool                      `yaml:"reasoning"`
+	ProvidersConfigs map[string]ProviderConfig `yaml:"providers"`
+	DefaultModel     string                    `yaml:"default_model"`
+	DefaultAgent     string                    `yaml:"default_agent"`
+	Streaming        bool                      `yaml:"streaming"`
+	ReasoningEffort  llm.ReasoningEffort       `yaml:"reasoning"`
 
 	// --- resolved at runtime (lazy, after agent is known) ---
 	// CustomPrompt holds the user's prompt override for the current session's
@@ -39,10 +39,10 @@ type UserConfig struct {
 
 func defaultConfig() *UserConfig {
 	return &UserConfig{
-		DefaultModel: "deepseek:deepseek-v4-flash",
-		DefaultAgent: "devops",
-		Providers:    make(map[string]ProviderConfig),
-		Clients:      make(map[string]llm.Provider),
+		DefaultModel:     "deepseek:deepseek-v4-flash",
+		DefaultAgent:     "devops",
+		ProvidersConfigs: make(map[string]ProviderConfig),
+		Clients:          make(map[string]llm.Provider),
 	}
 }
 
@@ -124,11 +124,11 @@ func LoadCustomPrompt(agentName string) (string, error) {
 }
 
 func mergeEnvAPIKeys(cfg *UserConfig) {
-	if cfg.Providers == nil {
-		cfg.Providers = make(map[string]ProviderConfig)
+	if cfg.ProvidersConfigs == nil {
+		cfg.ProvidersConfigs = make(map[string]ProviderConfig)
 	}
 	for _, provider := range SupportedProviders {
-		pc, exists := cfg.Providers[provider]
+		pc, exists := cfg.ProvidersConfigs[provider]
 		if !exists {
 			pc = ProviderConfig{}
 		}
@@ -138,7 +138,7 @@ func mergeEnvAPIKeys(cfg *UserConfig) {
 		envKey := strings.ToUpper(provider) + "_API_KEY"
 		if val := os.Getenv(envKey); val != "" {
 			pc.APIKey = val
-			cfg.Providers[provider] = pc
+			cfg.ProvidersConfigs[provider] = pc
 		}
 	}
 }
