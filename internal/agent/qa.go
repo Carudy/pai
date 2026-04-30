@@ -30,10 +30,7 @@ func QA(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 		if err != nil {
 			return err
 		}
-		answer, err := resp.GetPayload()
-		if err != nil {
-			return err
-		}
+		answer := resp.GetPayload()
 		fmt.Printf("%s\n%s", ui.Styles["TagAgent"].Render("[PAI 🤖]:"), ui.Styles["Cmd"].Render(answer))
 		return nil
 	}
@@ -77,9 +74,5 @@ func extractAnswer(raw string) string {
 	if err != nil {
 		return raw
 	}
-	answer, err := resp.GetPayload()
-	if err != nil {
-		return raw
-	}
-	return answer
+	return resp.GetPayload()
 }

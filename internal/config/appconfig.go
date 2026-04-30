@@ -36,5 +36,6 @@ func DebugLog(outio io.Writer, format string, a ...any) {
 }
 
 func ErrorLog(outio io.Writer, format string, a ...any) {
-	fmt.Fprintf(outio, ui.Styles["Error"].Render(format), a...)
+	msg := fmt.Sprintf(format, a...)
+	fmt.Fprint(outio, ui.Styles["Error"].Render(msg))
 }

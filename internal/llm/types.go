@@ -9,21 +9,12 @@ const (
 	RoleAssistant = "assistant"
 )
 
-// Finish reasons
-const (
-	FinishReasonStop   = "stop"
-	FinishReasonLength = "length"
-)
-
 // ReasoningEffort levels for extended thinking.
 type ReasoningEffort string
 
 const (
-	ReasoningEffortAuto   ReasoningEffort = "auto"
-	ReasoningEffortHigh   ReasoningEffort = "high"
-	ReasoningEffortLow    ReasoningEffort = "low"
-	ReasoningEffortMedium ReasoningEffort = "medium"
-	ReasoningEffortNone   ReasoningEffort = "none"
+	ReasoningEffortHigh ReasoningEffort = "high"
+	ReasoningEffortNone ReasoningEffort = "none"
 )
 
 // Message in a chat conversation.

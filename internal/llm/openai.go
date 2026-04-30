@@ -79,7 +79,7 @@ func (p *openAIProvider) Completion(ctx context.Context, params CompletionParams
 		return nil, err
 	}
 
-	return parseCompletion(rawBody), nil
+	return parseCompletion(rawBody)
 }
 
 func (p *openAIProvider) CompletionStream(ctx context.Context, params CompletionParams) (<-chan ChatCompletionChunk, <-chan error) {
@@ -150,6 +150,14 @@ func streamReader(ctx context.Context, resp *http.Response, spec providerSpec, c
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
+// apiError reads the error body from a non-200 response, closes it, and
+// returns a formatted error. Used by both doRequest and doRequestRaw.
+func (p *openAIProvider) apiError(resp *http.Response) error {
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return fmt.Errorf("%s: API error (status %d): %s", p.spec.name, resp.StatusCode, string(body))
+}
+
 func (p *openAIProvider) doRequest(ctx context.Context, bodyBytes []byte) ([]byte, error) {
 	req, err := p.newRequest(ctx, bodyBytes)
 	if err != nil {
@@ -163,8 +171,7 @@ func (p *openAIProvider) doRequest(ctx context.Context, bodyBytes []byte) ([]byt
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%s: API error (status %d): %s", p.spec.name, resp.StatusCode, string(body))
+		return nil, p.apiError(resp)
 	}
 
 	rawBody, err := io.ReadAll(resp.Body)
@@ -186,9 +193,7 @@ func (p *openAIProvider) doRequestRaw(ctx context.Context, bodyBytes []byte) (*h
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("%s: API error (status %d): %s", p.spec.name, resp.StatusCode, string(body))
+		return nil, p.apiError(resp)
 	}
 	return resp, nil
 }
@@ -224,7 +229,7 @@ func buildRequestBody(params CompletionParams, stream bool, spec providerSpec) m
 		} else {
 			// Default: standard OpenAI reasoning_effort.
 			if params.ReasoningEffort != "" && params.ReasoningEffort != ReasoningEffortNone {
-				body["reasoning_effort"] = "high"
+				body["reasoning_effort"] = string(params.ReasoningEffort)
 			}
 		}
 	}
@@ -266,10 +271,10 @@ type rawUsageDetails struct {
 	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
-func parseCompletion(raw []byte) *ChatCompletion {
+func parseCompletion(raw []byte) (*ChatCompletion, error) {
 	var r rawCompletion
 	if err := json.Unmarshal(raw, &r); err != nil {
-		return nil
+		return nil, fmt.Errorf("parse completion response: %w", err)
 	}
 
 	cc := &ChatCompletion{
@@ -303,7 +308,7 @@ func parseCompletion(raw []byte) *ChatCompletion {
 		cc.Choices = append(cc.Choices, c)
 	}
 
-	return cc
+	return cc, nil
 }
 
 // rawChunk mirrors the OpenAI-compatible streaming chunk JSON shape.

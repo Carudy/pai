@@ -35,21 +35,26 @@ func defaultConfig() *UserConfig {
 	return &UserConfig{
 		DefaultModel: "deepseek:deepseek-v4-flash",
 		DefaultAgent: "devops",
-		Streaming:    false,
-		Reasoning:    false,
 		APIKeys:      make(map[string]string),
 		Clients:      make(map[string]llm.Provider),
-		Flags:        nil,
 	}
 }
 
-func LoadUserConfig() (*UserConfig, error) {
-	homeDir, err := os.UserHomeDir()
+// configDir returns the path to ~/.config/pai, the directory where pai
+// stores its config files.
+func configDir() (string, error) {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get home dir: %w", err)
+		return "", fmt.Errorf("failed to get home dir: %w", err)
 	}
+	return filepath.Join(home, ".config", "pai"), nil
+}
 
-	cfgDir := filepath.Join(homeDir, ".config", "pai")
+func LoadUserConfig() (*UserConfig, error) {
+	cfgDir, err := configDir()
+	if err != nil {
+		return nil, err
+	}
 	cfg := defaultConfig()
 
 	// ── config.yml (basic settings) ───────────────────────────────────────
@@ -86,20 +91,15 @@ func loadYAML(path string, dst any) error {
 	return nil
 }
 
-// agentPromptEntry is the per-agent entry in prompts.yml.
-type agentPromptEntry struct {
-	Prompt string `yaml:"prompt"`
-}
-
 // LoadCustomPrompt reads ~/.config/pai/prompts.yml and returns the custom
 // prompt text for agentName, or "" if the file is missing or the agent has no
 // entry. Call this after the session agent has been resolved.
 func LoadCustomPrompt(agentName string) (string, error) {
-	homeDir, err := os.UserHomeDir()
+	cfgDir, err := configDir()
 	if err != nil {
-		return "", fmt.Errorf("failed to get home dir: %w", err)
+		return "", err
 	}
-	path := filepath.Join(homeDir, ".config", "pai", "prompts.yml")
+	path := filepath.Join(cfgDir, "prompts.yml")
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -108,7 +108,9 @@ func LoadCustomPrompt(agentName string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to read %s: %w", path, err)
 	}
-	var entries map[string]agentPromptEntry
+	var entries map[string]struct {
+		Prompt string `yaml:"prompt"`
+	}
 	if err := yaml.Unmarshal(data, &entries); err != nil {
 		return "", fmt.Errorf("failed to parse %s: %w", path, err)
 	}

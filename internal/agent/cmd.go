@@ -1,5 +1,3 @@
-// pai/internal/agent/cmd.go
-
 package agent
 
 import (
@@ -33,10 +31,7 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		return err
 	}
 
-	cmd, err := resp.GetPayload()
-	if err != nil {
-		return fmt.Errorf("failed to get command from response: %w", err)
-	}
+	cmd := resp.GetPayload()
 
 	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💬]"), ui.Styles["Help"].Render(resp.Reason))
 	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💻]"), ui.Styles["Info"].Render(cmd))
@@ -45,7 +40,7 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error
 	if execErr != nil {
 		return fmt.Errorf("Execution Error: %v", execErr)
 	}
-	if output.Output != "[user cancelled execution]" {
+	if output.Output != tool.CancelledOutput {
 		fmt.Printf("%s ✅ %s\n", ui.Styles["TagSystem"].Render("[SYS]"), ui.Styles["Success"].Render("Command succeeded"))
 		fmt.Printf("%s\n%s\n", ui.Styles["TagResult"].Render("[RES]"), ui.Styles["Cmd"].Render(output.String()))
 	} else {

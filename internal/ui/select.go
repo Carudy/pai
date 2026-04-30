@@ -23,11 +23,11 @@ func (m selectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = -1
 			return m, tea.Quit
 
-		case "up", "j":
-			m.cursor = (m.cursor + 1) % len(m.choices)
-
-		case "down", "k":
+		case "up", "k":
 			m.cursor = (m.cursor - 1 + len(m.choices)) % len(m.choices)
+
+		case "down", "j":
+			m.cursor = (m.cursor + 1) % len(m.choices)
 
 		case "enter", "space":
 			return m, tea.Quit
@@ -56,16 +56,15 @@ func GetUserSelected(prompt string, choices []string) (string, error) {
 	m := selectModel{
 		prompt:  prompt,
 		choices: choices,
-		cursor:  0,
 	}
 	p := tea.NewProgram(m)
-	m_res, err := p.Run()
+	res, err := p.Run()
 	if err != nil {
 		return "", err
 	}
-	_id := m_res.(selectModel).cursor
-	if _id < 0 {
+	idx := res.(selectModel).cursor
+	if idx < 0 {
 		return "None", nil
 	}
-	return m.choices[_id], nil
+	return m.choices[idx], nil
 }

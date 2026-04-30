@@ -40,21 +40,21 @@ func singleDevOpsLoop(
 
 	switch resp.Action {
 	case ActionDone:
-		info, _ := resp.GetPayload()
+		info := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagAgent"].Render("[PAI ✅]"),
 			ui.Styles["Success"].Render(info))
 		return false, history, nil
 
 	case ActionTerminate:
-		info, _ := resp.GetPayload()
+		info := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagAgent"].Render("[PAI 💔]"),
 			ui.Styles["Warn"].Render(info))
 		return false, history, nil
 
 	case ActionInfo:
-		info, _ := resp.GetPayload()
+		info := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagAgent"].Render("[PAI ℹ️]"),
 			ui.Styles["Content"].Render(info))
@@ -71,7 +71,7 @@ func singleDevOpsLoop(
 		)
 
 	case ActionExecute:
-		cmd, _ := resp.GetPayload()
+		cmd := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagExec"].Render("[CMD 💬]"),
 			ui.Styles["Help"].Render(resp.Reason))
@@ -85,7 +85,7 @@ func singleDevOpsLoop(
 				ui.Styles["TagSystem"].Render("[SYS]"),
 				ui.Styles["Warn"].Render("Command failed"),
 				ui.Styles["Warn"].Render(output.Output))
-		} else if output.Output == "[user cancelled execution]" {
+		} else if output.Output == tool.CancelledOutput {
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagSystem"].Render("[SYS]"),
 				ui.Styles["Subdued"].Render("Skipped"))
@@ -110,7 +110,7 @@ func singleDevOpsLoop(
 		})
 
 	case ActionAsk:
-		q, _ := resp.GetPayload()
+		q := resp.GetPayload()
 		fmt.Printf("%s %s\n",
 			ui.Styles["TagAgent"].Render("[PAI 🙋]"),
 			ui.Styles["Warn"].Render(q))
@@ -136,26 +136,26 @@ func singleDevOpsLoop(
 
 func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 
-	agent_prompt, err := LoadAgentPrompt("devops", cfg.CustomPrompt)
+	agentPrompt, err := LoadAgentPrompt("devops", cfg.CustomPrompt)
 	if err != nil {
 		return fmt.Errorf("failed to load devops prompt: %w", err)
 	}
 
-	config.DebugLog(os.Stdout, "Agent prompt: %s\n", agent_prompt)
+	config.DebugLog(os.Stdout, "Agent prompt: %s\n", agentPrompt)
 
 	history := []llm.Message{
-		{Role: llm.RoleSystem, Content: agent_prompt},
+		{Role: llm.RoleSystem, Content: agentPrompt},
 		{Role: llm.RoleUser, Content: userInput},
 	}
 
 	for {
-		next_loop, new_history, err := singleDevOpsLoop(ctx, cfg, history)
+		nextLoop, newHistory, err := singleDevOpsLoop(ctx, cfg, history)
 		if err != nil {
 			return err
 		}
 
-		if next_loop {
-			history = new_history
+		if nextLoop {
+			history = newHistory
 		} else if cfg.Flags.Inter {
 			fmt.Printf("%s %s\n",
 				ui.Styles["TagAgent"].Render("[PAI]"),

@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/charmbracelet/lipgloss"
 )
 
 func GetUserTextInput(prompt string) (string, error) {
 	// Print the prompt using the same Warn style as before.
 	fmt.Fprintln(os.Stdout, Styles["Warn"].Render(prompt))
-	fmt.Fprint(os.Stdout, Styles["Help"].Render("▊ ")+lipgloss.NewStyle().Faint(true).Render("(type/paste here, enter to confirm, ctrl+c to cancel)")+"\n> ")
+	fmt.Fprint(os.Stdout, Styles["Help"].Render("▊ ")+Styles["Hint"].Render("(type/paste here, enter to confirm, ctrl+c to cancel)")+"\n> ")
 
 	scanner := bufio.NewScanner(os.Stdin)
 	if !scanner.Scan() {

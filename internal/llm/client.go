@@ -8,10 +8,9 @@ import "fmt"
 
 // ProviderConfig holds common configuration for creating a provider.
 type ProviderConfig struct {
-	APIKey    string
-	Model     string
-	BaseURL   string
-	Reasoning bool
+	APIKey  string
+	Model   string
+	BaseURL string
 }
 
 // providerFactory creates a Provider from config.
@@ -21,16 +20,12 @@ type providerFactory func(cfg ProviderConfig) Provider
 // Provider registry
 // ---------------------------------------------------------------------------
 
-var (
-	providers     = map[string]providerFactory{}
-	providerDescs = map[string]string{} // for error messages
-)
+var providers = map[string]providerFactory{}
 
 // registerProvider registers a provider constructor under the given name.
 // Called from init() in provider-specific files.
-func registerProvider(name, description string, factory providerFactory) {
+func registerProvider(name string, factory providerFactory) {
 	providers[name] = factory
-	providerDescs[name] = description
 }
 
 // ---------------------------------------------------------------------------
@@ -88,25 +83,15 @@ func NewMistralProvider(cfg ProviderConfig) Provider {
 // ---------------------------------------------------------------------------
 
 // CreateClient creates the appropriate Provider based on provider name.
-func CreateClient(providerName string, apiKey string, model string, reasoning bool) (Provider, error) {
+func CreateClient(providerName, apiKey, model string) (Provider, error) {
 	factory, ok := providers[providerName]
 	if !ok {
 		return nil, fmt.Errorf("unsupported provider: %s", providerName)
 	}
 	return factory(ProviderConfig{
-		APIKey:    apiKey,
-		Model:     model,
-		Reasoning: reasoning,
+		APIKey: apiKey,
+		Model:  model,
 	}), nil
-}
-
-// RegisteredProviders returns the list of registered provider names.
-func RegisteredProviders() []string {
-	names := make([]string, 0, len(providers))
-	for name := range providers {
-		names = append(names, name)
-	}
-	return names
 }
 
 // ---------------------------------------------------------------------------
@@ -114,13 +99,7 @@ func RegisteredProviders() []string {
 // ---------------------------------------------------------------------------
 
 func init() {
-	registerProvider("openai", "OpenAI API", func(cfg ProviderConfig) Provider {
-		return NewOpenAIProvider(cfg)
-	})
-	registerProvider("deepseek", "DeepSeek API", func(cfg ProviderConfig) Provider {
-		return NewDeepSeekProvider(cfg)
-	})
-	registerProvider("mistral", "Mistral AI API", func(cfg ProviderConfig) Provider {
-		return NewMistralProvider(cfg)
-	})
+	registerProvider("openai", NewOpenAIProvider)
+	registerProvider("deepseek", NewDeepSeekProvider)
+	registerProvider("mistral", NewMistralProvider)
 }

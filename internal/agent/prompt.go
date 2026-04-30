@@ -13,7 +13,7 @@ import (
 
 const SelfAware = `
 Your name is PAI (Personal Agent Inside Terminal);
-You're an agent system built upon LLMs, you're developped with Golang;
+You're an agent system built upon LLMs, you're developed with Golang;
 `
 
 //go:embed prompts/*.md
@@ -79,12 +79,10 @@ func getOSDetail() string {
 func LoadAgentPrompt(name, customContent string) (string, error) {
 	var body string
 
-	switch {
-	case strings.TrimSpace(customContent) != "":
+	if strings.TrimSpace(customContent) != "" {
 		// User-supplied inline prompt from prompts.yml
 		body = customContent
-
-	default:
+	} else {
 		// Try disk first (dev hot-reload), then fall back to embedded
 		diskPath := filepath.Join("internal", "agent", "prompts", name+".md")
 		if data, err := os.ReadFile(diskPath); err == nil {

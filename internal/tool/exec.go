@@ -13,6 +13,12 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
+// CancelledOutput is the sentinel value stored in ExecResult.Output when the
+// user declines to run the command at the confirmation prompt.
+const CancelledOutput = "[user cancelled execution]"
+
+const cmdTimeout = 30 * time.Second
+
 // ExecResult contains the result of executing a command.
 // It includes the command output, exit code, and whether the command timed out.
 // The String() method formats the result for display.
@@ -33,20 +39,16 @@ func (r ExecResult) String() string {
 // It handles single quotes, double quotes, and backticks.
 func trimCmd(cmd string) string {
 	cmd = strings.TrimSpace(cmd)
-
-	if len(cmd) >= 2 {
-		if (cmd[0] == '"' && cmd[len(cmd)-1] == '"') ||
-			(cmd[0] == '\'' && cmd[len(cmd)-1] == '\'') {
-			cmd = cmd[1 : len(cmd)-1]
+	n := len(cmd)
+	if n >= 2 {
+		first, last := cmd[0], cmd[n-1]
+		if (first == '"' && last == '"') ||
+			(first == '\'' && last == '\'') ||
+			(first == '`' && last == '`') {
+			cmd = cmd[1 : n-1]
 		}
 	}
-
-	if len(cmd) >= 2 && cmd[0] == '`' && cmd[len(cmd)-1] == '`' {
-		cmd = cmd[1 : len(cmd)-1]
-	}
-
-	cmd = strings.TrimSpace(cmd)
-	return cmd
+	return strings.TrimSpace(cmd)
 }
 
 // ExecuteCommand runs the specified command using the system shell (or cmd/powershell on Windows).
@@ -64,8 +66,6 @@ func ExecuteCommand(command string, userConfirm bool) (ExecResult, error) {
 	if command == "" {
 		return ExecResult{}, fmt.Errorf("command must not be empty")
 	}
-
-	var timeout = 30 * time.Second
 
 	var shell, shellArg string
 	if runtime.GOOS == "windows" {
@@ -95,11 +95,11 @@ func ExecuteCommand(command string, userConfirm bool) (ExecResult, error) {
 			return ExecResult{}, fmt.Errorf("user interaction error: %w", err)
 		}
 		if exeRes != "Yes" {
-			return ExecResult{ExitCode: -1, Output: "[user cancelled execution]"}, nil
+			return ExecResult{ExitCode: -1, Output: CancelledOutput}, nil
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, shell, shellArg, command)
@@ -123,6 +123,5 @@ func ExecuteCommand(command string, userConfirm bool) (ExecResult, error) {
 		return result, fmt.Errorf("execution error: %w", err)
 	}
 
-	result.ExitCode = 0
 	return result, nil
 }

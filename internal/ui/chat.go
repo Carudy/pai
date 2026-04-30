@@ -13,9 +13,6 @@ type ChatMessage struct {
 	Content string
 }
 
-// ChatFunc is a synchronous chat callback (non-streaming).
-type ChatFunc func(userInput string) (string, error)
-
 // StreamChatFunc is a streaming chat callback. It receives the user input and a
 // token handler. The handler is called with each content token as it arrives.
 // The return value is the full response text (same as what was sent via onToken).
@@ -34,7 +31,6 @@ type chatModel struct {
 	scrollOffset int
 	width        int
 	height       int
-	chatFunc     ChatFunc
 	streamFunc   StreamChatFunc
 	ctx          context.Context
 	quitting     bool
@@ -96,8 +92,6 @@ func renderAllLines(messages []ChatMessage, contentWidth int) []string {
 		"assistant": "[PAI]",
 		"user":      "[You]",
 	}
-	const indent = "      "
-
 	var lines []string
 	for _, msg := range messages {
 		tag, ok := tagFor[msg.Role]
@@ -109,7 +103,7 @@ func renderAllLines(messages []ChatMessage, contentWidth int) []string {
 			if i == 0 {
 				lines = append(lines, tag+" "+l)
 			} else {
-				lines = append(lines, indent+l)
+				lines = append(lines, strings.Repeat(" ", prefixLen)+l)
 			}
 		}
 		lines = append(lines, "")
@@ -139,7 +133,7 @@ func (m chatModel) allDisplayLines() []string {
 			if i == 0 {
 				lines = append(lines, "[PAI] "+l)
 			} else {
-				lines = append(lines, "      "+l)
+				lines = append(lines, strings.Repeat(" ", prefixLen)+l)
 			}
 		}
 		lines = append(lines, "")
@@ -306,11 +300,7 @@ func (m chatModel) View() string {
 	msgH := m.msgAreaHeight()
 	allLines := m.allDisplayLines()
 
-	maxScroll := len(allLines) - msgH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	offset := clamp(m.scrollOffset, 0, maxScroll)
+	offset := clamp(m.scrollOffset, 0, m.maxScroll())
 
 	end := len(allLines) - offset
 	start := end - msgH
@@ -373,25 +363,7 @@ func (m chatModel) waitForNextToken() tea.Cmd {
 	}
 }
 
-func (m chatModel) sendChatCmd(userInput string) tea.Cmd {
-	// Legacy blocking path (non-streaming).
-	return func() tea.Msg {
-		response, err := m.chatFunc(userInput)
-		return chatResponseMsg{response: response, err: err}
-	}
-}
-
 // ── Entry points ─────────────────────────────────────────────────────────────
-
-// StartChat starts a chat TUI with a blocking ChatFunc (non-streaming).
-func StartChat(chatFunc ChatFunc, initialMessages []ChatMessage) error {
-	p := tea.NewProgram(
-		chatModel{messages: initialMessages, chatFunc: chatFunc},
-		tea.WithAltScreen(),
-	)
-	_, err := p.Run()
-	return err
-}
 
 // StartStreamChat starts a chat TUI with a streaming StreamChatFunc.
 // Tokens are rendered incrementally as they arrive.

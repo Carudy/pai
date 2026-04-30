@@ -11,17 +11,20 @@ import (
 	"github.com/Carudy/pai/internal/llm"
 )
 
-var AgentMap = map[string]func(ctx context.Context, cfg *config.UserConfig, user_input string) error{
+var AgentMap = map[string]func(ctx context.Context, cfg *config.UserConfig, userInput string) error{
 	"qa":     agent.QA,
 	"cmd":    agent.GenCMD,
 	"devops": agent.DevOps,
 }
 
-func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) int {
-	GetFlags(args)
+func Run(ctx context.Context, stdout io.Writer, args []string) int {
+	if err := GetFlags(args); err != nil {
+		config.ErrorLog(stdout, "Error parsing flags: %v\n", err)
+		return 1
+	}
 
 	if config.AppFlags.Version {
-		fmt.Fprintf(stdout, "Pai verion: %s\n", config.PAI_VERSION)
+		fmt.Fprintf(stdout, "Pai version: %s\n", config.PAI_VERSION)
 		return 0
 	}
 
@@ -31,13 +34,21 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 		return 1
 	}
 
-	cfg.Flags = &config.AppFlags
+	flags := config.AppFlags
+	cfg.Flags = &flags
 
 	config.DebugLog(stdout, "📃 User Flags: %s\n", config.AppFlags)
 	config.DebugLog(stdout, "🔧 User config: %s\n", cfg)
 
 	if config.AppFlags.Agent != "" {
 		cfg.DefaultAgent = config.AppFlags.Agent
+	}
+
+	// Validate agent early, before loading prompt or creating LLM client.
+	agentFunc, ok := AgentMap[cfg.DefaultAgent]
+	if !ok {
+		config.ErrorLog(stdout, "Error: Unsupported PAI agent: \"%s\"\n", cfg.DefaultAgent)
+		return 1
 	}
 
 	// Lazily load the custom prompt for the resolved agent only.
@@ -49,30 +60,25 @@ func Run(ctx context.Context, stdin io.Reader, stdout io.Writer, args []string) 
 	cfg.CustomPrompt = customPrompt
 
 	config.DebugLog(stdout, "🔌 Connecting to %s...\n", cfg.DefaultModel)
-	llm_client, err := llm.CreateClient(cfg.Provider, cfg.APIKeys[cfg.Provider], cfg.Model, cfg.Reasoning)
+	llmClient, err := llm.CreateClient(cfg.Provider, cfg.APIKeys[cfg.Provider], cfg.Model)
 	if err != nil {
 		config.ErrorLog(stdout, "Error creating LLM client: %v\n", err)
 		return 1
 	}
-	cfg.Clients[cfg.DefaultAgent] = llm_client
+	cfg.Clients[cfg.DefaultAgent] = llmClient
 
-	user_input := strings.TrimSpace(config.AppFlags.Input)
-	if user_input == "" && !config.AppFlags.Inter {
+	userInput := strings.TrimSpace(config.AppFlags.Input)
+	if userInput == "" && !config.AppFlags.Inter {
 		config.ErrorLog(stdout, "Error: Please provide a user input\n")
 		return 1
 	}
-	config.DebugLog(stdout, "💬 User input: %s...\n", user_input)
+	config.DebugLog(stdout, "💬 User input: %s...\n", userInput)
 
-	if agent_func, ok := AgentMap[cfg.DefaultAgent]; ok {
-		config.DebugLog(stdout, "Entering %s agent\n", cfg.DefaultAgent)
-		if err := agent_func(ctx, cfg, user_input); err != nil {
-			config.ErrorLog(stdout, "Error in %s agent: %v\n", cfg.DefaultAgent, err)
-			return 1
-		}
-		config.DebugLog(stdout, "Agent %s exit successfully.\n", cfg.DefaultAgent)
-		return 0
-	} else {
-		config.ErrorLog(stdout, "Error: Unsupported PAI agent: \"%s\"\n", cfg.DefaultAgent)
+	config.DebugLog(stdout, "Entering %s agent\n", cfg.DefaultAgent)
+	if err := agentFunc(ctx, cfg, userInput); err != nil {
+		config.ErrorLog(stdout, "Error in %s agent: %v\n", cfg.DefaultAgent, err)
 		return 1
 	}
+	config.DebugLog(stdout, "Agent %s exit successfully.\n", cfg.DefaultAgent)
+	return 0
 }

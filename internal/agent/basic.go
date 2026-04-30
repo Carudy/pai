@@ -19,11 +19,9 @@ import (
 // chatOpts configures a chat call. All agents enforce JSON output
 // (response_format: json_object), so that field is always set internally.
 type chatOpts struct {
-	Stream    bool
-	OutputW   io.Writer    // where to print the final answer (nil = suppress)
-	ReasonW   io.Writer    // where to print reasoning tokens (nil = suppress)
-	OnToken   func(string) // per-token callback for streaming (nil = suppress)
-	Reasoning bool         // whether the LLM was asked to reason (cfg.Reasoning)
+	Stream  bool
+	ReasonW io.Writer    // where to print reasoning tokens (nil → stdout when reasoning enabled)
+	OnToken func(string) // per-token callback for streaming (nil = suppress)
 }
 
 // ---------------------------------------------------------------------------
@@ -47,7 +45,6 @@ func chat(
 		ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
 	}
 
-	opts.Reasoning = cfg.Reasoning
 	if cfg.Reasoning {
 		params.ReasoningEffort = llm.ReasoningEffortHigh
 	}
@@ -55,7 +52,7 @@ func chat(
 	var resp *llm.ChatCompletion
 
 	if opts.Stream {
-		content, err = doStream(ctx, provider, params, opts.ReasonW, opts.OnToken, opts.Reasoning)
+		content, err = doStream(ctx, provider, params, opts.ReasonW, opts.OnToken, cfg.Reasoning)
 	} else {
 		resp, err = provider.Completion(ctx, params)
 	}
@@ -72,7 +69,7 @@ func chat(
 
 		// Print reasoning content (non-streaming, arrives in one block).
 		// Always print to stdout when reasoning is enabled, regardless of opts.
-		if opts.Reasoning &&
+		if cfg.Reasoning &&
 			resp.Choices[0].Reasoning != nil && resp.Choices[0].Reasoning.Content != "" {
 			fmt.Fprintf(os.Stdout, "\n%s %s\n\n",
 				ui.Styles["Reasoning"].Render("🤔"),
@@ -93,15 +90,6 @@ func chat(
 func chatStr(ctx context.Context, cfg *config.UserConfig, provider llm.Provider, history []llm.Message) (string, []llm.Message, error) {
 	return chat(ctx, cfg, provider, history, chatOpts{
 		Stream: cfg.Streaming,
-	})
-}
-
-// chatStdout prints the final answer to stdout (respects cfg.Streaming).
-func chatStdout(ctx context.Context, cfg *config.UserConfig, provider llm.Provider, history []llm.Message) (string, []llm.Message, error) {
-	return chat(ctx, cfg, provider, history, chatOpts{
-		Stream:  cfg.Streaming,
-		OutputW: os.Stdout,
-		ReasonW: os.Stdout,
 	})
 }
 
@@ -173,8 +161,8 @@ func doStream(
 	return fullContent.String(), nil
 }
 
-// ExtractJSON extracts the first JSON object from a string.
-func ExtractJSON(content string) (string, error) {
+// extractJSON extracts the first JSON object from a string.
+func extractJSON(content string) (string, error) {
 	start := strings.Index(content, "{")
 	end := strings.LastIndex(content, "}")
 	if start == -1 || end == -1 || end < start {
