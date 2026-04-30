@@ -7,9 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 )
+
+// Debug enables debug logging of request URLs and other internals.
+var Debug bool
 
 // ---------------------------------------------------------------------------
 // Built-in provider specs
@@ -199,7 +203,11 @@ func (p *openAIProvider) doRequestRaw(ctx context.Context, bodyBytes []byte) (*h
 }
 
 func (p *openAIProvider) newRequest(ctx context.Context, bodyBytes []byte) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.spec.baseURL+p.spec.apiPath, bytes.NewReader(bodyBytes))
+	url := p.spec.baseURL + p.spec.apiPath
+	if Debug {
+		log.Printf("[LLM] %s request URL: %s", p.spec.name, url)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("%s: create request: %w", p.spec.name, err)
 	}

@@ -8,9 +8,12 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
-const PAI_VERSION = "v0.2.6"
+const PAI_VERSION = "v0.2.7"
 
-var SupportedProviders = []string{"deepseek", "mistral"}
+// SupportedProviders lists the provider names that have built-in specs
+// (base URL, API path, etc.) in the llm package. Unknown providers
+// use the generic OpenAI-compatible provider with user-supplied base URL.
+var SupportedProviders = []string{"deepseek", "mistral", "openai"}
 
 type CliFlags struct {
 	Version bool

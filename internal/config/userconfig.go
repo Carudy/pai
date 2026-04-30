@@ -10,13 +10,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ProviderConfig holds per-provider settings from the user config.
+type ProviderConfig struct {
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"`
+}
+
 type UserConfig struct {
 	// --- from ~/.config/pai/config.yml ---
-	APIKeys      map[string]string `yaml:"api_keys"`
-	DefaultModel string            `yaml:"default_model"`
-	DefaultAgent string            `yaml:"default_agent"`
-	Streaming    bool              `yaml:"streaming"`
-	Reasoning    bool              `yaml:"reasoning"`
+	Providers    map[string]ProviderConfig `yaml:"providers"`
+	DefaultModel string                    `yaml:"default_model"`
+	DefaultAgent string                    `yaml:"default_agent"`
+	Streaming    bool                      `yaml:"streaming"`
+	Reasoning    bool                      `yaml:"reasoning"`
 
 	// --- resolved at runtime (lazy, after agent is known) ---
 	// CustomPrompt holds the user's prompt override for the current session's
@@ -35,7 +41,7 @@ func defaultConfig() *UserConfig {
 	return &UserConfig{
 		DefaultModel: "deepseek:deepseek-v4-flash",
 		DefaultAgent: "devops",
-		APIKeys:      make(map[string]string),
+		Providers:    make(map[string]ProviderConfig),
 		Clients:      make(map[string]llm.Provider),
 	}
 }
@@ -118,16 +124,21 @@ func LoadCustomPrompt(agentName string) (string, error) {
 }
 
 func mergeEnvAPIKeys(cfg *UserConfig) {
-	if cfg.APIKeys == nil {
-		cfg.APIKeys = make(map[string]string)
+	if cfg.Providers == nil {
+		cfg.Providers = make(map[string]ProviderConfig)
 	}
 	for _, provider := range SupportedProviders {
-		if _, exists := cfg.APIKeys[provider]; exists {
+		pc, exists := cfg.Providers[provider]
+		if !exists {
+			pc = ProviderConfig{}
+		}
+		if pc.APIKey != "" {
 			continue
 		}
 		envKey := strings.ToUpper(provider) + "_API_KEY"
 		if val := os.Getenv(envKey); val != "" {
-			cfg.APIKeys[provider] = val
+			pc.APIKey = val
+			cfg.Providers[provider] = pc
 		}
 	}
 }

@@ -83,14 +83,27 @@ func NewMistralProvider(cfg ProviderConfig) Provider {
 // ---------------------------------------------------------------------------
 
 // CreateClient creates the appropriate Provider based on provider name.
-func CreateClient(providerName, apiKey, model string) (Provider, error) {
+// If baseURL is non-empty, it overrides the provider's default base URL.
+// Unknown providers use the generic OpenAI-compatible provider; for those,
+// baseURL is treated as the full endpoint URL (no path is appended).
+func CreateClient(providerName, apiKey, model, baseURL string) (Provider, error) {
 	factory, ok := providers[providerName]
 	if !ok {
-		return nil, fmt.Errorf("unsupported provider: %s", providerName)
+		// Unknown provider: use generic OpenAI-compatible format.
+		// baseURL is the complete endpoint URL (e.g. https://api.example.com/v1/chat/completions).
+		if baseURL == "" {
+			return nil, fmt.Errorf("unsupported provider %q and no base_url configured", providerName)
+		}
+		return newOpenAIProvider(apiKey, model, providerSpec{
+			name:    providerName,
+			baseURL: baseURL,
+			apiPath: "",
+		}), nil
 	}
 	return factory(ProviderConfig{
-		APIKey: apiKey,
-		Model:  model,
+		APIKey:  apiKey,
+		Model:   model,
+		BaseURL: baseURL,
 	}), nil
 }
 

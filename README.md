@@ -7,7 +7,7 @@ An ultra-lightweight, module-decoupled, highly customizable CLI tool that levera
 
 ## ✨ Current Features
 
-- **Multi-Provider LLM Support**: Compatible with OpenAI, Anthropic, DeepSeek, and Mistral, etc.
+- **Multi-Provider LLM Support**: Compatible with OpenAI, DeepSeek, and Mistral, etc.
 - **Three Agent Modes**:
   - **cmd** — One-shot shell command generation with optional execution
   - **qa** — Question answering with single-turn or interactive multi-turn chat
@@ -44,64 +44,38 @@ PAI supports configuration via environment variables or a config file.
 ### Environment Variables
 ```bash
 export OPENAI_API_KEY="your-openai-key"
+export DEEPSEEK_API_KEY="your-deepseek-key"
+export MISTRAL_API_KEY="your-mistral-key"
 ```
 
 ### Config File
 Create `~/.config/pai/config.yml`:
 ```yaml
-api_keys:
-  deepseek: "your-deepseek-key"
-  mistral: "your-mistral-key"
+providers:
+  deepseek:
+    api_key: "your-deepseek-key"
+  mistral:
+    api_key: "your-mistral-key"
+  # Unknown providers (e.g. kimi, doubao) use OpenAI-compatible format.
+  # base_url must be the complete chat completions endpoint URL.
+  # kimi:
+  #   base_url: "https://api.moonshot.cn/v1/chat/completions"
+  #   api_key: "your-kimi-key"
+  # doubao:
+  #   base_url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+  #   api_key: "your-doubao-key"
 
 default_model: "deepseek:deepseek-chat"
 default_agent: "devops"   # can be "cmd", "qa", or "devops"
 streaming: true           # token-by-token streaming (default: false)
 reasoning: true           # enable thinking/reasoning mode (default: false)
-
-# Optional: override default prompts per agent
-# **Currently not suggested for "devops", for may corrupt built-in logic**
-prompts:
-  qa: |
-    You are a helpful assistant. Answer the user's question directly.
-    Remember you are in a terminal environment. Use plain text only.
-    Respond concisely and as short as possible.
-
-  cmd: |
-    You are a shell command generator. Rules:
-    1. Generate one-line shell command(s) and a brief explanation based on the user's request.
-    2. Output ONLY valid JSON: {"cmd": "your_shell_command", "comment": "brief explanation"}
-    3. No markdown, no backticks, no extra text.
-
-  devops: |
-    You are a senior DevOps engineer running inside a terminal...
-    (See internal/agent/prompt.go for the full default)
 ```
 
-> **Note**: Model format is `provider:model_name` (e.g. `deepseek:deepseek-chat`, `openai:gpt-4o`, `anthropic:claude-sonnet-4-20250514`).
+> **Note**: Model format is `provider:model_name` (e.g. `deepseek:deepseek-chat`, `openai:gpt-4o`, `doubao:doubao-1-5-pro-32k`).
 
 ## 📖 Usage
 
-### Command Generation (Default Agent)
-Generate and optionally execute shell commands:
-```bash
-# Basic usage
-pai "list all go files in this proj"
-pai "<whatever-your-target>"
-
-# Quotes aren't needed in most cases
-# but for beautiful and not mis-understanding by shell we recommend using quotes
-# below will generate "find . -name '*.go' | nl"-like command
-pai -a cmd list all .go files recursively and numbering them
-
-pai --agent cmd "sum numbers in column 3 of data.csv"
-# "awk -F',' '{sum += $3} END {print sum}' data.csv"
-
-# Enable debug mode
-pai --debug "find large files in current directory"
-```
-
-### Example — CMD Agent
-See examples/
+**See examples/**
 
 ## 🛣️ Todo
 - [x] User-friendly TUI/CLI packages
@@ -112,6 +86,7 @@ See examples/
 
 ## Uniqe features
 - [ ] DevOps enhancements (e.g., learning and invoking CLI tools with RAG/fuzzy search)
+- [ ] Cross-server collabration 
 - [ ] Dynamic agent-prompt loading 
 
 ## 📄 License
