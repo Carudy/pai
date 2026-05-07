@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/llm"
@@ -36,7 +37,7 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error
 	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💬]"), ui.Styles["Help"].Render(resp.Reason))
 	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💻]"), ui.Styles["Info"].Render(cmd))
 
-	output, execErr := tool.ExecuteCommand(cmd, true)
+	output, execErr := tool.ExecuteCommand(cmd, true, os.Stdout)
 	if execErr != nil {
 		return fmt.Errorf("Execution Error: %v", execErr)
 	}

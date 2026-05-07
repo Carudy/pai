@@ -1,9 +1,11 @@
 package tool
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -54,13 +56,17 @@ func trimCmd(cmd string) string {
 // ExecuteCommand runs the specified command using the system shell (or cmd/powershell on Windows).
 // If userConfirm is true, it will prompt the user for confirmation before execution.
 //
+// If streamW is non-nil, command output (stdout + stderr) is written to it in real-time
+// while still being captured for the returned ExecResult. Pass os.Stdout to let the user
+// see live output instead of waiting until the command finishes.
+//
 // The function returns both an ExecResult containing the command output and status,
 // and an error if something went wrong with the execution process itself.
 //
 // The returned ExecResult will contain the command output, exit code, and timeout status.
 // The ExecResult.Output will include error information for better display to users.
 // The error return value should be checked to handle execution failures appropriately.
-func ExecuteCommand(command string, userConfirm bool) (ExecResult, error) {
+func ExecuteCommand(command string, userConfirm bool, streamW io.Writer) (ExecResult, error) {
 	command = trimCmd(command)
 
 	if command == "" {
@@ -103,7 +109,22 @@ func ExecuteCommand(command string, userConfirm bool) (ExecResult, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, shell, shellArg, command)
-	output, err := cmd.CombinedOutput()
+
+	var output []byte
+	var err error
+
+	if streamW != nil {
+		// Streaming mode: capture into buffer while also writing to streamW.
+		var buf bytes.Buffer
+		mw := io.MultiWriter(&buf, streamW)
+		cmd.Stdout = mw
+		cmd.Stderr = mw
+		err = cmd.Run()
+		output = buf.Bytes()
+	} else {
+		// Blocking mode (original behaviour).
+		output, err = cmd.CombinedOutput()
+	}
 
 	result := ExecResult{Output: string(output)}
 

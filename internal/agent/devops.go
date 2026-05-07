@@ -86,7 +86,7 @@ func singleDevOpsLoop(
 			ui.RenderStr("Info", cmd),
 		)
 
-		output, execErr := tool.ExecuteCommand(cmd, true)
+		output, execErr := tool.ExecuteCommand(cmd, true, os.Stdout)
 		if execErr != nil {
 			fmt.Printf("%s ❌ %s\n%s\n",
 				ui.RenderStr("TagSystem", "[SYS]"),

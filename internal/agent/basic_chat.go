@@ -137,7 +137,7 @@ func doStream(
 
 			// Content tokens (JSON is captured; caller decides whether to display).
 			if token := choice.Delta.Content; token != "" {
-				if inReasoning && (reasonW != nil || (reasonW == nil && reasoning)) {
+				if inReasoning && (reasonW != nil || reasoning) {
 					w := reasonW
 					if w == nil {
 						w = os.Stdout
