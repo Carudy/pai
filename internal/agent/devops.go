@@ -32,8 +32,9 @@ func singleDevOpsLoop(
 
 	if resp.Reason != "" && resp.Action != ActionExecute && resp.Action != ActionDone {
 		fmt.Printf("%s %s\n",
-			ui.Styles["TagAgent"].Render("[PAI 🤖]"),
-			ui.Styles["Info"].Render(resp.Reason))
+			ui.RenderStr("TagAgent", "[PAI 🤖]"),
+			ui.RenderStr("Info", resp.Reason),
+		)
 	}
 
 	config.DebugLog(os.Stdout, "[Action]: %s\n[Reason]: %s\n", resp.Action, resp.Reason)
@@ -42,66 +43,71 @@ func singleDevOpsLoop(
 	case ActionDone:
 		info := resp.GetPayload()
 		fmt.Printf("%s %s\n",
-			ui.Styles["TagAgent"].Render("[PAI ✅]"),
-			ui.Styles["Success"].Render(info))
+			ui.RenderStr("TagAgent", "[PAI ✅]"),
+			ui.RenderStr("Success", info),
+		)
 		return false, history, nil
 
 	case ActionTerminate:
 		info := resp.GetPayload()
 		fmt.Printf("%s %s\n",
-			ui.Styles["TagAgent"].Render("[PAI 💔]"),
-			ui.Styles["Warn"].Render(info))
+			ui.RenderStr("TagAgent", "[PAI 💔]"),
+			ui.RenderStr("Warn", info),
+		)
 		return false, history, nil
 
 	case ActionInfo:
 		info := resp.GetPayload()
 		fmt.Printf("%s\n%s\n",
-			ui.Styles["TagAgent"].Render("[PAI ℹ️]"),
-			ui.Styles["Content"].Render(info))
-
+			ui.RenderStr("TagAgent", "[PAI ℹ️]"),
+			ui.RenderStr("Content", info),
+		)
 		history = append(history,
 			llm.Message{
 				Role:    llm.RoleAssistant,
-				Content: "[cmd result]\n" + info,
+				Content: "[CMD RESULT]\n" + info,
 			},
 		)
-
-		// if cfg.Provider == "mistral" {
 		history = append(history,
 			llm.Message{
 				Role:    llm.RoleUser,
-				Content: "i see",
+				Content: "ok",
 			},
 		)
-		// }
 
 	case ActionExecute:
 		cmd := resp.GetPayload()
 		fmt.Printf("%s %s\n",
-			ui.Styles["TagExec"].Render("[CMD 💬]"),
-			ui.Styles["Help"].Render(resp.Reason))
+			ui.RenderStr("TagAgent", "[CMD 💬]"),
+			ui.RenderStr("Help", resp.Reason),
+		)
 		fmt.Printf("%s %s\n",
-			ui.Styles["TagExec"].Render("[CMD 💻]"),
-			ui.Styles["Info"].Render(cmd))
+			ui.RenderStr("TagExec", "[CMD 💻]"),
+			ui.RenderStr("Info", cmd),
+		)
 
 		output, execErr := tool.ExecuteCommand(cmd, true)
 		if execErr != nil {
 			fmt.Printf("%s ❌ %s\n%s\n",
-				ui.Styles["TagSystem"].Render("[SYS]"),
-				ui.Styles["Warn"].Render("Command failed"),
-				ui.Styles["Warn"].Render(output.Output))
+				ui.RenderStr("TagSystem", "[SYS]"),
+				ui.RenderStr("Warn", "Command failed"),
+				ui.RenderStr("Warn", output.Output),
+			)
 		} else if output.Output == tool.CancelledOutput {
 			fmt.Printf("%s %s\n",
-				ui.Styles["TagSystem"].Render("[SYS]"),
-				ui.Styles["Subdued"].Render("Skipped"))
+				ui.RenderStr("TagSystem", "[SYS]"),
+				ui.RenderStr("Subdued", "Skipped"),
+			)
 		} else {
 			fmt.Printf("%s %s\n",
-				ui.Styles["TagSystem"].Render("[SYS]"),
-				ui.Styles["Success"].Render("Command succeeded"))
+				ui.RenderStr("TagSystem", "[SYS]"),
+				ui.RenderStr("Success", "Command succeeded"),
+			)
 			if output.Output != "" {
 				fmt.Printf("%s\n%s\n",
-					ui.Styles["TagResult"].Render("[CMD Result]"),
-					ui.Styles["ExeRes"].Render(output.Output))
+					ui.RenderStr("TagResult", "[CMD Result]"),
+					ui.RenderStr("ExeRes", output.Output),
+				)
 			}
 		}
 
@@ -117,8 +123,9 @@ func singleDevOpsLoop(
 	case ActionAsk:
 		q := resp.GetPayload()
 		fmt.Printf("%s %s\n",
-			ui.Styles["TagAgent"].Render("[PAI 🙋]"),
-			ui.Styles["Warn"].Render(q))
+			ui.RenderStr("TagAgent", "[PAI 🙋]"),
+			ui.RenderStr("Warn", q),
+		)
 
 		answer, err := ui.GetUserTextInput("Your answer:")
 		if err != nil {
@@ -163,8 +170,9 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 			history = newHistory
 		} else if cfg.Flags.Inter {
 			fmt.Printf("%s %s\n",
-				ui.Styles["TagAgent"].Render("[PAI]"),
-				ui.Styles["Info"].Render("[Awaiting for new instructions.]"))
+				ui.RenderStr("TagAgent", "[PAI]"),
+				ui.RenderStr("Info", "[Awaiting for new instructions.]"),
+			)
 
 			input, err := ui.GetUserTextInput("Input:")
 			if err != nil {

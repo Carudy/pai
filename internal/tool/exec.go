@@ -17,7 +17,7 @@ import (
 // user declines to run the command at the confirmation prompt.
 const CancelledOutput = "[user cancelled execution]"
 
-const cmdTimeout = 30 * time.Second
+const cmdTimeout = 120 * time.Second
 
 // ExecResult contains the result of executing a command.
 // It includes the command output, exit code, and whether the command timed out.

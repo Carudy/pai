@@ -26,7 +26,7 @@ func DebugLog(outio io.Writer, format string, a ...any) {
 	if AppFlags.Debug {
 		msg := fmt.Sprintf(format, a...)
 		// Trim trailing newline before splitting to avoid a spurious empty last line
-		for _, line := range strings.Split(strings.TrimRight(msg, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(msg, "\n"), "\n") {
 			if line != "" {
 				// Style each line individually to avoid Lip Gloss block-width padding
 				fmt.Fprintln(outio, ui.Styles["Debug"].Render("[DEBUG] "+line))

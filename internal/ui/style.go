@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	"charm.land/lipgloss/v2"
 )
 
@@ -52,4 +54,15 @@ var Styles = map[string]lipgloss.Style{
 	"Thinking": lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#8E857A")).
 		Italic(true),
+}
+
+func RenderStr(style, s string) string {
+	var b strings.Builder
+	for line := range strings.SplitSeq(strings.TrimRight(s, "\n"), "\n") {
+		if line != "" {
+			b.WriteString(Styles[style].Render(line))
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
 }
