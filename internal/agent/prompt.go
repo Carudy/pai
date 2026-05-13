@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/Carudy/pai/internal/config"
 )
 
 const SelfAware = `
@@ -71,17 +73,12 @@ func getOSDetail() string {
 	}
 }
 
-// LoadAgentPrompt builds the full system prompt for an agent.
-// Loading priority:
-//  1. customContent (non-empty string from ~/.config/pai/prompts.yml)
-//  2. Disk: internal/agent/prompts/<name>.md  (local dev hot-reload)
-//  3. Embedded: compiled-in prompts/<name>.md (installed binary)
-func LoadAgentPrompt(name, customContent string) (string, error) {
+func LoadAgentPrompt(name string, customContent config.CustomPrompt) (string, error) {
 	var body string
+	pure_prompt := strings.TrimSpace(customContent.Prompt)
 
-	if strings.TrimSpace(customContent) != "" {
-		// User-supplied inline prompt from prompts.yml
-		body = customContent
+	if (!customContent.Additional) && pure_prompt != "" {
+		body = pure_prompt
 	} else {
 		// Try disk first (dev hot-reload), then fall back to embedded
 		diskPath := filepath.Join("internal", "agent", "prompts", name+".md")
@@ -93,6 +90,9 @@ func LoadAgentPrompt(name, customContent string) (string, error) {
 				return "", fmt.Errorf("prompt %q not found on disk or embedded: %w", name, err)
 			}
 			body = string(data)
+		}
+		if customContent.Additional {
+			body = fmt.Sprintf("%s\n[User:]\n%s", body, pure_prompt)
 		}
 	}
 

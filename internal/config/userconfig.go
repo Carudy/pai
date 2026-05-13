@@ -10,42 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ProviderConfig holds per-provider settings from the user config.
-type ProviderConfig struct {
-	APIKey  string `yaml:"api_key"`
-	BaseURL string `yaml:"base_url"`
-}
-
-type UserConfig struct {
-	// --- from ~/.config/pai/config.yml ---
-	ProvidersConfigs map[string]ProviderConfig `yaml:"providers"`
-	DefaultModel     string                    `yaml:"default_model"`
-	DefaultAgent     string                    `yaml:"default_agent"`
-	Streaming        bool                      `yaml:"streaming"`
-	ReasoningEffort  llm.ReasoningEffort       `yaml:"reasoning"`
-
-	// --- resolved at runtime (lazy, after agent is known) ---
-	// CustomPrompt holds the user's prompt override for the current session's
-	// agent, loaded on demand from ~/.config/pai/prompts.yml via LoadCustomPrompt.
-	// Empty string means use the built-in embedded prompt.
-	CustomPrompt string `yaml:"-"`
-
-	// --- resolved at runtime, not from config files ---
-	Provider string
-	Model    string
-	Clients  map[string]llm.Provider
-	Flags    *CliFlags
-}
-
-func defaultConfig() *UserConfig {
-	return &UserConfig{
-		DefaultModel:     "deepseek:deepseek-v4-flash",
-		DefaultAgent:     "devops",
-		ProvidersConfigs: make(map[string]ProviderConfig),
-		Clients:          make(map[string]llm.Provider),
-	}
-}
-
 // configDir returns the path to ~/.config/pai, the directory where pai
 // stores its config files.
 func configDir() (string, error) {
@@ -100,34 +64,32 @@ func loadYAML(path string, dst any) error {
 // LoadCustomPrompt reads ~/.config/pai/prompts.yml and returns the custom
 // prompt text for agentName, or "" if the file is missing or the agent has no
 // entry. Call this after the session agent has been resolved.
-func LoadCustomPrompt(agentName string) (string, error) {
+func LoadCustomPrompt(agentName string) (CustomPrompt, error) {
 	cfgDir, err := configDir()
 	if err != nil {
-		return "", err
+		return CustomPrompt{}, err
 	}
 	path := filepath.Join(cfgDir, "prompts.yml")
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return "", nil
+		return CustomPrompt{}, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("failed to read %s: %w", path, err)
+		return CustomPrompt{}, fmt.Errorf("failed to read %s: %w", path, err)
 	}
-	var entries map[string]struct {
-		Prompt string `yaml:"prompt"`
-	}
+	var entries map[string]CustomPrompt
 	if err := yaml.Unmarshal(data, &entries); err != nil {
-		return "", fmt.Errorf("failed to parse %s: %w", path, err)
+		return CustomPrompt{}, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
-	return strings.TrimSpace(entries[agentName].Prompt), nil
+	return entries[agentName], nil
 }
 
 func mergeEnvAPIKeys(cfg *UserConfig) {
 	if cfg.ProvidersConfigs == nil {
 		cfg.ProvidersConfigs = make(map[string]ProviderConfig)
 	}
-	for _, provider := range SupportedProviders {
+	for _, provider := range llm.BuiltinProviders {
 		pc, exists := cfg.ProvidersConfigs[provider]
 		if !exists {
 			pc = ProviderConfig{}

@@ -2,6 +2,8 @@ package llm
 
 import "fmt"
 
+var BuiltinProviders = []string{"deepseek", "mistral", "openai"}
+
 // ProviderConfig holds common configuration for creating a provider.
 type ProviderConfig struct {
 	APIKey  string

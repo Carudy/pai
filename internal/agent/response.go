@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/hq"
 	"github.com/Carudy/pai/internal/llm"
 	"github.com/Carudy/pai/internal/ui"
 )
@@ -115,7 +116,7 @@ func parseResponseWithRetry(
 			return resp, history, nil
 		}
 
-		config.DebugLog(os.Stdout, "[Format Error attempt %d/%d]: %v\n", attempt+1, maxFormatRetries, err)
+		hq.DebugLog(os.Stdout, "[Format Error attempt %d/%d]: %v\n", attempt+1, maxFormatRetries, err)
 
 		if attempt < maxFormatRetries-1 {
 			fmt.Printf("%s \u26a0\ufe0f %s\n",
@@ -132,7 +133,7 @@ func parseResponseWithRetry(
 			if err != nil {
 				return nil, history, err
 			}
-			config.DebugLog(os.Stdout, "[AI Retry Output]:\n%s\n", content)
+			hq.DebugLog(os.Stdout, "[AI Retry Output]:\n%s\n", content)
 		}
 	}
 	return nil, history, fmt.Errorf("AI failed to produce valid JSON after %d attempts: %w", maxFormatRetries, err)

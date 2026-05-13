@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/hq"
 	"github.com/Carudy/pai/internal/llm"
 	"github.com/Carudy/pai/internal/tool"
 	"github.com/Carudy/pai/internal/ui"
@@ -23,7 +24,7 @@ func singleDevOpsLoop(
 	}
 	history = newHistory
 
-	config.DebugLog(os.Stdout, "[AI Output]:\n%s\n", content)
+	hq.DebugLog(os.Stdout, "[AI Output]:\n%s\n", content)
 
 	resp, history, err := parseResponseWithRetry(ctx, cfg, cfg.Clients["devops"], content, history)
 	if err != nil {
@@ -37,7 +38,7 @@ func singleDevOpsLoop(
 		)
 	}
 
-	config.DebugLog(os.Stdout, "[Action]: %s\n[Reason]: %s\n", resp.Action, resp.Reason)
+	hq.DebugLog(os.Stdout, "[Action]: %s\n[Reason]: %s\n", resp.Action, resp.Reason)
 
 	switch resp.Action {
 	case ActionDone:
@@ -153,7 +154,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		return fmt.Errorf("failed to load devops prompt: %w", err)
 	}
 
-	config.DebugLog(os.Stdout, "Agent prompt: %s\n", agentPrompt)
+	hq.DebugLog(os.Stdout, "Agent prompt: %s\n", agentPrompt)
 
 	history := []llm.Message{
 		{Role: llm.RoleSystem, Content: agentPrompt},
