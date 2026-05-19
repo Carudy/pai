@@ -138,12 +138,8 @@ pai "check nginx status on myserver"
 
 See [examples/](examples/) for detailed walkthroughs.
 
-## 🛣️ Roadmap
+## 🛣️ Todo
 
-- [x] User-friendly TUI/CLI packages
-- [x] Multi-turn chat in QA mode
-- [x] DevOps agent for multi-turn tasks
-- [x] Remote host management via SSH
 - [ ] MCP / tools integration
 - [ ] Local database for sessions, memory, etc.
 - [ ] DevOps enhancements (RAG/fuzzy CLI tool discovery)

@@ -19,31 +19,31 @@ type CliFlags struct {
 	Input   string
 }
 
-// Logger provides level-aware logging for PAI.
-// Debug messages go to slog; Error messages are styled and written to the
-// supplied io.Writer so they appear inline with terminal output.
+// Logger provides level-aware, styled logging for PAI.
+// Both debug and error messages are written to the io.Writer supplied at
+// construction (typically os.Stdout for CLI output).
 type Logger struct {
-	Debug bool
+	Debug  bool
+	writer io.Writer
 }
 
 // NewLogger creates a Logger. When debug is true, Debugf messages are emitted.
-func NewLogger(debug bool) *Logger {
-	return &Logger{Debug: debug}
+func NewLogger(w io.Writer, debug bool) *Logger {
+	return &Logger{writer: w, Debug: debug}
 }
 
-// Debugf logs a debug-level message. No-op when debug is disabled.
-// Use Errorf for user-facing errors (always visible).
+// Debugf logs a debug-level message. No-op when Debug is false.
 func (l *Logger) Debugf(format string, a ...any) {
 	if !l.Debug {
 		return
 	}
 	msg := ui.RenderStr("Debug", "[DEBUG] "+fmt.Sprintf(format, a...))
-	fmt.Println(msg)
+	fmt.Fprintln(l.writer, msg)
 }
 
-// Errorf writes a styled error to w. This is always visible regardless of
-// debug settings.
-func Errorf(w io.Writer, format string, a ...any) {
+// Errorf logs a styled error message. Always visible regardless of debug
+// settings.
+func (l *Logger) Errorf(format string, a ...any) {
 	msg := ui.RenderStr("Error", "[Error] "+fmt.Sprintf(format, a...))
-	fmt.Fprintln(w, msg)
+	fmt.Fprintln(l.writer, msg)
 }

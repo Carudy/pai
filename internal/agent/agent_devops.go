@@ -51,7 +51,14 @@ func singleDevOpsLoop(
 		return false, nil, err
 	}
 
-	if resp.Reason != "" && resp.Action != ActionExecute && resp.Action != ActionDone {
+	// Actions that already print their own reason inline (in the [CMD 💬] / [RMT 💬] /
+	// [PAI ✅] lines) should not have a redundant "agent says" prefix.
+	selfExplaining := map[ActionType]bool{
+		ActionExecute: true,
+		ActionRemote:  true,
+		ActionDone:    true,
+	}
+	if resp.Reason != "" && !selfExplaining[resp.Action] {
 		fmt.Printf("%s %s\n",
 			ui.RenderStr("TagAgent", "[PAI 🤖]"),
 			ui.RenderStr("Info", resp.Reason),
@@ -124,12 +131,6 @@ func singleDevOpsLoop(
 				ui.RenderStr("TagSystem", "[SYS]"),
 				ui.RenderStr("Success", "Command succeeded"),
 			)
-			if output.Output != "" {
-				fmt.Printf("%s\n%s\n",
-					ui.RenderStr("TagResult", "[CMD Result]"),
-					ui.RenderStr("ExeRes", output.Output),
-				)
-			}
 		}
 
 		observation := fmt.Sprintf(
@@ -180,12 +181,6 @@ func singleDevOpsLoop(
 				ui.RenderStr("TagSystem", "[SYS]"),
 				ui.RenderStr("Success", "Remote command succeeded"),
 			)
-			if output.Output != "" {
-				fmt.Printf("%s\n%s\n",
-					ui.RenderStr("TagResult", "[CMD Result]"),
-					ui.RenderStr("ExeRes", output.Output),
-				)
-			}
 		}
 
 		observation := fmt.Sprintf(
