@@ -24,6 +24,7 @@ type UserConfig struct {
 	DefaultAgent     string                    `yaml:"default_agent"`
 	Streaming        bool                      `yaml:"streaming"`
 	ReasoningEffort  llm.ReasoningEffort       `yaml:"reasoning"`
+	TrustedCmds      []string                  `yaml:"trusted_cmds"`
 
 	// --- from ~/.config/pai/prompts.yml ---
 	CustomPrompt CustomPrompt

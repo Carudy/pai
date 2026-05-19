@@ -53,6 +53,84 @@ func trimCmd(cmd string) string {
 	return strings.TrimSpace(cmd)
 }
 
+// IsTrusted reports whether every sub-command in a potentially chained /
+// piped / multi-line command starts with a tool in the trusted list.
+// Delimiters recognised: && || ; | (single pipe) and newlines.
+// An empty trusted list means nothing is trusted.
+func IsTrusted(cmd string, trusted []string) bool {
+	if len(trusted) == 0 {
+		return false
+	}
+	segs := splitCommands(cmd)
+	if len(segs) == 0 {
+		return false
+	}
+	for _, seg := range segs {
+		w := firstWord(strings.TrimSpace(seg))
+		if w == "" {
+			continue
+		}
+		if !matchTrusted(w, trusted) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchTrusted checks whether a single tool name appears in the trusted
+// list (bare names and full paths are interchangeable).
+func matchTrusted(first string, trusted []string) bool {
+	base := first
+	if i := strings.LastIndexByte(first, '/'); i >= 0 {
+		base = first[i+1:]
+	}
+	for _, t := range trusted {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		tBase := t
+		if i := strings.LastIndexByte(t, '/'); i >= 0 {
+			tBase = t[i+1:]
+		}
+		if first == t || first == tBase || base == t || base == tBase {
+			return true
+		}
+	}
+	return false
+}
+
+// splitCommands breaks a command string into individual sub-commands at
+// shell delimiters: &&, ||, ;, | (single pipe), and newlines.
+func splitCommands(s string) []string {
+	// Replace multi-char delimiters first to avoid partial matches.
+	s = strings.ReplaceAll(s, "&&", "\x00")
+	s = strings.ReplaceAll(s, "||", "\x00")
+	s = strings.ReplaceAll(s, ";", "\x00")
+	s = strings.ReplaceAll(s, "\n", "\x00")
+	// Single pipe — only after || is already replaced.
+	s = strings.ReplaceAll(s, "|", "\x00")
+
+	parts := strings.Split(s, "\x00")
+	var out []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// firstWord returns the first whitespace-delimited token of s.
+func firstWord(s string) string {
+	s = strings.TrimSpace(s)
+	if idx := strings.IndexAny(s, " \t"); idx >= 0 {
+		return s[:idx]
+	}
+	return s
+}
+
 // ExecuteCommand runs the specified command using the system shell (or cmd/powershell on Windows).
 // If userConfirm is true, it will prompt the user for confirmation before execution.
 //

@@ -113,8 +113,11 @@ func singleDevOpsLoop(
 			ui.RenderStr("TagExec", "[CMD 💻]"),
 			ui.RenderStr("Info", cmd),
 		)
+		if tool.IsTrusted(cmd, cfg.TrustedCmds) {
+			fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
+		}
 
-		output, execErr := tool.ExecuteCommand(cmd, true, os.Stdout)
+		output, execErr := tool.ExecuteCommand(cmd, !tool.IsTrusted(cmd, cfg.TrustedCmds), os.Stdout)
 		if execErr != nil {
 			fmt.Printf("%s ❌ %s\n%s\n",
 				ui.RenderStr("TagSystem", "[SYS]"),
@@ -163,8 +166,11 @@ func singleDevOpsLoop(
 			ui.RenderStr("TagExec", fmt.Sprintf("[RMT 💻 @%s]", rp.Host)),
 			ui.RenderStr("Info", rp.Cmd),
 		)
+		if tool.IsTrusted(rp.Cmd, cfg.TrustedCmds) {
+			fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
+		}
 
-		output, execErr := cfg.RemoteManager.ExecuteRemote(ctx, rp, true, os.Stdout)
+		output, execErr := cfg.RemoteManager.ExecuteRemote(ctx, rp, !tool.IsTrusted(rp.Cmd, cfg.TrustedCmds), os.Stdout)
 		if execErr != nil {
 			fmt.Printf("%s ❌ %s\n%s\n",
 				ui.RenderStr("TagSystem", "[SYS]"),

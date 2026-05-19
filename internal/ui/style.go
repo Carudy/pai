@@ -60,6 +60,11 @@ var Styles = map[string]lipgloss.Style{
 		Foreground(lipgloss.Color("#5C6370")).
 		Italic(true).
 		Faint(true),
+
+	// Trusted command indicator — subtle green, calming
+	"Trusted": lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#4A8C6F")).
+		Italic(true),
 }
 
 func RenderStr(style, s string) string {
