@@ -11,7 +11,17 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
-func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error {
+func init() { Register(&CmdAgent{}) }
+
+// CmdAgent generates one-shot shell commands.
+type CmdAgent struct{}
+
+func (a *CmdAgent) Name() string { return "cmd" }
+func (a *CmdAgent) Description() string {
+	return "One-shot shell command generation with optional execution"
+}
+
+func (a *CmdAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	sysPrompt, err := LoadAgentPrompt("cmd", cfg.CustomPrompt)
 	if err != nil {
 		return fmt.Errorf("failed to load cmd prompt: %w", err)
@@ -22,7 +32,7 @@ func GenCMD(ctx context.Context, cfg *config.UserConfig, userInput string) error
 		{Role: llm.RoleUser, Content: userInput},
 	}
 
-	content, history, err := chatStr(ctx, cfg, cfg.Clients["cmd"], history)
+	content, history, _, err := chatStr(ctx, cfg, cfg.Clients["cmd"], history)
 	if err != nil {
 		return err
 	}

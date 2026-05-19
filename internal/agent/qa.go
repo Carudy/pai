@@ -9,7 +9,17 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
-func QA(ctx context.Context, cfg *config.UserConfig, userInput string) error {
+func init() { Register(&QAAgent{}) }
+
+// QAAgent handles question-answering (single-turn or multi-turn TUI).
+type QAAgent struct{}
+
+func (a *QAAgent) Name() string { return "qa" }
+func (a *QAAgent) Description() string {
+	return "Question answering (single-turn or interactive multi-turn TUI)"
+}
+
+func (a *QAAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	sysPrompt, err := LoadAgentPrompt("qa", cfg.CustomPrompt)
 	if err != nil {
 		return fmt.Errorf("failed to load qa prompt: %w", err)
@@ -22,7 +32,7 @@ func QA(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 
 	// ── One-turn mode (stdout) ─────────────────────────────────────────
 	if !cfg.Flags.Inter {
-		content, history, err := chatStr(ctx, cfg, cfg.Clients["qa"], history)
+		content, history, _, err := chatStr(ctx, cfg, cfg.Clients["qa"], history)
 		if err != nil {
 			return err
 		}
@@ -38,7 +48,7 @@ func QA(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	// ── Multi-turn mode (streaming chatbox) ────────────────────────────
 	var initialMessages []ui.ChatMessage
 	if userInput != "" {
-		resp, newHistory, err := chatStr(ctx, cfg, cfg.Clients["qa"], history)
+		resp, newHistory, _, err := chatStr(ctx, cfg, cfg.Clients["qa"], history)
 		if err != nil {
 			return err
 		}
@@ -53,7 +63,7 @@ func QA(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	// incremental display, then returns the extracted answer.
 	streamFunc := ui.StreamChatFunc(func(ctx context.Context, input string, onToken func(string)) (string, error) {
 		newHistory := append(history, llm.Message{Role: llm.RoleUser, Content: input})
-		fullJSON, hist, err := chat(ctx, cfg, cfg.Clients["qa"], newHistory, chatOpts{
+		fullJSON, hist, _, err := chat(ctx, cfg, cfg.Clients["qa"], newHistory, chatOpts{
 			Stream:  true,
 			OnToken: onToken, // raw JSON tokens streamed to chatbox
 		})

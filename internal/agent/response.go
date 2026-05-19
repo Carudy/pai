@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
-	"github.com/Carudy/pai/internal/hq"
 	"github.com/Carudy/pai/internal/llm"
 	"github.com/Carudy/pai/internal/ui"
 )
@@ -107,6 +105,7 @@ func parseResponseWithRetry(
 		resp *AgentResponse
 		err  error
 	)
+	log := cfg.Logger
 	for attempt := 0; attempt < maxFormatRetries; attempt++ {
 		resp, err = ParseAgentResponse(content)
 		if err == nil {
@@ -116,7 +115,7 @@ func parseResponseWithRetry(
 			return resp, history, nil
 		}
 
-		hq.DebugLog(os.Stdout, "[Format Error attempt %d/%d]: %v\n", attempt+1, maxFormatRetries, err)
+		log.Debugf("[Format Error attempt %d/%d]: %v\n", attempt+1, maxFormatRetries, err)
 
 		if attempt < maxFormatRetries-1 {
 			fmt.Printf("%s \u26a0\ufe0f %s\n",
@@ -129,11 +128,11 @@ func parseResponseWithRetry(
 				err)
 			history = append(history, llm.Message{Role: llm.RoleUser, Content: correctionMsg})
 
-			content, history, err = chatStr(ctx, cfg, provider, history)
+			content, history, _, err = chatStr(ctx, cfg, provider, history)
 			if err != nil {
 				return nil, history, err
 			}
-			hq.DebugLog(os.Stdout, "[AI Retry Output]:\n%s\n", content)
+			log.Debugf("[AI Retry Output]:\n%s\n", content)
 		}
 	}
 	return nil, history, fmt.Errorf("AI failed to produce valid JSON after %d attempts: %w", maxFormatRetries, err)

@@ -54,6 +54,12 @@ var Styles = map[string]lipgloss.Style{
 	"Thinking": lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#8E857A")).
 		Italic(true),
+
+	// Token usage — very pale, comment-like
+	"Token": lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#5C6370")).
+		Italic(true).
+		Faint(true),
 }
 
 func RenderStr(style, s string) string {

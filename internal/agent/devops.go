@@ -13,18 +13,38 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
+func init() { Register(&DevopsAgent{}) }
+
+// DevopsAgent runs autonomous reason–act–observe loops for multi-step tasks.
+type DevopsAgent struct{}
+
+func (a *DevopsAgent) Name() string { return "devops" }
+func (a *DevopsAgent) Description() string {
+	return "Autonomous reason–act–observe loop for multi-step sysadmin tasks"
+}
+
 func singleDevOpsLoop(
 	ctx context.Context,
 	cfg *config.UserConfig,
-	history []llm.Message) (bool, []llm.Message, error) {
+	history []llm.Message,
+	log *hq.Logger) (bool, []llm.Message, error) {
 
-	content, newHistory, err := chatStr(ctx, cfg, cfg.Clients["devops"], history)
+	content, newHistory, usage, err := chatStr(ctx, cfg, cfg.Clients["devops"], history)
 	if err != nil {
 		return false, nil, err
 	}
 	history = newHistory
 
-	hq.DebugLog(os.Stdout, "[AI Output]:\n%s\n", content)
+	log.Debugf("[AI Output]:\n%s\n", content)
+
+	// Display token usage in a muted, comment-like style.
+	if usage != nil {
+		fmt.Printf("%s\n",
+			ui.RenderStr("Token", fmt.Sprintf("[token: %s in, %s out, %s total]",
+				llm.FormatTokens(usage.PromptTokens),
+				llm.FormatTokens(usage.CompletionTokens),
+				llm.FormatTokens(usage.Total()))))
+	}
 
 	resp, history, err := parseResponseWithRetry(ctx, cfg, cfg.Clients["devops"], content, history)
 	if err != nil {
@@ -38,7 +58,7 @@ func singleDevOpsLoop(
 		)
 	}
 
-	hq.DebugLog(os.Stdout, "[Action]: %s\n[Reason]: %s\n", resp.Action, resp.Reason)
+	log.Debugf("[Action]: %s\n[Reason]: %s\n", resp.Action, resp.Reason)
 
 	switch resp.Action {
 	case ActionDone:
@@ -147,14 +167,15 @@ func singleDevOpsLoop(
 	return true, history, nil
 }
 
-func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error {
+func (a *DevopsAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput string) error {
+	log := cfg.Logger
 
 	agentPrompt, err := LoadAgentPrompt("devops", cfg.CustomPrompt)
 	if err != nil {
 		return fmt.Errorf("failed to load devops prompt: %w", err)
 	}
 
-	hq.DebugLog(os.Stdout, "Agent prompt: %s\n", agentPrompt)
+	log.Debugf("Agent prompt: %s\n", agentPrompt)
 
 	history := []llm.Message{
 		{Role: llm.RoleSystem, Content: agentPrompt},
@@ -162,7 +183,7 @@ func DevOps(ctx context.Context, cfg *config.UserConfig, userInput string) error
 	}
 
 	for {
-		nextLoop, newHistory, err := singleDevOpsLoop(ctx, cfg, history)
+		nextLoop, newHistory, err := singleDevOpsLoop(ctx, cfg, history, log)
 		if err != nil {
 			return err
 		}

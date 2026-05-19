@@ -302,6 +302,7 @@ func parseCompletion(raw []byte) (*ChatCompletion, error) {
 type rawChunk struct {
 	ID      string           `json:"id"`
 	Choices []rawChunkChoice `json:"choices"`
+	Usage   *rawUsage        `json:"usage,omitempty"`
 }
 
 type rawChunkChoice struct {
@@ -324,6 +325,17 @@ func parseChunk(data string) ChatCompletionChunk {
 
 	cc := ChatCompletionChunk{
 		ID: r.ID,
+	}
+
+	if r.Usage != nil {
+		cc.Usage = &Usage{
+			PromptTokens:     r.Usage.PromptTokens,
+			CompletionTokens: r.Usage.CompletionTokens,
+			TotalTokens:      r.Usage.TotalTokens,
+		}
+		if d := r.Usage.CompletionTokensDetails; d != nil {
+			cc.Usage.ReasoningTokens = d.ReasoningTokens
+		}
 	}
 
 	for _, rc := range r.Choices {

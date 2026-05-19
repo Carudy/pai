@@ -32,6 +32,7 @@ type UserConfig struct {
 	Model    string
 	Clients  map[string]llm.Provider
 	Flags    *hq.CliFlags
+	Logger   *hq.Logger
 }
 
 func defaultConfig() *UserConfig {

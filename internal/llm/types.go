@@ -1,6 +1,9 @@
 package llm
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // Message roles
 const (
@@ -58,6 +61,7 @@ type Choice struct {
 type ChatCompletionChunk struct {
 	ID      string        `json:"id"`
 	Choices []ChunkChoice `json:"choices"`
+	Usage   *Usage        `json:"usage,omitempty"`
 }
 
 // ChunkChoice in a streaming chunk.
@@ -85,6 +89,33 @@ type Usage struct {
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
 	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+}
+
+// Total returns the total token count: uses the API-reported TotalTokens if
+// non-zero; otherwise falls back to PromptTokens + CompletionTokens.
+func (u *Usage) Total() int {
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	return u.PromptTokens + u.CompletionTokens
+}
+
+// FormatTokens returns a human-readable token count (e.g. "42", "1.2K", "12K", "1.5M").
+func FormatTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		v := float64(n) / 1_000_000
+		if v >= 10 {
+			return fmt.Sprintf("%.0fM", v)
+		}
+		return fmt.Sprintf("%.1fM", v)
+	case n >= 10_000:
+		return fmt.Sprintf("%.0fK", float64(n)/1000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
 }
 
 // Provider is the interface that all LLM providers must implement.

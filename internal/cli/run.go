@@ -12,75 +12,77 @@ import (
 	"github.com/Carudy/pai/internal/llm"
 )
 
-var AgentMap = map[string]func(ctx context.Context, cfg *config.UserConfig, userInput string) error{
-	"qa":     agent.QA,
-	"cmd":    agent.GenCMD,
-	"devops": agent.DevOps,
-}
-
+// Run is the main entry point for the PAI CLI. It parses flags, loads
+// config, wires up the selected agent, and executes it. Returns an exit code.
 func Run(ctx context.Context, stdout io.Writer, args []string) int {
-	if err := GetFlags(args); err != nil {
-		hq.ErrorLog(stdout, "Error parsing flags: %v\n", err)
+	flags, helpRequested, err := GetFlags(args)
+	if err != nil {
+		hq.Errorf(stdout, "Error parsing flags: %v\n", err)
 		return 1
 	}
+	if helpRequested {
+		return 0
+	}
 
-	if hq.Flags.Version {
+	if flags.Version {
 		fmt.Fprintf(stdout, "PAI version: %s\n", hq.PAI_VERSION)
 		return 0
 	}
 
+	log := hq.NewLogger(flags.Debug)
+
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
-		hq.ErrorLog(stdout, "Error loading config: %v\n", err)
+		hq.Errorf(stdout, "Error loading config: %v\n", err)
 		return 1
 	}
 
-	flags := hq.Flags
 	cfg.Flags = &flags
+	cfg.Logger = log
 
-	hq.DebugLog(stdout, "📃 User Flags: %#v\n", hq.Flags)
-	hq.DebugLog(stdout, "🔧 User config: %#v\n", cfg)
+	log.Debugf("📃 User Flags: %#v\n", flags)
+	log.Debugf("🔧 User config: %#v\n", cfg)
 
-	if hq.Flags.Agent != "" {
-		cfg.DefaultAgent = hq.Flags.Agent
+	if flags.Agent != "" {
+		cfg.DefaultAgent = flags.Agent
 	}
 
-	// Validate agent early, before loading prompt or creating LLM client.
-	agentFunc, ok := AgentMap[cfg.DefaultAgent]
-	if !ok {
-		hq.ErrorLog(stdout, "Error: Unsupported PAI agent: \"%s\"\n", cfg.DefaultAgent)
+	// Look up the agent via the shared registry.
+	selectedAgent := agent.Get(cfg.DefaultAgent)
+	if selectedAgent == nil {
+		hq.Errorf(stdout, "Error: Unsupported PAI agent: %q\n", cfg.DefaultAgent)
 		return 1
 	}
 
 	// Lazily load the custom prompt for the resolved agent only.
 	customPrompt, err := config.LoadCustomPrompt(cfg.DefaultAgent)
 	if err != nil {
-		hq.ErrorLog(stdout, "Error loading custom prompt: %v\n", err)
+		hq.Errorf(stdout, "Error loading custom prompt: %v\n", err)
 		return 1
 	}
 	cfg.CustomPrompt = customPrompt
 
-	hq.DebugLog(stdout, "🔌 Connecting to %#v...\n", cfg.DefaultModel)
+	log.Debugf("🔌 Connecting to %#v...\n", cfg.DefaultModel)
 	providerCfg := cfg.ProvidersConfigs[cfg.Provider]
 	llmClient, err := llm.CreateClient(cfg.Provider, providerCfg.APIKey, cfg.Model, providerCfg.BaseURL)
 	if err != nil {
-		hq.ErrorLog(stdout, "Error creating LLM client: %v\n", err)
+		hq.Errorf(stdout, "Error creating LLM client: %v\n", err)
 		return 1
 	}
 	cfg.Clients[cfg.DefaultAgent] = llmClient
 
-	userInput := strings.TrimSpace(hq.Flags.Input)
-	if userInput == "" && !hq.Flags.Inter {
-		hq.ErrorLog(stdout, "Error: Please provide a user input\n")
+	userInput := strings.TrimSpace(flags.Input)
+	if userInput == "" && !flags.Inter {
+		hq.Errorf(stdout, "Error: Please provide a user input\n")
 		return 1
 	}
-	hq.DebugLog(stdout, "💬 User input: %#v...\n", userInput)
+	log.Debugf("💬 User input: %#v...\n", userInput)
 
-	hq.DebugLog(stdout, "Entering %s agent\n", cfg.DefaultAgent)
-	if err := agentFunc(ctx, cfg, userInput); err != nil {
-		hq.ErrorLog(stdout, "Error in %s agent: %v\n", cfg.DefaultAgent, err)
+	log.Debugf("Entering %s agent\n", cfg.DefaultAgent)
+	if err := selectedAgent.Run(ctx, cfg, userInput); err != nil {
+		hq.Errorf(stdout, "Error in %s agent: %v\n", cfg.DefaultAgent, err)
 		return 1
 	}
-	hq.DebugLog(stdout, "Agent %s exit successfully.\n", cfg.DefaultAgent)
+	log.Debugf("Agent %s exit successfully.\n", cfg.DefaultAgent)
 	return 0
 }
