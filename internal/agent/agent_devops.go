@@ -84,25 +84,6 @@ func singleDevOpsLoop(
 		)
 		return false, history, nil
 
-	case ActionInfo:
-		info := resp.GetPayload()
-		fmt.Printf("%s\n%s\n",
-			ui.RenderStr("TagAgent", "[PAI ℹ️]"),
-			ui.RenderStr("Content", info),
-		)
-		history = append(history,
-			llm.Message{
-				Role:    llm.RoleAssistant,
-				Content: "[CMD RESULT]\n" + info,
-			},
-		)
-		history = append(history,
-			llm.Message{
-				Role:    llm.RoleUser,
-				Content: "ok",
-			},
-		)
-
 	case ActionExecute:
 		cmd := resp.GetPayload()
 		fmt.Printf("%s %s\n",
@@ -114,7 +95,7 @@ func singleDevOpsLoop(
 			ui.RenderStr("Info", cmd),
 		)
 		if tool.IsTrusted(cmd, cfg.TrustedCmds) {
-			fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
+			fmt.Printf("%s\n", ui.RenderStr("Trusted", "⚡ executing trusted command"))
 		}
 
 		output, execErr := tool.ExecuteCommand(cmd, !tool.IsTrusted(cmd, cfg.TrustedCmds), os.Stdout)

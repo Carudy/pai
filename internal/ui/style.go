@@ -69,10 +69,12 @@ var Styles = map[string]lipgloss.Style{
 
 func RenderStr(style, s string) string {
 	var b strings.Builder
-	for line := range strings.SplitSeq(strings.TrimRight(s, "\n"), "\n") {
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
 		if line != "" {
 			b.WriteString(Styles[style].Render(line))
-			b.WriteByte('\n')
 		}
 	}
 	return b.String()
