@@ -8,6 +8,7 @@ import (
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/llm"
+	"github.com/Carudy/pai/internal/tool"
 	"github.com/Carudy/pai/internal/ui"
 )
 
@@ -22,6 +23,7 @@ const (
 	ActionInfo      ActionType = "info"
 	ActionDone      ActionType = "done"
 	ActionTerminate ActionType = "terminate"
+	ActionRemote    ActionType = "remote"
 )
 
 type AgentResponse struct {
@@ -52,6 +54,24 @@ func (r *AgentResponse) GetPayload() string {
 	return string(b)
 }
 
+// GetRemotePayload decodes the payload as a RemotePayload (for "remote" action).
+// Falls back to treating payload as a plain "host cmd" string.
+func (r *AgentResponse) GetRemotePayload() (tool.RemotePayload, error) {
+	var rp tool.RemotePayload
+	if err := json.Unmarshal(r.Payload, &rp); err == nil && rp.Host != "" && rp.Cmd != "" {
+		return rp, nil
+	}
+	// Fallback: plain string "host command..."
+	s := r.GetPayload()
+	before, after, found := strings.Cut(s, " ")
+	if !found || before == "" || after == "" {
+		return rp, fmt.Errorf("remote payload must be {\"host\":\"...\",\"cmd\":\"...\"} or \"host cmd\"")
+	}
+	rp.Host = before
+	rp.Cmd = after
+	return rp, nil
+}
+
 // validActions is the set of allowed action values (matches schema.md)
 var validActions = map[ActionType]bool{
 	ActionExecute:   true,
@@ -59,13 +79,14 @@ var validActions = map[ActionType]bool{
 	ActionInfo:      true,
 	ActionDone:      true,
 	ActionTerminate: true,
+	ActionRemote:    true,
 }
 
 // Validate checks the response conforms to the agent schema.
 // Returns a descriptive error so it can be fed back to the AI for correction.
 func (r *AgentResponse) Validate() error {
 	if !validActions[r.Action] {
-		valid := `"execute", "ask", "info", "done", "terminate"`
+		valid := `"execute", "ask", "info", "done", "terminate", "remote"`
 		if r.Action == "" {
 			return fmt.Errorf(`missing "action" field; must be one of: %s`, valid)
 		}
@@ -124,7 +145,7 @@ func parseResponseWithRetry(
 
 			correctionMsg := fmt.Sprintf(
 				"[system] Your previous response had a format error: %v\n"+
-					`Respond ONLY with valid JSON: {"action": "execute|ask|info|done|terminate", "payload": "...", "reason": "..."}`,
+					`Respond ONLY with valid JSON: {"action": "execute|remote|ask|info|done|terminate", "payload": "...", "reason": "..."}`,
 				err)
 			history = append(history, llm.Message{Role: llm.RoleUser, Content: correctionMsg})
 

@@ -141,6 +141,62 @@ func singleDevOpsLoop(
 			Content: "[cmd result]\n" + observation,
 		})
 
+	case ActionRemote:
+		rp, err := resp.GetRemotePayload()
+		if err != nil {
+			return false, nil, fmt.Errorf("remote payload: %w", err)
+		}
+		if cfg.RemoteManager == nil {
+			rm, err := tool.NewRemoteManager()
+			if err != nil {
+				return false, nil, fmt.Errorf("init remote sessions: %w", err)
+			}
+			cfg.RemoteManager = rm
+		}
+
+		fmt.Printf("%s %s\n",
+			ui.RenderStr("TagAgent", "[RMT 💬]"),
+			ui.RenderStr("Help", resp.Reason),
+		)
+		fmt.Printf("%s %s\n",
+			ui.RenderStr("TagExec", fmt.Sprintf("[RMT 💻 @%s]", rp.Host)),
+			ui.RenderStr("Info", rp.Cmd),
+		)
+
+		output, execErr := cfg.RemoteManager.ExecuteRemote(ctx, rp, true, os.Stdout)
+		if execErr != nil {
+			fmt.Printf("%s ❌ %s\n%s\n",
+				ui.RenderStr("TagSystem", "[SYS]"),
+				ui.RenderStr("Warn", fmt.Sprintf("Remote command failed: %v", execErr)),
+				ui.RenderStr("Warn", output.Output),
+			)
+		} else if output.Output == tool.CancelledOutput {
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("TagSystem", "[SYS]"),
+				ui.RenderStr("Subdued", "Skipped"),
+			)
+		} else {
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("TagSystem", "[SYS]"),
+				ui.RenderStr("Success", "Remote command succeeded"),
+			)
+			if output.Output != "" {
+				fmt.Printf("%s\n%s\n",
+					ui.RenderStr("TagResult", "[CMD Result]"),
+					ui.RenderStr("ExeRes", output.Output),
+				)
+			}
+		}
+
+		observation := fmt.Sprintf(
+			"REMOTE HOST: %s\nCOMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
+			rp.Host, rp.Cmd, execErr, TruncateOutput(output.String(), 2000),
+		)
+		history = append(history, llm.Message{
+			Role:    llm.RoleUser,
+			Content: "[remote result]\n" + observation,
+		})
+
 	case ActionAsk:
 		q := resp.GetPayload()
 		fmt.Printf("%s %s\n",

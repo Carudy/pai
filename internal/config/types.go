@@ -3,6 +3,7 @@ package config
 import (
 	"github.com/Carudy/pai/internal/hq"
 	"github.com/Carudy/pai/internal/llm"
+	"github.com/Carudy/pai/internal/tool"
 )
 
 // ProviderConfig holds per-provider settings from the user config.
@@ -28,11 +29,12 @@ type UserConfig struct {
 	CustomPrompt CustomPrompt
 
 	// --- resolved at runtime, not from config files ---
-	Provider string
-	Model    string
-	Clients  map[string]llm.Provider
-	Flags    *hq.CliFlags
-	Logger   *hq.Logger
+	Provider      string
+	Model         string
+	Clients       map[string]llm.Provider
+	Flags         *hq.CliFlags
+	Logger        *hq.Logger
+	RemoteManager *tool.RemoteManager
 }
 
 func defaultConfig() *UserConfig {

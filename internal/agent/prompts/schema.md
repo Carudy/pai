@@ -10,7 +10,7 @@ All agent responses must conform to this JSON schema:
 {
   "action": {
     "type": "string",
-    "enum": ["execute", "ask", "info", "done", "terminate"]
+    "enum": ["execute", "remote", "ask", "info", "done", "terminate"]
   },
   "payload": {
     "type": ["string", "object", "array"],
@@ -25,7 +25,8 @@ All agent responses must conform to this JSON schema:
 
 ## Action Types
 
-- `execute`: Run a command. Payload contains the command string.
+- `execute`: Run a command locally. Payload contains the command string.
+- `remote`: Run a command on a remote host from ~/.ssh/config. Payload is a JSON object with `host` (Host alias) and `cmd` (command string).
 - `ask`: Request information from the user. Payload contains the question.
 - `info`: Provide information to the user. Payload contains the message.
 - `done`: Task completed successfully. Payload contains the summary.
@@ -39,6 +40,15 @@ All agent responses must conform to this JSON schema:
   "action": "execute",
   "payload": "command string to run",
   "reason": "why this command is needed"
+}
+```
+
+### remote
+```json
+{
+  "action": "remote",
+  "payload": {"host": "myserver", "cmd": "command string to run"},
+  "reason": "why this needs to run on the remote host"
 }
 ```
 
