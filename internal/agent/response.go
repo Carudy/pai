@@ -127,7 +127,7 @@ func parseResponseWithRetry(
 		err  error
 	)
 	log := cfg.Logger
-	for attempt := 0; attempt < maxFormatRetries; attempt++ {
+	for attempt := range maxFormatRetries {
 		resp, err = ParseAgentResponse(content)
 		if err == nil {
 			err = resp.Validate()
