@@ -10,7 +10,7 @@ All agent responses must conform to this JSON schema:
 {
   "action": {
     "type": "string",
-    "enum": ["execute", "remote", "ask", "info", "done", "terminate"]
+    "enum": ["tool", "execute", "ask", "info", "done", "terminate"]
   },
   "payload": {
     "type": ["string", "object", "array"],
@@ -25,8 +25,8 @@ All agent responses must conform to this JSON schema:
 
 ## Action Types
 
+- `tool`: **(devops only)** Run a named tool. Payload is `{"toolname":"execute|remote|...", "payload": ...}`.
 - `execute`: Run a command locally. Payload contains the command string.
-- `remote`: Run a command on a remote host from ~/.ssh/config. Payload is a JSON object with `host` (Host alias) and `cmd` (command string).
 - `ask`: Request information from the user. Payload contains the question.
 - `info`: Provide information to the user. Payload contains the message.
 - `done`: Task completed successfully. Payload contains the summary.
@@ -34,21 +34,30 @@ All agent responses must conform to this JSON schema:
 
 ## Payload Format by Action Type
 
+### tool — execute
+```json
+{
+  "action": "tool",
+  "payload": {"toolname": "execute", "payload": "command string"},
+  "reason": "why this command is needed"
+}
+```
+
+### tool — remote
+```json
+{
+  "action": "tool",
+  "payload": {"toolname": "remote", "payload": {"host": "myserver", "cmd": "command string"}},
+  "reason": "why this needs to run on the remote host"
+}
+```
+
 ### execute
 ```json
 {
   "action": "execute",
   "payload": "command string to run",
   "reason": "why this command is needed"
-}
-```
-
-### remote
-```json
-{
-  "action": "remote",
-  "payload": {"host": "myserver", "cmd": "command string to run"},
-  "reason": "why this needs to run on the remote host"
 }
 ```
 

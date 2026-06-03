@@ -2,8 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/llm"
@@ -13,12 +13,13 @@ import (
 
 func init() { Register(&PrivateAgent{}) }
 
+// PrivateAgent extracts masked math expressions, unmasks them, and computes
+// results via Python.  Numbers in user input are masked as <mask:TOKEN> and
+// resolved from ~/.config/pai/mask.yml.
 type PrivateAgent struct{}
 
-func (a *PrivateAgent) Name() string { return "private" }
-func (a *PrivateAgent) Description() string {
-	return "Extract math calculations using tools to calc"
-}
+func (a *PrivateAgent) Name() string        { return "private" }
+func (a *PrivateAgent) Description() string { return "Compute masked math expressions privately" }
 
 func (a *PrivateAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	sysPrompt, err := LoadAgentPrompt("private", cfg.CustomPrompt)
@@ -41,27 +42,68 @@ func (a *PrivateAgent) Run(ctx context.Context, cfg *config.UserConfig, userInpu
 		return err
 	}
 
-	cmd := resp.GetPayload()
+	switch resp.Action {
+	case ActionTool:
+		tp, err := resp.GetToolPayload()
+		if err != nil {
+			return err
+		}
+		if tp.ToolName != "execute" {
+			return fmt.Errorf("private agent: unknown toolname %q", tp.ToolName)
+		}
 
-	fmt.Printf("%s %s\n", ui.RenderStr("TagExec", "[CMD 💬]"), ui.RenderStr("Help", resp.Reason))
-	calc_cmd := "Calculation formula: \"" + cmd + "\""
-	fmt.Printf("%s %s\n", ui.RenderStr("TagExec", "[CMD 💻]"), ui.RenderStr("Info", calc_cmd))
-	unmask_cmd := tool.ReplaceMasks(cmd, config.MaskDB)
-	fmt.Printf("%s %s\n", ui.RenderStr("TagExec", "[CMD 💻]"), ui.RenderStr("Info", "Unmasked formula: \""+unmask_cmd+"\""))
+		var formula string
+		if err := json.Unmarshal(tp.Payload, &formula); err != nil {
+			return fmt.Errorf("execute payload: %w", err)
+		}
 
-	if resp.Action == "execute" {
-		cmd = "python3 -c \"print(" + tool.ReplaceMasks(cmd, config.MaskDB) + ")\""
+		// Show the masked formula (before substitution).
+		fmt.Printf("%s %s\n",
+			ui.RenderStr("TagAgent", "[CALC 💬]"),
+			ui.RenderStr("Help", resp.Reason),
+		)
+		fmt.Printf("%s %s\n",
+			ui.RenderStr("TagExec", "[CALC 📐]"),
+			ui.RenderStr("Info", formula),
+		)
 
-		output, execErr := tool.ExecuteCommand(cmd, !tool.IsTrusted(cmd, cfg.TrustedCmds), os.Stdout)
+		// Substitute masks with real values.
+		unmasked := tool.ReplaceMasks(formula, config.MaskDB)
+		if unmasked != formula {
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("Subdued", "  →"),
+				ui.RenderStr("Subdued", unmasked),
+			)
+		}
+
+		// Execute via Python.
+		cmd := "python3 -c \"print(" + unmasked + ")\""
+		output, execErr := tool.ExecuteCommand(cmd, true, nil)
 		if execErr != nil {
-			return fmt.Errorf("Execution Error: %v", execErr)
+			return fmt.Errorf("execution error: %w", execErr)
 		}
-		if output.Output != tool.CancelledOutput {
-			fmt.Printf("%s ✅ %s\n", ui.RenderStr("TagSystem", "[SYS]"), ui.RenderStr("Success", "Command succeeded"))
-			fmt.Printf("%s\n%s\n", ui.RenderStr("TagResult", "[RES]"), ui.RenderStr("Cmd", output.String()))
+		if output.Output == tool.CancelledOutput {
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("TagSystem", "[SYS]"),
+				ui.RenderStr("Subdued", "Skipped"),
+			)
 		} else {
-			fmt.Printf("%s ⏭️ %s\n", ui.RenderStr("TagSystem", "[SYS]"), ui.RenderStr("Subdued", "Skipped"))
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("TagResult", "[RES]"),
+				ui.RenderStr("Success", output.Output),
+			)
 		}
+
+	case ActionInfo:
+		answer := resp.GetPayload()
+		fmt.Printf("%s %s\n%s\n",
+			ui.RenderStr("TagAgent", "[PAI 🤖]"),
+			ui.RenderStr("Help", resp.Reason),
+			ui.RenderStr("Content", answer),
+		)
+
+	default:
+		return fmt.Errorf("private agent: unexpected action %q", resp.Action)
 	}
 
 	return nil

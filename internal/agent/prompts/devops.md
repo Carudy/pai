@@ -11,7 +11,7 @@ Every response MUST be a valid JSON object following schema:
 {
   "action": {
     "type": "string",
-    "enum": ["execute", "remote", "ask", "done", "terminate"]
+    "enum": ["tool", "ask", "done", "terminate"]
   },
   "payload": {
     "type": ["string", "object", "array"],
@@ -26,26 +26,39 @@ Every response MUST be a valid JSON object following schema:
 
 ## Action Types
 
-- `execute`: Run a shell command locally to check status, or make changes, etc.
-  ```json
-  {
-    "action": "execute",
-    "payload": "command to run locally",
-    "reason": "why this command is needed right now"
-  }
-  ```
+- `tool`: the payload is a JSON object with `toolname` and `payload` fields.
+  - `toolname`: the name of the tool to run.
+  - `payload`: the payload to pass to the tool.
+  - possible `toolname` values: `execute`, `remote`
+  - `execute`: Run a shell command locally to check status, or make changes, etc.
+    ```json
+    {
+      "action": "tool",
+      "payload": {
+        "toolname": "execute",
+        "payload": "command to run locally"
+      },
+      "reason": "why this command is needed right now"
+    }
+    ```
 
-- `remote`: Run a command on a remote host defined in ~/.ssh/config. Sessions are cached, so repeated remote commands reuse the same connection. The payload is a JSON object with `host`
-  (a Host alias from ~/.ssh/config) and `cmd` (the command to run).
-  ```json
-  {
-    "action": "remote",
-    "payload": {"host": "myserver", "cmd": "systemctl status nginx"},
-    "reason": "why this needs to run on the remote host"
-  }
-  ```
-  If you don't know the available hosts, run `rg`/`grep` etc. on `~/.ssh/config` with `execute` first.
-  Prefer `remote` over `execute` when the task explicitly targets a remote server.
+  - `remote`: Run a command on a remote host defined in ~/.ssh/config. Sessions are cached, so repeated remote commands reuse the same connection. The payload is a JSON object with `host`
+    (a Host alias from ~/.ssh/config) and `cmd` (the command to run).
+    ```json
+    {
+      "action": "tool",
+      "payload": {
+        "toolname": "remote",
+        "payload": {
+          "host": "remote_servername",
+          "cmd": "systemctl status nginx"
+        }
+      },
+      "reason": "why this needs to run on the remote host"
+    }
+    ```
+    If you don't know the available hosts, run `rg`/`grep` on `~/.ssh/config` with `execute` first.
+    Prefer `remote` over `execute` when the task explicitly targets a remote server.
 
 - `ask`: Request information from the user when you need specific details.
   ```json
@@ -77,8 +90,8 @@ Every response MUST be a valid JSON object following schema:
 ## Action Rules
 - Choose ONE action per response. No markdown, backticks, or text outside the JSON.
   The reason is always shown to the user, so there is no separate \"info\" action.
-- For `execute`, check preconditions first, don't be too greedy, drive toward the goal step by step.
-- For `remote`, the host must be a Host alias from ~/.ssh/config. If unsure, run `cat ~/.ssh/config` first.
+- For tool `execute`, check preconditions first, don't be too greedy, drive toward the goal step by step.
+- For tool `remote`, the host must be a Host alias from ~/.ssh/config. If unsure, run `cat ~/.ssh/config` first.
   Sessions are cached automatically — you don't need to worry about reconnecting. 
 - If a shell command is hard to create, try Python scripts (e.g., `python3 -c "..."`).
 - You can check available CLI tools by checking $PATH, or using `which <cli>` if some attempts fail.

@@ -8,7 +8,6 @@ import (
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/llm"
-	"github.com/Carudy/pai/internal/tool"
 	"github.com/Carudy/pai/internal/ui"
 )
 
@@ -16,14 +15,16 @@ const maxFormatRetries = 3
 
 type ActionType string
 
-// ActionType values shared across all agents.
+// ActionType values shared across agents.
+// "tool" with structured {toolname, payload} is devops-only;
+// "execute" and "info" are used by cmd/qa agents.
 const (
+	ActionTool      ActionType = "tool"
 	ActionExecute   ActionType = "execute"
 	ActionAsk       ActionType = "ask"
 	ActionInfo      ActionType = "info"
 	ActionDone      ActionType = "done"
 	ActionTerminate ActionType = "terminate"
-	ActionRemote    ActionType = "remote"
 )
 
 type AgentResponse struct {
@@ -32,9 +33,13 @@ type AgentResponse struct {
 	Reason  string          `json:"reason"`
 }
 
+// ToolPayload is the inner structure of a "tool" action (devops only).
+type ToolPayload struct {
+	ToolName string          `json:"toolname"`
+	Payload  json.RawMessage `json:"payload"`
+}
+
 // GetPayload decodes the JSON-encoded payload string into a plain Go string.
-// Handles escape sequences like \n, \t correctly.
-// Falls back to stripping surrounding quotes on decode failure.
 func (r *AgentResponse) GetPayload() string {
 	var s string
 	if err := json.Unmarshal(r.Payload, &s); err == nil {
@@ -54,39 +59,32 @@ func (r *AgentResponse) GetPayload() string {
 	return string(b)
 }
 
-// GetRemotePayload decodes the payload as a RemotePayload (for "remote" action).
-// Falls back to treating payload as a plain "host cmd" string.
-func (r *AgentResponse) GetRemotePayload() (tool.RemotePayload, error) {
-	var rp tool.RemotePayload
-	if err := json.Unmarshal(r.Payload, &rp); err == nil && rp.Host != "" && rp.Cmd != "" {
-		return rp, nil
+// GetToolPayload parses the payload of a "tool" action into a ToolPayload.
+func (r *AgentResponse) GetToolPayload() (ToolPayload, error) {
+	var tp ToolPayload
+	if err := json.Unmarshal(r.Payload, &tp); err != nil {
+		return tp, fmt.Errorf("tool payload: %w", err)
 	}
-	// Fallback: plain string "host command..."
-	s := r.GetPayload()
-	before, after, found := strings.Cut(s, " ")
-	if !found || before == "" || after == "" {
-		return rp, fmt.Errorf("remote payload must be {\"host\":\"...\",\"cmd\":\"...\"} or \"host cmd\"")
+	if tp.ToolName == "" {
+		return tp, fmt.Errorf("tool payload missing toolname")
 	}
-	rp.Host = before
-	rp.Cmd = after
-	return rp, nil
+	return tp, nil
 }
 
-// validActions is the set of allowed action values (matches schema.md)
+// validActions is the set of allowed action values.
 var validActions = map[ActionType]bool{
+	ActionTool:      true,
 	ActionExecute:   true,
 	ActionAsk:       true,
 	ActionInfo:      true,
 	ActionDone:      true,
 	ActionTerminate: true,
-	ActionRemote:    true,
 }
 
 // Validate checks the response conforms to the agent schema.
-// Returns a descriptive error so it can be fed back to the AI for correction.
 func (r *AgentResponse) Validate() error {
 	if !validActions[r.Action] {
-		valid := `"execute", "ask", "info", "done", "terminate", "remote"`
+		valid := `"tool", "execute", "ask", "info", "done", "terminate"`
 		if r.Action == "" {
 			return fmt.Errorf(`missing "action" field; must be one of: %s`, valid)
 		}
@@ -96,6 +94,15 @@ func (r *AgentResponse) Validate() error {
 	if p == "" || p == "null" || p == `""` {
 		return fmt.Errorf(`"payload" must not be empty for action %q`, r.Action)
 	}
+
+	// For "tool", payload must be an object with "toolname".
+	if r.Action == ActionTool {
+		var tp ToolPayload
+		if err := json.Unmarshal(r.Payload, &tp); err != nil || tp.ToolName == "" {
+			return fmt.Errorf(`"tool" payload must be {"toolname":"...","payload":...}`)
+		}
+	}
+
 	return nil
 }
 
@@ -127,7 +134,7 @@ func parseResponseWithRetry(
 		err  error
 	)
 	log := cfg.Logger
-	for attempt := range maxFormatRetries {
+	for attempt := 0; attempt < maxFormatRetries; attempt++ {
 		resp, err = ParseAgentResponse(content)
 		if err == nil {
 			err = resp.Validate()
@@ -145,7 +152,7 @@ func parseResponseWithRetry(
 
 			correctionMsg := fmt.Sprintf(
 				"[system] Your previous response had a format error: %v\n"+
-					`Respond ONLY with valid JSON: {"action": "execute|remote|ask|info|done|terminate", "payload": "...", "reason": "..."}`,
+					`Respond ONLY with valid JSON: {"action": "tool|execute|ask|info|done|terminate", "payload": "...", "reason": "..."}`,
 				err)
 			history = append(history, llm.Message{Role: llm.RoleUser, Content: correctionMsg})
 

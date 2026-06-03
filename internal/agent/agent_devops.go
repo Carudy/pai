@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -51,12 +52,9 @@ func singleDevOpsLoop(
 		return false, nil, err
 	}
 
-	// Actions that already print their own reason inline (in the [CMD 💬] / [RMT 💬] /
-	// [PAI ✅] lines) should not have a redundant "agent says" prefix.
 	selfExplaining := map[ActionType]bool{
-		ActionExecute: true,
-		ActionRemote:  true,
-		ActionDone:    true,
+		ActionTool: true,
+		ActionDone: true,
 	}
 	if resp.Reason != "" && !selfExplaining[resp.Action] {
 		fmt.Printf("%s %s\n",
@@ -84,100 +82,116 @@ func singleDevOpsLoop(
 		)
 		return false, history, nil
 
-	case ActionExecute:
-		cmd := resp.GetPayload()
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagAgent", "[CMD 💬]"),
-			ui.RenderStr("Help", resp.Reason),
-		)
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagExec", "[CMD 💻]"),
-			ui.RenderStr("Info", cmd),
-		)
-		if tool.IsTrusted(cmd, cfg.TrustedCmds) {
-			fmt.Printf("%s\n", ui.RenderStr("Trusted", "⚡ executing trusted command"))
-		}
-
-		output, execErr := tool.ExecuteCommand(cmd, !tool.IsTrusted(cmd, cfg.TrustedCmds), os.Stdout)
-		if execErr != nil {
-			fmt.Printf("%s ❌ %s\n%s\n",
-				ui.RenderStr("TagSystem", "[SYS]"),
-				ui.RenderStr("Warn", "Command failed"),
-				ui.RenderStr("Warn", output.Output),
-			)
-		} else if output.Output == tool.CancelledOutput {
-			fmt.Printf("%s %s\n",
-				ui.RenderStr("TagSystem", "[SYS]"),
-				ui.RenderStr("Subdued", "Skipped"),
-			)
-		} else {
-			fmt.Printf("%s %s\n",
-				ui.RenderStr("TagSystem", "[SYS]"),
-				ui.RenderStr("Success", "Command succeeded"),
-			)
-		}
-
-		observation := fmt.Sprintf(
-			"COMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-			cmd, execErr, TruncateOutput(output.String(), 2000),
-		)
-		history = append(history, llm.Message{
-			Role:    llm.RoleUser,
-			Content: "[cmd result]\n" + observation,
-		})
-
-	case ActionRemote:
-		rp, err := resp.GetRemotePayload()
+	case ActionTool:
+		tp, err := resp.GetToolPayload()
 		if err != nil {
-			return false, nil, fmt.Errorf("remote payload: %w", err)
+			return false, nil, err
 		}
-		if cfg.RemoteManager == nil {
-			rm, err := tool.NewRemoteManager()
-			if err != nil {
-				return false, nil, fmt.Errorf("init remote sessions: %w", err)
+		log.Debugf("toolname: %s\n", tp.ToolName)
+
+		switch tp.ToolName {
+		case "execute":
+			var cmd string
+			if err := json.Unmarshal(tp.Payload, &cmd); err != nil {
+				return false, nil, fmt.Errorf("execute payload: %w", err)
 			}
-			cfg.RemoteManager = rm
-		}
 
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagAgent", "[RMT 💬]"),
-			ui.RenderStr("Help", resp.Reason),
-		)
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagExec", fmt.Sprintf("[RMT 💻 @%s]", rp.Host)),
-			ui.RenderStr("Info", rp.Cmd),
-		)
-		if tool.IsTrusted(rp.Cmd, cfg.TrustedCmds) {
-			fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
-		}
-
-		output, execErr := cfg.RemoteManager.ExecuteRemote(ctx, rp, !tool.IsTrusted(rp.Cmd, cfg.TrustedCmds), os.Stdout)
-		if execErr != nil {
-			fmt.Printf("%s ❌ %s\n%s\n",
-				ui.RenderStr("TagSystem", "[SYS]"),
-				ui.RenderStr("Warn", fmt.Sprintf("Remote command failed: %v", execErr)),
-				ui.RenderStr("Warn", output.Output),
-			)
-		} else if output.Output == tool.CancelledOutput {
 			fmt.Printf("%s %s\n",
-				ui.RenderStr("TagSystem", "[SYS]"),
-				ui.RenderStr("Subdued", "Skipped"),
+				ui.RenderStr("TagAgent", "[CMD 💬]"),
+				ui.RenderStr("Help", resp.Reason),
 			)
-		} else {
 			fmt.Printf("%s %s\n",
-				ui.RenderStr("TagSystem", "[SYS]"),
-				ui.RenderStr("Success", "Remote command succeeded"),
+				ui.RenderStr("TagExec", "[CMD 💻]"),
+				ui.RenderStr("Info", cmd),
 			)
-		}
+			if tool.IsTrusted(cmd, cfg.TrustedCmds) {
+				fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
+			}
 
-		observation := fmt.Sprintf(
-			"REMOTE HOST: %s\nCOMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-			rp.Host, rp.Cmd, execErr, TruncateOutput(output.String(), 2000),
-		)
-		history = append(history, llm.Message{
-			Role:    llm.RoleUser,
-			Content: "[remote result]\n" + observation,
-		})
+			output, execErr := tool.ExecuteCommand(cmd, !tool.IsTrusted(cmd, cfg.TrustedCmds), os.Stdout)
+			if execErr != nil {
+				fmt.Printf("%s ❌ %s\n%s\n",
+					ui.RenderStr("TagSystem", "[SYS]"),
+					ui.RenderStr("Warn", "Command failed"),
+					ui.RenderStr("Warn", output.Output),
+				)
+			} else if output.Output == tool.CancelledOutput {
+				fmt.Printf("%s %s\n",
+					ui.RenderStr("TagSystem", "[SYS]"),
+					ui.RenderStr("Subdued", "Skipped"),
+				)
+			} else {
+				fmt.Printf("%s %s\n",
+					ui.RenderStr("TagSystem", "[SYS]"),
+					ui.RenderStr("Success", "Command succeeded"),
+				)
+			}
+
+			observation := fmt.Sprintf(
+				"COMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
+				cmd, execErr, TruncateOutput(output.String(), 2000),
+			)
+			history = append(history, llm.Message{
+				Role:    llm.RoleUser,
+				Content: "[cmd result]\n" + observation,
+			})
+
+		case "remote":
+			var rp tool.RemotePayload
+			if err := json.Unmarshal(tp.Payload, &rp); err != nil {
+				return false, nil, fmt.Errorf("remote payload: %w", err)
+			}
+			if cfg.RemoteManager == nil {
+				rm, err := tool.NewRemoteManager()
+				if err != nil {
+					return false, nil, fmt.Errorf("init remote sessions: %w", err)
+				}
+				cfg.RemoteManager = rm
+			}
+
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("TagAgent", "[RMT 💬]"),
+				ui.RenderStr("Help", resp.Reason),
+			)
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("TagExec", fmt.Sprintf("[RMT 💻 @%s]", rp.Host)),
+				ui.RenderStr("Info", rp.Cmd),
+			)
+			if tool.IsTrusted(rp.Cmd, cfg.TrustedCmds) {
+				fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
+			}
+
+			output, execErr := cfg.RemoteManager.ExecuteRemote(ctx, rp, !tool.IsTrusted(rp.Cmd, cfg.TrustedCmds), os.Stdout)
+			if execErr != nil {
+				fmt.Printf("%s ❌ %s\n%s\n",
+					ui.RenderStr("TagSystem", "[SYS]"),
+					ui.RenderStr("Warn", fmt.Sprintf("Remote command failed: %v", execErr)),
+					ui.RenderStr("Warn", output.Output),
+				)
+			} else if output.Output == tool.CancelledOutput {
+				fmt.Printf("%s %s\n",
+					ui.RenderStr("TagSystem", "[SYS]"),
+					ui.RenderStr("Subdued", "Skipped"),
+				)
+			} else {
+				fmt.Printf("%s %s\n",
+					ui.RenderStr("TagSystem", "[SYS]"),
+					ui.RenderStr("Success", "Remote command succeeded"),
+				)
+			}
+
+			observation := fmt.Sprintf(
+				"REMOTE HOST: %s\nCOMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
+				rp.Host, rp.Cmd, execErr, TruncateOutput(output.String(), 2000),
+			)
+			history = append(history, llm.Message{
+				Role:    llm.RoleUser,
+				Content: "[remote result]\n" + observation,
+			})
+
+		default:
+			return false, nil, fmt.Errorf("unknown toolname %q", tp.ToolName)
+		}
 
 	case ActionAsk:
 		q := resp.GetPayload()
