@@ -101,7 +101,7 @@ func singleDevOpsLoop(
 				ui.RenderStr("Help", resp.Reason),
 			)
 			fmt.Printf("%s %s\n",
-				ui.RenderStr("TagExec", "[CMD 💻]"),
+				ui.RenderStr("TagExec", fmt.Sprintf("[CMD 💻 %s]", tool.Shell())),
 				ui.RenderStr("Info", cmd),
 			)
 			if tool.IsTrusted(cmd, cfg.TrustedCmds) {
@@ -206,7 +206,20 @@ func singleDevOpsLoop(
 
 			sr, err := tool.Search(ctx, query)
 			if err != nil {
-				return false, nil, fmt.Errorf("web search: %w", err)
+				// Non-fatal: show error and let the agent adapt.
+				fmt.Printf("%s ❌ %s\n",
+					ui.RenderStr("TagSystem", "[SYS]"),
+					ui.RenderStr("Warn", fmt.Sprintf("Web search failed: %v", err)),
+				)
+				observation := fmt.Sprintf(
+					"SEARCH QUERY: %s\nERROR: %v",
+					query, err,
+				)
+				history = append(history, llm.Message{
+					Role:    llm.RoleUser,
+					Content: "[search error]\n" + observation,
+				})
+				break
 			}
 
 			log.Debugf("[Web Search Results]:\n%s\n", sr.Format())

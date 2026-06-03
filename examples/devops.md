@@ -106,6 +106,34 @@ Connections to `webserver` are cached — subsequent remote commands reuse the s
 
 ---
 
+### Example: Web search
+
+```bash
+$ pai "what's the latest Kubernetes LTS version and are there any critical CVEs"
+```
+
+```
+[PAI 🤖] I need to search for the current Kubernetes LTS version and recent CVEs.
+────────────────────────────────────────
+[WEB 🔍] searching for latest Kubernetes release and security advisories
+[WEB] Kubernetes LTS version 2025 2026 CVE critical
+  3 results in 0.53s
+[AI 💡] The latest Kubernetes LTS version is 1.32, released in December 2025.
+  Recent critical CVEs include CVE-2025-1234 (kubelet RCE) and
+  CVE-2025-5678 (Ingress NGINX auth bypass)...
+  1. Kubernetes 1.32 Release Notes (score: 0.99)
+  2. CVE-2025-1234: Critical kubelet vulnerability (score: 0.97)
+  3. Kubernetes Security Advisory — January 2026 (score: 0.95)
+────────────────────────────────────────
+[token: 612 in, 178 out, 790 total]
+
+[PAI ✅] Kubernetes latest LTS is 1.32. Two critical CVEs are active:
+         CVE-2025-1234 (kubelet RCE) and CVE-2025-5678 (Ingress auth bypass).
+         Both have patches available in 1.32.1+.
+```
+
+---
+
 ### Example: Auto commit, tag, and push
 
 ```bash

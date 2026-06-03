@@ -113,7 +113,7 @@ Every response MUST be a valid JSON object following schema:
   use outdated training data — search first, then act on the results.
   Keep queries concise and keyword-focused (e.g. "nginx 429 rate limit config" not
   "how do I configure nginx to handle 429 errors with rate limiting").
-- For tool `execute`, check preconditions first, don't be too greedy, drive toward the goal step by step.
+- For tool `execute`, if without user specific, default env is bash for unix-like powershell for windows, don't be too greedy, drive toward the goal step by step.
 - For tool `remote`, the host must be a Host alias from ~/.ssh/config. If unsure, run `cat ~/.ssh/config` first.
   Sessions are cached automatically — you don't need to worry about reconnecting. 
 - If a shell command is hard to create, try Python scripts (e.g., `python3 -c "..."`).

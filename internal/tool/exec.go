@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -131,6 +132,32 @@ func firstWord(s string) string {
 	return s
 }
 
+// Shell returns the short name of the shell used to execute commands
+// (e.g. "bash", "powershell", "sh").
+func Shell() string {
+	name, _ := resolveShell()
+	return filepath.Base(name)
+}
+
+// resolveShell returns (path, arg) for the shell that runs commands.
+func resolveShell() (string, string) {
+	if runtime.GOOS == "windows" {
+		if ps, err := exec.LookPath("powershell.exe"); err == nil {
+			return ps, "-Command"
+		}
+		return "cmd.exe", "/C"
+	}
+	for _, s := range []string{"/bin/bash", "/usr/bin/bash", "bash"} {
+		if _, err := exec.LookPath(s); err == nil {
+			return s, "-c"
+		}
+	}
+	if s := os.Getenv("SHELL"); s != "" {
+		return s, "-c"
+	}
+	return "/bin/sh", "-c"
+}
+
 // ExecuteCommand runs the specified command using the system shell (or cmd/powershell on Windows).
 // If userConfirm is true, it will prompt the user for confirmation before execution.
 //
@@ -151,24 +178,7 @@ func ExecuteCommand(command string, userConfirm bool, streamW io.Writer) (ExecRe
 		return ExecResult{}, fmt.Errorf("command must not be empty")
 	}
 
-	var shell, shellArg string
-	if runtime.GOOS == "windows" {
-		// Use PowerShell by default on Windows, fall back to cmd
-		if powershell, err := exec.LookPath("powershell.exe"); err == nil {
-			shell = powershell
-			shellArg = "-Command"
-		} else {
-			shell = "cmd.exe"
-			shellArg = "/C"
-		}
-	} else {
-		// Unix-like systems
-		shell = os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/sh"
-		}
-		shellArg = "-c"
-	}
+	shell, shellArg := resolveShell()
 
 	if userConfirm {
 		exeRes, err := ui.GetUserSelected(

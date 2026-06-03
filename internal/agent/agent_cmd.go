@@ -45,7 +45,7 @@ func (a *CmdAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput st
 	cmd := resp.GetPayload()
 
 	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💬]"), ui.Styles["Help"].Render(resp.Reason))
-	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render("[CMD 💻]"), ui.Styles["Info"].Render(cmd))
+	fmt.Printf("%s %s\n", ui.Styles["TagExec"].Render(fmt.Sprintf("[CMD 💻 %s]", tool.Shell())), ui.Styles["Info"].Render(cmd))
 
 	output, execErr := tool.ExecuteCommand(cmd, !tool.IsTrusted(cmd, cfg.TrustedCmds), os.Stdout)
 	if execErr != nil {
