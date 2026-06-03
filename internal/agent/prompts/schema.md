@@ -10,7 +10,7 @@ All agent responses must conform to this JSON schema:
 {
   "action": {
     "type": "string",
-    "enum": ["tool", "execute", "ask", "info", "done", "terminate"]
+    "enum": ["tool", "ask", "info", "done", "terminate"]
   },
   "payload": {
     "type": ["string", "object", "array"],
@@ -25,7 +25,7 @@ All agent responses must conform to this JSON schema:
 
 ## Action Types
 
-- `tool`: **(devops only)** Run a named tool. Payload is `{"toolname":"execute|remote|...", "payload": ...}`.
+- `tool`: **(devops only)** Run a named tool. Payload is `{"toolname":"execute|remote|websearch", "payload": ...}`.
 - `execute`: Run a command locally. Payload contains the command string.
 - `ask`: Request information from the user. Payload contains the question.
 - `info`: Provide information to the user. Payload contains the message.
@@ -49,6 +49,15 @@ All agent responses must conform to this JSON schema:
   "action": "tool",
   "payload": {"toolname": "remote", "payload": {"host": "myserver", "cmd": "command string"}},
   "reason": "why this needs to run on the remote host"
+}
+```
+
+### tool — websearch
+```json
+{
+  "action": "tool",
+  "payload": {"toolname": "websearch", "payload": "search query string"},
+  "reason": "why current information is needed"
 }
 ```
 

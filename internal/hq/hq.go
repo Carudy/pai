@@ -8,7 +8,7 @@ import (
 	"github.com/Carudy/pai/internal/ui"
 )
 
-const PAI_VERSION = "v0.3.2"
+const PAI_VERSION = "v0.3.3"
 
 // CliFlags holds all CLI flag values parsed from os.Args.
 type CliFlags struct {

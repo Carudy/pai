@@ -42,6 +42,11 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	cfg.Flags = &flags
 	cfg.Logger = log
 
+	// Config "interactive: true" auto-enables -i mode.
+	if cfg.Interactive {
+		flags.Inter = true
+	}
+
 	log.Debugf("📃 User Flags: %#v\n", flags)
 	log.Debugf("🔧 User config: %#v\n", cfg)
 

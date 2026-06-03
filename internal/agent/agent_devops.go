@@ -189,6 +189,68 @@ func singleDevOpsLoop(
 				Content: "[remote result]\n" + observation,
 			})
 
+		case "websearch":
+			var query string
+			if err := json.Unmarshal(tp.Payload, &query); err != nil {
+				return false, nil, fmt.Errorf("websearch payload: %w", err)
+			}
+
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("TagAgent", "[WEB 🔍]"),
+				ui.RenderStr("Help", resp.Reason),
+			)
+			fmt.Printf("%s %s\n",
+				ui.RenderStr("TagExec", "[WEB]"),
+				ui.RenderStr("Info", query),
+			)
+
+			sr, err := tool.Search(ctx, query)
+			if err != nil {
+				return false, nil, fmt.Errorf("web search: %w", err)
+			}
+
+			log.Debugf("[Web Search Results]:\n%s\n", sr.Format())
+
+			// Keep top 3 for agent context (summary shows original count).
+			total := len(sr.Results)
+			if total > 3 {
+				sr.Results = sr.Results[:3]
+			}
+
+			// Summary line.
+			fmt.Printf("%s\n",
+				ui.RenderStr("Token", fmt.Sprintf("  %d results in %.2fs", total, sr.ResponseTime)),
+			)
+
+			// AI answer (if Tavily provided one).
+			if sr.Answer != "" {
+				fmt.Printf("%s %s\n",
+					ui.RenderStr("TagAgent", "[AI 💡]"),
+					ui.RenderStr("Content", sr.Answer),
+				)
+			}
+
+			// Short result preview for the user.
+			for i, r := range sr.Results {
+				if i >= 3 {
+					break
+				}
+				fmt.Printf("  %s %s\n",
+					ui.RenderStr("Success", fmt.Sprintf("%d.", i+1)),
+					ui.RenderStr("Help", r.Title),
+				)
+			}
+
+			context := sr.Format()
+			observation := fmt.Sprintf(
+				"SEARCH QUERY: %s\nRESULTS:\n%s",
+				query, TruncateOutput(context, 4000),
+			)
+			history = append(history, llm.Message{
+				Role:    llm.RoleUser,
+				Content: "[search result]\n" + observation,
+			})
+
 		default:
 			return false, nil, fmt.Errorf("unknown toolname %q", tp.ToolName)
 		}
