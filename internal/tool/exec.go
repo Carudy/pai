@@ -181,14 +181,11 @@ func ExecuteCommand(command string, userConfirm bool, streamW io.Writer) (ExecRe
 	shell, shellArg := resolveShell()
 
 	if userConfirm {
-		exeRes, err := ui.GetUserSelected(
-			"Execute this command?",
-			[]string{"Yes", "No"},
-		)
+		ok, err := ui.GetUserConfirm("Execute this command?")
 		if err != nil {
 			return ExecResult{}, fmt.Errorf("user interaction error: %w", err)
 		}
-		if exeRes != "Yes" {
+		if !ok {
 			return ExecResult{ExitCode: -1, Output: CancelledOutput}, nil
 		}
 	}

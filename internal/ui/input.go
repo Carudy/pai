@@ -1,25 +1,20 @@
 package ui
 
 import (
-	"bufio"
-	"fmt"
-	"os"
 	"strings"
+
+	"github.com/charmbracelet/huh"
 )
 
 func GetUserTextInput(prompt string) (string, error) {
-	// Print the prompt using the same Warn style as before.
-	fmt.Fprintln(os.Stdout, Styles["Warn"].Render(prompt))
-	fmt.Fprint(os.Stdout, RenderStr("Help", "▊ ")+RenderStr("Hint", "(type here, enter to confirm, ctrl+c to cancel)")+"\n> ")
-
-	scanner := bufio.NewScanner(os.Stdin)
-	if !scanner.Scan() {
-		if scanner.Err() != nil {
-			return "", scanner.Err()
-		}
-		return "", nil
+	var value string
+	err := huh.NewInput().
+		Title(prompt).
+		Value(&value).
+		Validate(func(s string) error { return nil }).
+		Run()
+	if err != nil {
+		return "", err
 	}
-
-	line := scanner.Text()
-	return strings.TrimSpace(line), nil
+	return strings.TrimSpace(value), nil
 }

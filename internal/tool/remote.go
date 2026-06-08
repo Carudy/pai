@@ -63,14 +63,11 @@ func (rm *RemoteManager) ExecuteRemote(ctx context.Context, payload RemotePayloa
 	}
 
 	if userConfirm {
-		exeRes, err := ui.GetUserSelected(
-			fmt.Sprintf("Run on %s?", payload.Host),
-			[]string{"Yes", "No"},
-		)
+		ok, err := ui.GetUserConfirm(fmt.Sprintf("Run on %s?", payload.Host))
 		if err != nil {
 			return ExecResult{}, fmt.Errorf("user interaction error: %w", err)
 		}
-		if exeRes != "Yes" {
+		if !ok {
 			return ExecResult{ExitCode: -1, Output: CancelledOutput}, nil
 		}
 	}

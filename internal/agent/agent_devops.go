@@ -279,6 +279,9 @@ func singleDevOpsLoop(
 		if err != nil {
 			return false, nil, fmt.Errorf("user input error: %w", err)
 		}
+		if answer != "" {
+			fmt.Printf("%s %s\n", ui.RenderStr("TagUser", "[User]"), ui.RenderStr("Info", answer))
+		}
 		if answer == "" {
 			answer = "[user cancelled / no answer]"
 		}
@@ -330,6 +333,7 @@ func (a *DevopsAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput
 			if input == "" {
 				return fmt.Errorf("user empty input")
 			}
+			fmt.Printf("%s %s\n", ui.RenderStr("TagUser", "[User]"), ui.RenderStr("Info", input))
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
 				Content: input,

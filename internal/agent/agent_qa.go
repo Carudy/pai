@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/llm"
@@ -11,13 +12,11 @@ import (
 
 func init() { Register(&QAAgent{}) }
 
-// QAAgent handles question-answering (single-turn or multi-turn TUI).
+// QAAgent handles question-answering in single-turn or interactive mode.
 type QAAgent struct{}
 
-func (a *QAAgent) Name() string { return "qa" }
-func (a *QAAgent) Description() string {
-	return "Question answering (single-turn or interactive multi-turn TUI)"
-}
+func (a *QAAgent) Name() string        { return "qa" }
+func (a *QAAgent) Description() string { return "Question answering (single-turn or interactive)" }
 
 func (a *QAAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput string) error {
 	sysPrompt, err := LoadAgentPrompt("qa", cfg.CustomPrompt)
@@ -27,62 +26,44 @@ func (a *QAAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput str
 
 	history := []llm.Message{
 		{Role: llm.RoleSystem, Content: sysPrompt},
-		{Role: llm.RoleUser, Content: userInput},
+	}
+	if userInput != "" {
+		history = append(history, llm.Message{Role: llm.RoleUser, Content: userInput})
 	}
 
-	// ── One-turn mode (stdout) ─────────────────────────────────────────
-	if !cfg.Flags.Inter {
-		content, history, _, err := chatStr(ctx, cfg, cfg.Clients["qa"], history)
+	for {
+		content, newHistory, _, err := chatStr(ctx, cfg, cfg.Clients["qa"], history)
 		if err != nil {
 			return err
 		}
+		history = newHistory
+
 		resp, _, err := parseResponseWithRetry(ctx, cfg, cfg.Clients["qa"], content, history)
 		if err != nil {
 			return err
 		}
 		answer := resp.GetPayload()
-		fmt.Printf("%s\n%s", ui.Styles["TagAgent"].Render("[PAI 🤖]:"), ui.Styles["Cmd"].Render(answer))
-		return nil
-	}
 
-	// ── Multi-turn mode (streaming chatbox) ────────────────────────────
-	var initialMessages []ui.ChatMessage
-	if userInput != "" {
-		resp, newHistory, _, err := chatStr(ctx, cfg, cfg.Clients["qa"], history)
+		fmt.Printf("\n%s\n%s",
+			ui.RenderStr("TagAgent", "[PAI 🤖]"),
+			ui.RenderStr("Cmd", answer))
+
+		if !cfg.Flags.Inter {
+			return nil
+		}
+
+		// Interactive: wait for next input.
+		fmt.Printf("\n")
+		next, err := ui.GetUserTextInput("You:")
 		if err != nil {
-			return err
+			return fmt.Errorf("user input error: %w", err)
 		}
-		history = newHistory
-		initialMessages = []ui.ChatMessage{
-			{Role: "user", Content: userInput},
-			{Role: "assistant", Content: extractAnswer(resp)},
+		next = strings.TrimSpace(next)
+		if next == "" {
+			return nil
 		}
+		fmt.Printf("%s %s\n", ui.RenderStr("TagUser", "[You]"), ui.RenderStr("Info", next))
+		history = append(history, llm.Message{Role: llm.RoleUser, Content: next})
+		fmt.Printf("%s\n", ui.RenderStr("Separator", strings.Repeat("\u2500", 40)))
 	}
-
-	// StreamChatFunc: streams raw JSON tokens to the chatbox for
-	// incremental display, then returns the extracted answer.
-	streamFunc := ui.StreamChatFunc(func(ctx context.Context, input string, onToken func(string)) (string, error) {
-		newHistory := append(history, llm.Message{Role: llm.RoleUser, Content: input})
-		fullJSON, hist, _, err := chat(ctx, cfg, cfg.Clients["qa"], newHistory, chatOpts{
-			Stream:  true,
-			OnToken: onToken, // raw JSON tokens streamed to chatbox
-		})
-		if err != nil {
-			return "", err
-		}
-		history = hist
-		return extractAnswer(fullJSON), nil
-	})
-
-	return ui.StartStreamChat(ctx, streamFunc, initialMessages)
-}
-
-// extractAnswer parses the unified agent JSON envelope and returns the payload
-// text. Falls back to returning raw content if parsing fails.
-func extractAnswer(raw string) string {
-	resp, err := ParseAgentResponse(raw)
-	if err != nil {
-		return raw
-	}
-	return resp.GetPayload()
 }
