@@ -28,23 +28,31 @@ type RemotePayload struct {
 // actions on the same host skip re-authentication.
 //
 // The manager is lazily created on the first "remote" action and uses
-// ~/.config/pai/ssh-control/ for control sockets (persistent across runs).
+// $XDG_DATA_HOME/pai/ssh-control/ (or ~/.local/share/pai/ssh-control/) for
+// control sockets (persistent across runs).
 type RemoteManager struct {
 	controlDir string
 }
 
 // NewRemoteManager creates the SSH control-socket directory under
-// ~/.config/pai/ssh-control/ and returns a ready-to-use manager.
+// $XDG_DATA_HOME/pai/ssh-control/ (or ~/.local/share/pai/ssh-control/)
+// and returns a ready-to-use manager.
 func NewRemoteManager() (*RemoteManager, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("home dir: %w", err)
-	}
-	dir := filepath.Join(home, ".config", "pai", "ssh-control")
+	dir := xdgDataHome()
+	dir = filepath.Join(dir, "pai", "ssh-control")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create SSH control dir %s: %w", dir, err)
 	}
 	return &RemoteManager{controlDir: dir}, nil
+}
+
+// xdgDataHome returns $XDG_DATA_HOME or ~/.local/share.
+func xdgDataHome() string {
+	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+		return d
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share")
 }
 
 // ExecuteRemote runs cmd on host (a Host alias from ~/.ssh/config).

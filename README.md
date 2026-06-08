@@ -47,28 +47,25 @@ pai "what's the latest Kubernetes LTS version and what CVEs affect it"
 
 ## ⚙️ Configuration
 
-Create `~/.config/pai/config.yml`:
+Create `~/.config/pai/config.toml`:
 
-```yaml
-providers:
-  deepseek:
-    api_key: "your-deepseek-key"
-  # Unknown providers use OpenAI-compatible format.
-  # kimi:
-  #   base_url: "https://api.moonshot.cn/v1/chat/completions"
-  #   api_key: "your-kimi-key"
+```toml
+[providers]
+deepseek = { api_key = "your-deepseek-key" }
+# Unknown providers use OpenAI-compatible format.
+# kimi   = { base_url = "https://api.moonshot.cn/v1/chat/completions", api_key = "your-kimi-key" }
 
-default_model: "deepseek:deepseek-chat"
-default_agent: "devops"    # cmd | qa | devops | private
-streaming: true            # token-by-token output
-reasoning: low             # low | medium | high (omit for none)
-interactive: false         # if true, auto-enables -i mode
-trusted_cmds:              # skip confirmation for these tools
-  - ls
-  - cat
-  - grep
-  - pwd
-  - which
+[app]
+default_model = "deepseek:deepseek-chat"
+default_agent = "devops"    # cmd | qa | devops | private
+streaming     = true        # token-by-token output
+reasoning     = "low"       # "low" | "medium" | "high" (omit for none)
+interactive   = false       # if true, auto-enables -i mode
+
+[security]
+trusted_cmds = [
+    "ls", "cat", "grep", "pwd", "which",
+]
 ```
 
 ### Environment Variables
@@ -84,25 +81,26 @@ export TAVILY_API_KEY="your-key"    # for web search
 
 ### Custom Prompts
 
-Create `~/.config/pai/prompts.yml` to customize agent behavior:
-```yaml
-devops:
-  additional: false       # false = replace, true = append
-  prompt: |
-    You are a senior SRE. Always explain why before running commands.
-qa:
-  additional: true
-  prompt: |
-    Always answer in Chinese.
+Create `~/.config/pai/prompts.toml` to customize agent behavior:
+```toml
+[devops]
+additional = false       # false = replace, true = append
+prompt = """
+You are a senior SRE. Always explain why before running commands.
+"""
+
+[qa]
+additional = true
+prompt = "Always answer in Chinese."
 ```
 
 ### Mask Database (for `private` agent)
 
-Create `~/.config/pai/mask.yml` to map masked tokens to real values:
-```yaml
-mask:
-  abc: 42
-  xyz: 3.14
+Create `~/.config/pai/mask.toml` to map masked tokens to real values:
+```toml
+[mask]
+abc = 42
+xyz = 3.14
 ```
 
 ## 📖 Agents

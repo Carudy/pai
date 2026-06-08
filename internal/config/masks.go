@@ -5,22 +5,22 @@ import (
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
+	"github.com/BurntSushi/toml"
 )
 
 var MaskDB map[string]string
 
-func LoadMasksFromYAML(path string) (map[string]string, error) {
+func LoadMasks(path string) (map[string]string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading file: %w", err)
 	}
 
 	var raw struct {
-		Mask map[string]any `yaml:"mask"`
+		Mask map[string]any `toml:"mask"`
 	}
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parsing yaml: %w", err)
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parsing toml: %w", err)
 	}
 
 	masks := make(map[string]string, len(raw.Mask))
@@ -31,10 +31,10 @@ func LoadMasksFromYAML(path string) (map[string]string, error) {
 }
 
 func init() {
-	mask_dir, err := configDir()
+	maskDir, err := ConfigDir()
 	if err != nil {
 		fmt.Printf("failed to get config dir: %v\n", err)
 		return
 	}
-	MaskDB, _ = LoadMasksFromYAML(filepath.Join(mask_dir, "mask.yml"))
+	MaskDB, _ = LoadMasks(filepath.Join(maskDir, "mask.toml"))
 }

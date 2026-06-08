@@ -6,13 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/Carudy/pai/internal/llm"
-	"gopkg.in/yaml.v3"
 )
 
-// configDir returns the path to ~/.config/pai, the directory where pai
-// stores its config files.
-func configDir() (string, error) {
+// ConfigDir returns the path to ~/.config/pai.
+func ConfigDir() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home dir: %w", err)
@@ -21,16 +20,18 @@ func configDir() (string, error) {
 }
 
 func LoadUserConfig() (*UserConfig, error) {
-	cfgDir, err := configDir()
+	cfgDir, err := ConfigDir()
 	if err != nil {
 		return nil, err
 	}
 	cfg := defaultConfig()
 
-	// ── config.yml (basic settings) ───────────────────────────────────────
-	if err := loadYAML(filepath.Join(cfgDir, "config.yml"), cfg); err != nil {
+	// ── config.toml (basic settings) ───────────────────────────────────────
+	var raw tomlConfig
+	if err := loadTOML(filepath.Join(cfgDir, "config.toml"), &raw); err != nil {
 		return nil, err
 	}
+	cfg.fromTOML(&raw)
 
 	// ── env API keys ──────────────────────────────────────────────────────
 	mergeEnvAPIKeys(cfg)
@@ -45,9 +46,8 @@ func LoadUserConfig() (*UserConfig, error) {
 	return cfg, nil
 }
 
-// loadYAML reads a YAML file into dst. Missing files are silently ignored;
-// other read/parse errors are returned.
-func loadYAML(path string, dst any) error {
+// loadTOML reads a TOML file into dst. Missing files are silently ignored.
+func loadTOML(path string, dst any) error {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil
@@ -55,21 +55,20 @@ func loadYAML(path string, dst any) error {
 	if err != nil {
 		return fmt.Errorf("failed to read %s: %w", path, err)
 	}
-	if err := yaml.Unmarshal(data, dst); err != nil {
+	if err := toml.Unmarshal(data, dst); err != nil {
 		return fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 	return nil
 }
 
-// LoadCustomPrompt reads ~/.config/pai/prompts.yml and returns the custom
-// prompt text for agentName, or "" if the file is missing or the agent has no
-// entry. Call this after the session agent has been resolved.
+// LoadCustomPrompt reads ~/.config/pai/prompts.toml and returns the custom
+// prompt text for agentName.
 func LoadCustomPrompt(agentName string) (CustomPrompt, error) {
-	cfgDir, err := configDir()
+	cfgDir, err := ConfigDir()
 	if err != nil {
 		return CustomPrompt{}, err
 	}
-	path := filepath.Join(cfgDir, "prompts.yml")
+	path := filepath.Join(cfgDir, "prompts.toml")
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -79,7 +78,7 @@ func LoadCustomPrompt(agentName string) (CustomPrompt, error) {
 		return CustomPrompt{}, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 	var entries map[string]CustomPrompt
-	if err := yaml.Unmarshal(data, &entries); err != nil {
+	if err := toml.Unmarshal(data, &entries); err != nil {
 		return CustomPrompt{}, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 	return entries[agentName], nil

@@ -8,24 +8,39 @@ import (
 
 // ProviderConfig holds per-provider settings from the user config.
 type ProviderConfig struct {
-	APIKey  string `yaml:"api_key"`
-	BaseURL string `yaml:"base_url"`
+	APIKey  string `toml:"api_key"`
+	BaseURL string `toml:"base_url"`
 }
 
 type CustomPrompt struct {
-	Additional bool   `yaml:"additional"`
-	Prompt     string `yaml:"prompt"`
+	Additional bool   `toml:"additional"`
+	Prompt     string `toml:"prompt"`
 }
 
+// tomlConfig mirrors the structure of ~/.config/pai/config.toml.
+type tomlConfig struct {
+	Providers map[string]ProviderConfig `toml:"providers"`
+	App       struct {
+		DefaultModel    string              `toml:"default_model"`
+		DefaultAgent    string              `toml:"default_agent"`
+		Streaming       bool                `toml:"streaming"`
+		ReasoningEffort llm.ReasoningEffort `toml:"reasoning"`
+		Interactive     bool                `toml:"interactive"`
+	} `toml:"app"`
+	Security struct {
+		TrustedCmds []string `toml:"trusted_cmds"`
+	} `toml:"security"`
+}
+
+// UserConfig is the flat runtime representation (populated from tomlConfig).
 type UserConfig struct {
-	// --- from ~/.config/pai/config.yml ---
-	ProvidersConfigs map[string]ProviderConfig `yaml:"providers"`
-	DefaultModel     string                    `yaml:"default_model"`
-	DefaultAgent     string                    `yaml:"default_agent"`
-	Streaming        bool                      `yaml:"streaming"`
-	ReasoningEffort  llm.ReasoningEffort       `yaml:"reasoning"`
-	Interactive      bool                      `yaml:"interactive"`
-	TrustedCmds      []string                  `yaml:"trusted_cmds"`
+	ProvidersConfigs map[string]ProviderConfig
+	DefaultModel     string
+	DefaultAgent     string
+	Streaming        bool
+	ReasoningEffort  llm.ReasoningEffort
+	Interactive      bool
+	TrustedCmds      []string
 
 	// --- from ~/.config/pai/prompts.yml ---
 	CustomPrompt CustomPrompt
@@ -47,4 +62,15 @@ func defaultConfig() *UserConfig {
 		Clients:          make(map[string]llm.Provider),
 		CustomPrompt:     CustomPrompt{},
 	}
+}
+
+// fromTOML copies parsed TOML values into the flat UserConfig.
+func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
+	cfg.ProvidersConfigs = raw.Providers
+	cfg.DefaultModel = raw.App.DefaultModel
+	cfg.DefaultAgent = raw.App.DefaultAgent
+	cfg.Streaming = raw.App.Streaming
+	cfg.ReasoningEffort = raw.App.ReasoningEffort
+	cfg.Interactive = raw.App.Interactive
+	cfg.TrustedCmds = raw.Security.TrustedCmds
 }

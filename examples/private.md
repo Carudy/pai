@@ -1,7 +1,7 @@
 # Private Agent — Examples
 
 The private agent extracts math expressions from user input, resolves masked placeholders
-(`<mask:abc>`) from `~/.config/pai/mask.yml`, and computes results via Python.
+(`<mask:abc>`) from `~/.config/pai/mask.toml`, and computes results via Python.
 
 ---
 

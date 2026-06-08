@@ -33,3 +33,5 @@ pai
 
 # Vendor directory (not used; dependencies resolved from module cache)
 vendor/
+
+todo.md
