@@ -5,7 +5,7 @@ import (
 )
 
 func GetUserConfirm(prompt string) (bool, error) {
-	var confirmed bool
+	confirmed := true
 	err := huh.NewConfirm().
 		Title(prompt).
 		Affirmative("Yes").

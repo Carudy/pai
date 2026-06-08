@@ -27,9 +27,10 @@ type tomlConfig struct {
 		ReasoningEffort llm.ReasoningEffort `toml:"reasoning"`
 		Interactive     bool                `toml:"interactive"`
 	} `toml:"app"`
-	Security struct {
-		TrustedCmds []string `toml:"trusted_cmds"`
-	} `toml:"security"`
+	Tool struct {
+		TavilyAPIKey string   `toml:"tavily_api_key"`
+		TrustedCmds  []string `toml:"trusted_cmds"`
+	} `toml:"tool"`
 }
 
 // UserConfig is the flat runtime representation (populated from tomlConfig).
@@ -40,6 +41,7 @@ type UserConfig struct {
 	Streaming        bool
 	ReasoningEffort  llm.ReasoningEffort
 	Interactive      bool
+	TavilyAPIKey     string
 	TrustedCmds      []string
 
 	// --- from ~/.config/pai/prompts.yml ---
@@ -72,5 +74,6 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.Streaming = raw.App.Streaming
 	cfg.ReasoningEffort = raw.App.ReasoningEffort
 	cfg.Interactive = raw.App.Interactive
-	cfg.TrustedCmds = raw.Security.TrustedCmds
+	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey
+	cfg.TrustedCmds = raw.Tool.TrustedCmds
 }

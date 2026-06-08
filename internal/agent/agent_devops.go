@@ -204,7 +204,7 @@ func singleDevOpsLoop(
 				ui.RenderStr("Info", query),
 			)
 
-			sr, err := tool.Search(ctx, query)
+			sr, err := tool.Search(ctx, query, cfg.TavilyAPIKey)
 			if err != nil {
 				// Non-fatal: show error and let the agent adapt.
 				fmt.Printf("%s ❌ %s\n",

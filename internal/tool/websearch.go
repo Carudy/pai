@@ -31,10 +31,13 @@ type SearchResult struct {
 }
 
 // Search calls the Tavily search API and returns structured results.
-func Search(ctx context.Context, query string) (*SearchResult, error) {
-	apiKey := os.Getenv("TAVILY_API_KEY")
+// apiKey is the preferred key (from config); if empty, $TAVILY_API_KEY is used.
+func Search(ctx context.Context, query, apiKey string) (*SearchResult, error) {
 	if apiKey == "" {
-		return nil, fmt.Errorf("TAVILY_API_KEY not set in environment")
+		apiKey = os.Getenv("TAVILY_API_KEY")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("TAVILY_API_KEY not set (config or environment)")
 	}
 
 	body := map[string]any{

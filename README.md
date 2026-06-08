@@ -62,7 +62,8 @@ streaming     = true        # token-by-token output
 reasoning     = "low"       # "low" | "medium" | "high" (omit for none)
 interactive   = false       # if true, auto-enables -i mode
 
-[security]
+[tool]
+tavily_api_key = "your-tavily-key"  # for web search (env TAVILY_API_KEY as fallback)
 trusted_cmds = [
     "ls", "cat", "grep", "pwd", "which",
 ]
@@ -122,7 +123,7 @@ pai -a qa -i                 # Interactive session
 Autonomous reason→act→observe loop. Tools available:
 - **execute** — Run local shell commands
 - **remote** — Run commands on remote servers via SSH
-- **websearch** — Search the web for current information (requires `TAVILY_API_KEY`)
+- **websearch** — Search the web for current information (config `tavily_api_key` or `TAVILY_API_KEY` env)
 
 ```bash
 pai "deploy my app to staging"
