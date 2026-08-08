@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -87,6 +88,10 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 
 	log.Debugf("Entering %s agent\n", cfg.DefaultAgent)
 	if err := selectedAgent.Run(ctx, cfg, userInput); err != nil {
+		if errors.Is(err, context.Canceled) {
+			fmt.Fprintln(stdout, "\nInterrupted.")
+			return 0
+		}
 		log.Errorf("Error in %s agent: %v\n", cfg.DefaultAgent, err)
 		return 1
 	}

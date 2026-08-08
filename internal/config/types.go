@@ -21,11 +21,13 @@ type CustomPrompt struct {
 type tomlConfig struct {
 	Providers map[string]ProviderConfig `toml:"providers"`
 	App       struct {
-		DefaultModel    string              `toml:"default_model"`
-		DefaultAgent    string              `toml:"default_agent"`
-		Streaming       bool                `toml:"streaming"`
-		ReasoningEffort llm.ReasoningEffort `toml:"reasoning"`
-		Interactive     bool                `toml:"interactive"`
+		DefaultModel        string              `toml:"default_model"`
+		DefaultAgent        string              `toml:"default_agent"`
+		Streaming           bool                `toml:"streaming"`
+		ReasoningEffort     llm.ReasoningEffort `toml:"reasoning"`
+		Interactive         bool                `toml:"interactive"`
+		TruncateExecLimit   int                 `toml:"truncate_exec_limit"`
+		TruncateSearchLimit int                 `toml:"truncate_search_limit"`
 	} `toml:"app"`
 	Tool struct {
 		TavilyAPIKey string   `toml:"tavily_api_key"`
@@ -47,6 +49,10 @@ type UserConfig struct {
 	// --- from ~/.config/pai/prompts.yml ---
 	CustomPrompt CustomPrompt
 
+	// --- truncation limits (0 = use defaults) ---
+	TruncateExecLimit   int
+	TruncateSearchLimit int
+
 	// --- resolved at runtime, not from config files ---
 	Provider      string
 	Model         string
@@ -58,11 +64,13 @@ type UserConfig struct {
 
 func defaultConfig() *UserConfig {
 	return &UserConfig{
-		DefaultModel:     "deepseek:deepseek-v4-flash",
-		DefaultAgent:     "devops",
-		ProvidersConfigs: make(map[string]ProviderConfig),
-		Clients:          make(map[string]llm.Provider),
-		CustomPrompt:     CustomPrompt{},
+		DefaultModel:        "deepseek:deepseek-v4-flash",
+		DefaultAgent:        "devops",
+		ProvidersConfigs:    make(map[string]ProviderConfig),
+		Clients:             make(map[string]llm.Provider),
+		CustomPrompt:        CustomPrompt{},
+		TruncateExecLimit:   8000,
+		TruncateSearchLimit: 8000,
 	}
 }
 
@@ -76,4 +84,10 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.Interactive = raw.App.Interactive
 	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey
 	cfg.TrustedCmds = raw.Tool.TrustedCmds
+	if raw.App.TruncateExecLimit > 0 {
+		cfg.TruncateExecLimit = raw.App.TruncateExecLimit
+	}
+	if raw.App.TruncateSearchLimit > 0 {
+		cfg.TruncateSearchLimit = raw.App.TruncateSearchLimit
+	}
 }

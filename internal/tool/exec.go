@@ -171,7 +171,7 @@ func resolveShell() (string, string) {
 // The returned ExecResult will contain the command output, exit code, and timeout status.
 // The ExecResult.Output will include error information for better display to users.
 // The error return value should be checked to handle execution failures appropriately.
-func ExecuteCommand(command string, userConfirm bool, streamW io.Writer) (ExecResult, error) {
+func ExecuteCommand(ctx context.Context, command string, userConfirm bool, streamW io.Writer) (ExecResult, error) {
 	command = trimCmd(command)
 
 	if command == "" {
@@ -190,10 +190,15 @@ func ExecuteCommand(command string, userConfirm bool, streamW io.Writer) (ExecRe
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
+	// Check if context was cancelled while waiting for user confirmation.
+	if err := ctx.Err(); err != nil {
+		return ExecResult{ExitCode: -1, Output: CancelledOutput}, err
+	}
+
+	execCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, shell, shellArg, command)
+	cmd := exec.CommandContext(execCtx, shell, shellArg, command)
 
 	var output []byte
 	var err error
@@ -213,10 +218,19 @@ func ExecuteCommand(command string, userConfirm bool, streamW io.Writer) (ExecRe
 
 	result := ExecResult{Output: string(output)}
 
-	if ctx.Err() == context.DeadlineExceeded {
+	if execCtx.Err() == context.DeadlineExceeded {
 		result.TimedOut = true
 		result.ExitCode = -1
 		return result, nil
+	}
+
+	// Check for cancellation (e.g. SIGINT).
+	if ctx.Err() != nil {
+		result.ExitCode = -1
+		if result.Output == "" {
+			result.Output = CancelledOutput
+		}
+		return result, ctx.Err()
 	}
 
 	if err != nil {

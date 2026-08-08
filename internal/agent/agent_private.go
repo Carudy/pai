@@ -78,7 +78,7 @@ func (a *PrivateAgent) Run(ctx context.Context, cfg *config.UserConfig, userInpu
 
 		// Execute via Python.
 		cmd := "python3 -c \"print(" + unmasked + ")\""
-		output, execErr := tool.ExecuteCommand(cmd, true, nil)
+		output, execErr := tool.ExecuteCommand(ctx, cmd, true, nil)
 		if execErr != nil {
 			return fmt.Errorf("execution error: %w", execErr)
 		}

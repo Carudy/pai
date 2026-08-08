@@ -108,7 +108,7 @@ func singleDevOpsLoop(
 				fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
 			}
 
-			output, execErr := tool.ExecuteCommand(cmd, !tool.IsTrusted(cmd, cfg.TrustedCmds), os.Stdout)
+			output, execErr := tool.ExecuteCommand(ctx, cmd, !tool.IsTrusted(cmd, cfg.TrustedCmds), os.Stdout)
 			if execErr != nil {
 				fmt.Printf("%s ❌ %s\n%s\n",
 					ui.RenderStr("TagSystem", "[SYS]"),
@@ -129,7 +129,7 @@ func singleDevOpsLoop(
 
 			observation := fmt.Sprintf(
 				"COMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-				cmd, execErr, TruncateOutput(output.String(), 2000),
+				cmd, execErr, TruncateOutput(output.String(), cfg.TruncateExecLimit),
 			)
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
@@ -182,7 +182,7 @@ func singleDevOpsLoop(
 
 			observation := fmt.Sprintf(
 				"REMOTE HOST: %s\nCOMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-				rp.Host, rp.Cmd, execErr, TruncateOutput(output.String(), 2000),
+				rp.Host, rp.Cmd, execErr, TruncateOutput(output.String(), cfg.TruncateExecLimit),
 			)
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
@@ -257,7 +257,7 @@ func singleDevOpsLoop(
 			context := sr.Format()
 			observation := fmt.Sprintf(
 				"SEARCH QUERY: %s\nRESULTS:\n%s",
-				query, TruncateOutput(context, 4000),
+				query, TruncateOutput(context, cfg.TruncateSearchLimit),
 			)
 			history = append(history, llm.Message{
 				Role:    llm.RoleUser,
@@ -313,6 +313,11 @@ func (a *DevopsAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput
 	}
 
 	for {
+		// Check for cancellation before each loop iteration.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		nextLoop, newHistory, err := singleDevOpsLoop(ctx, cfg, history, log)
 		if err != nil {
 			return err
@@ -321,6 +326,11 @@ func (a *DevopsAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput
 		if nextLoop {
 			history = newHistory
 		} else if cfg.Flags.Inter {
+			// Check for cancellation before waiting for user input.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+
 			fmt.Printf("%s %s\n",
 				ui.RenderStr("TagAgent", "[PAI]"),
 				ui.RenderStr("Info", "[Awaiting for new instructions.]"),
@@ -331,7 +341,7 @@ func (a *DevopsAgent) Run(ctx context.Context, cfg *config.UserConfig, userInput
 				return fmt.Errorf("user input error: %w", err)
 			}
 			if input == "" {
-				return fmt.Errorf("user empty input")
+				return nil
 			}
 			fmt.Printf("%s %s\n", ui.RenderStr("TagUser", "[User]"), ui.RenderStr("Info", input))
 			history = append(history, llm.Message{
