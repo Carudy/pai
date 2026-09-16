@@ -14,7 +14,7 @@ import (
 )
 
 // Version is PAI's version string.
-const Version = "v0.4.7"
+const Version = "v0.5.0"
 
 // Run is the main entry point for the PAI CLI. It parses flags, loads config,
 // wires up the selected role, and executes it. Returns an exit code.
