@@ -7,22 +7,14 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/Carudy/pai/internal/llm"
+	"github.com/Carudy/pai/internal/paths"
+	"github.com/Carudy/pai/internal/provider"
 )
 
-// ConfigDir returns the path to ~/.config/pai.
-func ConfigDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get home dir: %w", err)
-	}
-	return filepath.Join(home, ".config", "pai"), nil
-}
-
 func LoadUserConfig() (*UserConfig, error) {
-	cfgDir, err := ConfigDir()
-	if err != nil {
-		return nil, err
+	cfgDir := paths.ConfigDir()
+	if cfgDir == "" {
+		return nil, fmt.Errorf("cannot determine the config directory (no home directory or XDG_CONFIG_HOME)")
 	}
 	cfg := defaultConfig()
 
@@ -62,11 +54,11 @@ func loadTOML(path string, dst any) error {
 }
 
 // LoadCustomPrompt reads ~/.config/pai/prompts.toml and returns the custom
-// prompt text for agentName.
-func LoadCustomPrompt(agentName string) (CustomPrompt, error) {
-	cfgDir, err := ConfigDir()
-	if err != nil {
-		return CustomPrompt{}, err
+// prompt text for roleName.
+func LoadCustomPrompt(roleName string) (CustomPrompt, error) {
+	cfgDir := paths.ConfigDir()
+	if cfgDir == "" {
+		return CustomPrompt{}, nil
 	}
 	path := filepath.Join(cfgDir, "prompts.toml")
 
@@ -81,14 +73,14 @@ func LoadCustomPrompt(agentName string) (CustomPrompt, error) {
 	if err := toml.Unmarshal(data, &entries); err != nil {
 		return CustomPrompt{}, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
-	return entries[agentName], nil
+	return entries[roleName], nil
 }
 
 func mergeEnvAPIKeys(cfg *UserConfig) {
 	if cfg.ProvidersConfigs == nil {
 		cfg.ProvidersConfigs = make(map[string]ProviderConfig)
 	}
-	for _, provider := range llm.BuiltinProviders {
+	for _, provider := range provider.BuiltinProviders {
 		pc, exists := cfg.ProvidersConfigs[provider]
 		if !exists {
 			pc = ProviderConfig{}

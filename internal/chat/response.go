@@ -1,4 +1,4 @@
-package agent
+package chat
 
 import (
 	"context"
@@ -7,27 +7,13 @@ import (
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
-	"github.com/Carudy/pai/internal/llm"
+	"github.com/Carudy/pai/internal/provider"
 	"github.com/Carudy/pai/internal/ui"
 )
 
 const maxFormatRetries = 3
 
-type ActionType string
-
-// ActionType values shared across agents.
-// "tool" with structured {toolname, payload} is devops-only;
-// "execute" and "info" are used by cmd/qa agents.
-const (
-	ActionTool      ActionType = "tool"
-	ActionExecute   ActionType = "execute"
-	ActionAsk       ActionType = "ask"
-	ActionInfo      ActionType = "info"
-	ActionDone      ActionType = "done"
-	ActionTerminate ActionType = "terminate"
-)
-
-type AgentResponse struct {
+type Response struct {
 	Action  ActionType      `json:"action"`
 	Payload json.RawMessage `json:"payload"`
 	Reason  string          `json:"reason"`
@@ -40,7 +26,7 @@ type ToolPayload struct {
 }
 
 // GetPayload decodes the JSON-encoded payload string into a plain Go string.
-func (r *AgentResponse) GetPayload() string {
+func (r *Response) GetPayload() string {
 	var s string
 	if err := json.Unmarshal(r.Payload, &s); err == nil {
 		return strings.TrimRight(strings.TrimSpace(s), "\n")
@@ -60,7 +46,7 @@ func (r *AgentResponse) GetPayload() string {
 }
 
 // GetToolPayload parses the payload of a "tool" action into a ToolPayload.
-func (r *AgentResponse) GetToolPayload() (ToolPayload, error) {
+func (r *Response) GetToolPayload() (ToolPayload, error) {
 	var tp ToolPayload
 	if err := json.Unmarshal(r.Payload, &tp); err != nil {
 		return tp, fmt.Errorf("tool payload: %w", err)
@@ -71,20 +57,10 @@ func (r *AgentResponse) GetToolPayload() (ToolPayload, error) {
 	return tp, nil
 }
 
-// validActions is the set of allowed action values.
-var validActions = map[ActionType]bool{
-	ActionTool:      true,
-	ActionExecute:   true,
-	ActionAsk:       true,
-	ActionInfo:      true,
-	ActionDone:      true,
-	ActionTerminate: true,
-}
-
 // Validate checks the response conforms to the agent schema.
-func (r *AgentResponse) Validate() error {
-	if !validActions[r.Action] {
-		valid := `"tool", "execute", "ask", "info", "done", "terminate"`
+func (r *Response) Validate() error {
+	if !isValidAction(r.Action) {
+		valid := ActionEnum()
 		if r.Action == "" {
 			return fmt.Errorf(`missing "action" field; must be one of: %s`, valid)
 		}
@@ -106,36 +82,37 @@ func (r *AgentResponse) Validate() error {
 	return nil
 }
 
-func ParseAgentResponse(content string) (*AgentResponse, error) {
+func ParseResponse(content string) (*Response, error) {
 	json_str, err := extractJSON(content)
 	if err != nil {
 		return nil, err
 	}
 
-	var resp AgentResponse
+	var resp Response
 	if err := json.Unmarshal([]byte(json_str), &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse agent JSON: %w\nraw: %s", err, json_str)
 	}
 	return &resp, nil
 }
 
-// parseResponseWithRetry parses and validates an AgentResponse from the AI's
+// ParseResponseWithRetry parses and validates an Response from the AI's
 // output. On failure it feeds a descriptive correction message back to the AI
 // and retries up to maxFormatRetries times before giving up.
-func parseResponseWithRetry(
+func ParseResponseWithRetry(
 	ctx context.Context,
 	cfg *config.UserConfig,
-	provider llm.Provider,
+	prov provider.Provider,
+	rp *RolePrompt,
+	log *ui.Logger,
 	content string,
-	history []llm.Message,
-) (*AgentResponse, []llm.Message, error) {
+	history []provider.Message,
+) (*Response, []provider.Message, error) {
 	var (
-		resp *AgentResponse
+		resp *Response
 		err  error
 	)
-	log := cfg.Logger
 	for attempt := 0; attempt < maxFormatRetries; attempt++ {
-		resp, err = ParseAgentResponse(content)
+		resp, err = ParseResponse(content)
 		if err == nil {
 			err = resp.Validate()
 		}
@@ -152,11 +129,11 @@ func parseResponseWithRetry(
 
 			correctionMsg := fmt.Sprintf(
 				"[system] Your previous response had a format error: %v\n"+
-					`Respond ONLY with valid JSON: {"action": "tool|execute|ask|info|done|terminate", "payload": "...", "reason": "..."}`,
-				err)
-			history = append(history, llm.Message{Role: llm.RoleUser, Content: correctionMsg})
+					"You must respond ONLY with valid JSON using action %q.",
+				err, ActionEnum())
+			history = append(history, provider.Message{Role: provider.RoleUser, Content: correctionMsg})
 
-			content, history, _, err = chatStr(ctx, cfg, provider, history)
+			content, history, _, err = ChatStr(ctx, cfg, prov, rp, history)
 			if err != nil {
 				return nil, history, err
 			}

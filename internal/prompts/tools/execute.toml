@@ -1,0 +1,17 @@
+# Tool: execute
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "execute"
+brief       = "run a shell command locally"
+description = '''
+Run a shell command locally to check status, make changes, and so on. Unless the
+user says otherwise, commands run under bash on Unix-like systems and PowerShell
+on Windows.
+'''
+schema = '"the shell command to run, e.g. df -h"'

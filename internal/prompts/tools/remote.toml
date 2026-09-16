@@ -1,0 +1,19 @@
+# Tool: remote
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "remote"
+brief       = "run a command on an SSH host"
+description = '''
+Run a command on a remote host defined in ~/.ssh/config. Sessions are cached via
+SSH ControlMaster, so repeated remote commands reuse the same connection — you
+don't need to reconnect. If you don't know the available hosts, read
+~/.ssh/config with the "execute" tool first. Prefer "remote" over "execute" when
+the task explicitly targets a remote server.
+'''
+schema = '{"host": "a Host alias from ~/.ssh/config", "cmd": "command to run"}'

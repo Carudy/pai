@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Carudy/pai/internal/paths"
 	"github.com/Carudy/pai/internal/ui"
 )
 
@@ -38,21 +39,15 @@ type RemoteManager struct {
 // $XDG_DATA_HOME/pai/ssh-control/ (or ~/.local/share/pai/ssh-control/)
 // and returns a ready-to-use manager.
 func NewRemoteManager() (*RemoteManager, error) {
-	dir := xdgDataHome()
-	dir = filepath.Join(dir, "pai", "ssh-control")
+	dataDir := paths.DataDir()
+	if dataDir == "" {
+		return nil, fmt.Errorf("cannot determine the data directory (no home directory or XDG_DATA_HOME)")
+	}
+	dir := filepath.Join(dataDir, "ssh-control")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create SSH control dir %s: %w", dir, err)
 	}
 	return &RemoteManager{controlDir: dir}, nil
-}
-
-// xdgDataHome returns $XDG_DATA_HOME or ~/.local/share.
-func xdgDataHome() string {
-	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
-		return d
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share")
 }
 
 // ExecuteRemote runs cmd on host (a Host alias from ~/.ssh/config).

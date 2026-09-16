@@ -1,0 +1,19 @@
+# Tool: websearch
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "websearch"
+brief       = "search the web for current information"
+description = '''
+Search the web for current information. Use it when you encounter an unfamiliar
+term or tool, when the user asks you to look something up, when you need
+current/latest information (versions, CVEs, news, docs), or when a command fails
+for lack of context. Keep queries concise and keyword-focused, e.g.
+"nginx 429 rate limit config" rather than a full sentence.
+'''
+schema = '"a concise, keyword-focused search query"'

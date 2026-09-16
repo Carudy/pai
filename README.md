@@ -26,20 +26,14 @@ go install github.com/Carudy/pai/cmd/pai@latest
 # Show help
 pai -h
 
-# Ask a question
-pai -a qa "what is a Kubernetes pod"
-
-# Generate a shell command
-pai -a cmd "find all files larger than 100MB"
-
-# Interactive multi-turn Q&A
-pai -a qa -i
-
-# DevOps: multi-step task
+# DevOps: multi-step task (the default role)
 pai "check disk usage, find top 5 largest directories in /var/log"
 
-# Private: masked math computation
-pai -a private "what is <mask:abc> to the power of <mask:xyz>"
+# Coder: software-engineering tasks in the current repo
+pai -r coder "add a --verbose flag to the CLI"
+
+# Interactive session
+pai -i
 
 # DevOps with web search
 pai "what's the latest Kubernetes LTS version and what CVEs affect it"
@@ -57,10 +51,12 @@ deepseek = { api_key = "your-deepseek-key" }
 
 [app]
 default_model = "deepseek:deepseek-chat"
-default_agent = "devops"    # cmd | qa | devops | private
+default_role  = "devops"      # devops | coder
 streaming     = true        # token-by-token output
 reasoning     = "low"       # "low" | "medium" | "high" (omit for none)
 interactive   = false       # if true, auto-enables -i mode
+truncate_exec_limit   = 8000  # max command output chars fed back to the role
+truncate_search_limit = 8000  # max web-search result chars fed back to the role
 
 [tool]
 tavily_api_key = "your-tavily-key"  # for web search (env TAVILY_API_KEY as fallback)
@@ -82,45 +78,25 @@ export TAVILY_API_KEY="your-key"    # for web search
 
 ### Custom Prompts
 
-Create `~/.config/pai/prompts.toml` to customize agent behavior:
+Create `~/.config/pai/prompts.toml` to customize a role's behavior. The custom
+text is applied to the role's *intro* only — the response format is fixed by the
+app so a custom prompt can never break parsing.
+
 ```toml
 [devops]
-additional = false       # false = replace, true = append
+additional = false       # false = replace the role intro, true = append to it
 prompt = """
 You are a senior SRE. Always explain why before running commands.
 """
-
-[qa]
-additional = true
-prompt = "Always answer in Chinese."
 ```
 
-### Mask Database (for `private` agent)
+## 📖 Roles
 
-Create `~/.config/pai/mask.toml` to map masked tokens to real values:
-```toml
-[mask]
-abc = 42
-xyz = 3.14
-```
+A role is data: an intro (its system prompt) plus the set of tools it may use.
+There is a single agent loop — roles differ only by prompt and tool set.
 
-## 📖 Agents
-
-### `cmd` — Command Generator
-One-shot shell command generation with user-confirmed execution.
-```bash
-pai -a cmd "sum the second column of data.csv"
-```
-
-### `qa` — Question Answering
-Single-turn or interactive multi-turn chat with a full Bubble Tea TUI.
-```bash
-pai -a qa "explain Docker layers"
-pai -a qa -i                 # Interactive session
-```
-
-### `devops` — DevOps Agent
-Autonomous reason→act→observe loop. Tools available:
+### `devops` — DevOps (default)
+Autonomous reason→act→observe loop for multi-step sysadmin tasks. Tools:
 - **execute** — Run local shell commands
 - **remote** — Run commands on remote servers via SSH
 - **websearch** — Search the web for current information (config `tavily_api_key` or `TAVILY_API_KEY` env)
@@ -138,7 +114,7 @@ pai "check nginx status on myserver"
 ```
 
 #### Web Search
-The agent automatically searches when it encounters unfamiliar terms or needs current info:
+The role automatically searches when it encounters unfamiliar terms or needs current info:
 ```bash
 export TAVILY_API_KEY="your-key"
 pai "what's the latest Kubernetes CVE and how do I patch it"
@@ -150,11 +126,40 @@ Commands matching the `trusted_cmds` list skip confirmation:
 trusted_cmds: ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
 ```
 
-### `private` — Masked Math
-Computes expressions with privacy-preserving placeholders. Numbers are masked as `<mask:TOKEN>` and resolved from `~/.config/pai/mask.yml`.
+### `coder` — Software engineering
+Helps read, write, refactor, and test code in the current repository. Tools:
+- **execute** — Inspect and modify the repo, run builds and tests
+- **websearch** — Look up libraries, APIs, and error messages
+
+It deliberately has no **remote** tool: a role's tool list is its capability
+boundary, not just a prompt hint.
+
 ```bash
-pai -a private "what is <mask:abc> ** <mask:xyz> plus 10"
+pai -r coder "why does the build fail, and fix it"
 ```
+
+### Custom roles
+
+Roles are data, so you can add your own without rebuilding. Drop a file at
+`~/.config/pai/roles/<name>.toml`:
+
+```toml
+name        = "writer"
+description = "Technical writing assistant"
+
+tools = ["execute", "websearch"]
+
+intro = '''
+You are a technical writer. Help draft, edit, and tighten prose.
+Read whichever files you need with the execute tool before rewriting anything.
+'''
+```
+
+Then run it with `pai -r writer`. A user role with the same name as a built-in
+one **overrides** it — handy for retuning `devops` without editing the source.
+
+`tools` may only reference built-in tools (`execute`, `remote`, `websearch`):
+tool *implementations* live in Go, so new tools require code — new roles do not.
 
 See [examples/](examples/) for detailed walkthroughs.
 

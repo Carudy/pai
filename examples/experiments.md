@@ -7,19 +7,22 @@ Use PAI for quick data processing, scripting, and ad-hoc experiments.
 ### Example: Generate data
 
 ```bash
-$ pai -a cmd "randomly generate a 5x5 grid of numbers and write to data.csv"
+$ pai "randomly generate a 5x5 grid of numbers and write to data.csv"
 ```
 
 ```
-[CMD 💬] Generate a 5x5 grid of random integers (0-99) as CSV, write to data.csv.
+[PAI 🤖] I'll generate a 5x5 grid of random integers and write it to data.csv.
+────────────────────────────────────────
+[CMD 💬] Generate a 5x5 grid of random integers (0-99) as CSV.
 [CMD 💻] awk 'BEGIN{srand(); for(i=1;i<=5;i++){for(j=1;j<=5;j++) printf "%s%d", (j==1?"":","), int(rand()*100); print ""}}' > data.csv
 Execute this command?
 [*] Yes
 [ ] No
 (Press ↑/↓ and Enter to choose; q or ctrl+c to quit.)
-[SYS] ✅ Command succeeded
-[RES]
-[exit 0]
+[SYS] Command succeeded
+────────────────────────────────────────
+[token: 312 in, 58 out, 370 total]
+[PAI ✅] Wrote a 5x5 grid of random numbers to data.csv.
 ```
 
 ---

@@ -1,4 +1,4 @@
-package agent
+package chat
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
-	"github.com/Carudy/pai/internal/llm"
+	"github.com/Carudy/pai/internal/provider"
 	"github.com/Carudy/pai/internal/ui"
 )
 
@@ -16,13 +16,13 @@ import (
 // chatOpts
 // ---------------------------------------------------------------------------
 
-// chatOpts configures a chat call. All agents enforce JSON output
+// chatOpts configures a chat call. All roles enforce JSON output
 // (response_format: json_object), so that field is always set internally.
 type chatOpts struct {
 	Stream  bool
-	ReasonW io.Writer        // where to print reasoning tokens (nil → stdout when reasoning enabled)
-	OnToken func(string)     // per-token callback for streaming (nil = suppress)
-	OnUsage func(*llm.Usage) // optional usage callback (for token display)
+	ReasonW io.Writer             // where to print reasoning tokens (nil → stdout when reasoning enabled)
+	OnToken func(string)          // per-token callback for streaming (nil = suppress)
+	OnUsage func(*provider.Usage) // optional usage callback (for token display)
 }
 
 // ---------------------------------------------------------------------------
@@ -32,29 +32,33 @@ type chatOpts struct {
 // chat sends messages to the LLM, returns the parsed assistant JSON string
 // and token usage info. It always requests JSON mode; the caller uses
 // ExtractJSON on the result.
+//
+// history holds only conversation turns; the role prompt is composed around it
+// at send time (see RolePrompt.Messages).
 func chat(
 	ctx context.Context,
 	cfg *config.UserConfig,
-	provider llm.Provider,
-	history []llm.Message,
+	prov provider.Provider,
+	rp *RolePrompt,
+	history []provider.Message,
 	opts chatOpts,
-) (content string, newHistory []llm.Message, usage *llm.Usage, err error) {
+) (content string, newHistory []provider.Message, usage *provider.Usage, err error) {
 
-	params := llm.CompletionParams{
+	params := provider.CompletionParams{
 		Model:           cfg.Model,
-		Messages:        history,
+		Messages:        rp.Messages(history),
 		Stream:          opts.Stream,
-		ResponseFormat:  &llm.ResponseFormat{Type: "json_object"},
+		ResponseFormat:  &provider.ResponseFormat{Type: "json_object"},
 		ReasoningEffort: cfg.ReasoningEffort,
 	}
 
 	if opts.Stream {
-		content, usage, err = doStream(ctx, provider, params,
+		content, usage, err = doStream(ctx, prov, params,
 			opts.ReasonW, opts.OnToken,
-			cfg.ReasoningEffort != llm.ReasoningEffortNone)
+			cfg.ReasoningEffort != provider.ReasoningEffortNone)
 	} else {
-		var resp *llm.ChatCompletion
-		resp, err = provider.Completion(ctx, params)
+		var resp *provider.ChatCompletion
+		resp, err = prov.Completion(ctx, params)
 		if err == nil && resp != nil {
 			content, usage = extractCompletion(resp, cfg)
 		}
@@ -63,20 +67,20 @@ func chat(
 		return "", nil, nil, err
 	}
 
-	newHistory = append(history, llm.Message{Role: llm.RoleAssistant, Content: content})
+	newHistory = append(history, provider.Message{Role: provider.RoleAssistant, Content: content})
 	return content, newHistory, usage, nil
 }
 
 // extractCompletion unpacks a non-streaming response, prints reasoning if
 // enabled, and returns content + usage.
-func extractCompletion(resp *llm.ChatCompletion, cfg *config.UserConfig) (string, *llm.Usage) {
+func extractCompletion(resp *provider.ChatCompletion, cfg *config.UserConfig) (string, *provider.Usage) {
 	if len(resp.Choices) == 0 {
 		return "", resp.Usage
 	}
 	content := resp.Choices[0].Message.Content
 
 	// Print reasoning content (non-streaming, arrives in one block).
-	if cfg.ReasoningEffort != llm.ReasoningEffortNone &&
+	if cfg.ReasoningEffort != provider.ReasoningEffortNone &&
 		resp.Choices[0].Reasoning != nil && resp.Choices[0].Reasoning.Content != "" {
 		fmt.Fprintf(os.Stdout, "\n%s %s\n\n",
 			ui.Styles["Reasoning"].Render("\U0001f914"),
@@ -89,10 +93,10 @@ func extractCompletion(resp *llm.ChatCompletion, cfg *config.UserConfig) (string
 // Convenience wrappers
 // ---------------------------------------------------------------------------
 
-// chatStr returns JSON as a string (no terminal output for answer, but
+// ChatStr returns JSON as a string (no terminal output for answer, but
 // reasoning will still be printed to stdout when cfg.Reasoning is true).
-func chatStr(ctx context.Context, cfg *config.UserConfig, provider llm.Provider, history []llm.Message) (string, []llm.Message, *llm.Usage, error) {
-	return chat(ctx, cfg, provider, history, chatOpts{
+func ChatStr(ctx context.Context, cfg *config.UserConfig, prov provider.Provider, rp *RolePrompt, history []provider.Message) (string, []provider.Message, *provider.Usage, error) {
+	return chat(ctx, cfg, prov, rp, history, chatOpts{
 		Stream: cfg.Streaming,
 	})
 }
@@ -104,7 +108,7 @@ func chatStr(ctx context.Context, cfg *config.UserConfig, provider llm.Provider,
 // streamState holds the mutable state during a streaming chat call.
 type streamState struct {
 	fullContent strings.Builder
-	usage       *llm.Usage
+	usage       *provider.Usage
 }
 
 // doStream reads streaming chunks from the provider, routes reasoning output,
@@ -112,13 +116,13 @@ type streamState struct {
 // the last usage block seen.
 func doStream(
 	ctx context.Context,
-	provider llm.Provider,
-	params llm.CompletionParams,
+	prov provider.Provider,
+	params provider.CompletionParams,
 	reasonW io.Writer,
 	onToken func(string),
 	reasoning bool,
-) (string, *llm.Usage, error) {
-	chunkChan, errChan := provider.CompletionStream(ctx, params)
+) (string, *provider.Usage, error) {
+	chunkChan, errChan := prov.CompletionStream(ctx, params)
 
 	st := &streamState{}
 	rw := newReasoningRouter(reasonW, onToken, reasoning)

@@ -7,16 +7,19 @@ import (
 	"io"
 	"strings"
 
-	"github.com/Carudy/pai/internal/agent"
 	"github.com/Carudy/pai/internal/config"
-	"github.com/Carudy/pai/internal/hq"
-	"github.com/Carudy/pai/internal/llm"
+	"github.com/Carudy/pai/internal/provider"
+	"github.com/Carudy/pai/internal/role"
+	"github.com/Carudy/pai/internal/ui"
 )
 
-// Run is the main entry point for the PAI CLI. It parses flags, loads
-// config, wires up the selected agent, and executes it. Returns an exit code.
+// Version is PAI's version string.
+const Version = "v0.4.7"
+
+// Run is the main entry point for the PAI CLI. It parses flags, loads config,
+// wires up the selected role, and executes it. Returns an exit code.
 func Run(ctx context.Context, stdout io.Writer, args []string) int {
-	log := hq.NewLogger(stdout, false)
+	log := ui.NewLogger(stdout, false)
 
 	flags, helpRequested, err := GetFlags(args)
 	if err != nil {
@@ -30,7 +33,7 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	log.Debug = flags.Debug
 
 	if flags.Version {
-		fmt.Fprintf(stdout, "PAI version: %s\n", hq.PAI_VERSION)
+		fmt.Fprintf(stdout, "PAI version: %s\n", Version)
 		return 0
 	}
 
@@ -40,30 +43,18 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 		return 1
 	}
 
-	cfg.Flags = &flags
-	cfg.Logger = log
+	if flags.Role != "" {
+		cfg.DefaultRole = flags.Role
+	}
 
 	// Config "interactive: true" auto-enables -i mode.
-	if cfg.Interactive {
-		flags.Inter = true
-	}
+	interactive := flags.Inter || cfg.Interactive
 
-	log.Debugf("📃 User Flags: %#v\n", flags)
+	log.Debugf("📃 User flags: %#v\n", flags)
 	log.Debugf("🔧 User config: %#v\n", cfg)
 
-	if flags.Agent != "" {
-		cfg.DefaultAgent = flags.Agent
-	}
-
-	// Look up the agent via the shared registry.
-	selectedAgent := agent.Get(cfg.DefaultAgent)
-	if selectedAgent == nil {
-		log.Errorf("Error: Unsupported PAI agent: %q\n", cfg.DefaultAgent)
-		return 1
-	}
-
-	// Lazily load the custom prompt for the resolved agent only.
-	customPrompt, err := config.LoadCustomPrompt(cfg.DefaultAgent)
+	// Lazily load the custom prompt for the resolved role only.
+	customPrompt, err := config.LoadCustomPrompt(cfg.DefaultRole)
 	if err != nil {
 		log.Errorf("Error loading custom prompt: %v\n", err)
 		return 1
@@ -72,29 +63,35 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 
 	log.Debugf("🔌 Connecting to %#v...\n", cfg.DefaultModel)
 	providerCfg := cfg.ProvidersConfigs[cfg.Provider]
-	llmClient, err := llm.CreateClient(cfg.Provider, providerCfg.APIKey, cfg.Model, providerCfg.BaseURL)
+	client, err := provider.CreateClient(cfg.Provider, providerCfg.APIKey, cfg.Model, providerCfg.BaseURL)
 	if err != nil {
 		log.Errorf("Error creating LLM client: %v\n", err)
 		return 1
 	}
-	cfg.Clients[cfg.DefaultAgent] = llmClient
 
 	userInput := strings.TrimSpace(flags.Input)
-	if userInput == "" && !flags.Inter {
+	if userInput == "" && !interactive {
 		log.Errorf("Error: Please provide a user input\n")
 		return 1
 	}
 	log.Debugf("💬 User input: %#v...\n", userInput)
 
-	log.Debugf("Entering %s agent\n", cfg.DefaultAgent)
-	if err := selectedAgent.Run(ctx, cfg, userInput); err != nil {
+	// Runtime state for this run lives in a Session, kept out of UserConfig.
+	sess := &role.Session{
+		Client:      client,
+		Logger:      log,
+		Interactive: interactive,
+	}
+
+	log.Debugf("Entering role %s\n", cfg.DefaultRole)
+	if err := role.Run(ctx, cfg, sess, userInput); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(stdout, "\nInterrupted.")
 			return 0
 		}
-		log.Errorf("Error in %s agent: %v\n", cfg.DefaultAgent, err)
+		log.Errorf("Error in role %s: %v\n", cfg.DefaultRole, err)
 		return 1
 	}
-	log.Debugf("Agent %s exit successfully.\n", cfg.DefaultAgent)
+	log.Debugf("Role %s exited successfully.\n", cfg.DefaultRole)
 	return 0
 }

@@ -1,10 +1,6 @@
 package config
 
-import (
-	"github.com/Carudy/pai/internal/hq"
-	"github.com/Carudy/pai/internal/llm"
-	"github.com/Carudy/pai/internal/tool"
-)
+import "github.com/Carudy/pai/internal/provider"
 
 // ProviderConfig holds per-provider settings from the user config.
 type ProviderConfig struct {
@@ -21,13 +17,13 @@ type CustomPrompt struct {
 type tomlConfig struct {
 	Providers map[string]ProviderConfig `toml:"providers"`
 	App       struct {
-		DefaultModel        string              `toml:"default_model"`
-		DefaultAgent        string              `toml:"default_agent"`
-		Streaming           bool                `toml:"streaming"`
-		ReasoningEffort     llm.ReasoningEffort `toml:"reasoning"`
-		Interactive         bool                `toml:"interactive"`
-		TruncateExecLimit   int                 `toml:"truncate_exec_limit"`
-		TruncateSearchLimit int                 `toml:"truncate_search_limit"`
+		DefaultModel        string                   `toml:"default_model"`
+		DefaultRole         string                   `toml:"default_role"`
+		Streaming           bool                     `toml:"streaming"`
+		ReasoningEffort     provider.ReasoningEffort `toml:"reasoning"`
+		Interactive         bool                     `toml:"interactive"`
+		TruncateExecLimit   int                      `toml:"truncate_exec_limit"`
+		TruncateSearchLimit int                      `toml:"truncate_search_limit"`
 	} `toml:"app"`
 	Tool struct {
 		TavilyAPIKey string   `toml:"tavily_api_key"`
@@ -35,50 +31,56 @@ type tomlConfig struct {
 	} `toml:"tool"`
 }
 
-// UserConfig is the flat runtime representation (populated from tomlConfig).
+// UserConfig is PAI's configuration: everything here comes from config.toml,
+// prompts.toml, or the environment.
+//
+// Runtime state for a single run — the LLM client, the logger, whether the
+// session is interactive — deliberately does NOT live here; see role.Session.
+// Keeping that separation is what lets config stay a near-leaf package.
 type UserConfig struct {
 	ProvidersConfigs map[string]ProviderConfig
 	DefaultModel     string
-	DefaultAgent     string
+	DefaultRole      string
 	Streaming        bool
-	ReasoningEffort  llm.ReasoningEffort
+	ReasoningEffort  provider.ReasoningEffort
 	Interactive      bool
 	TavilyAPIKey     string
 	TrustedCmds      []string
 
-	// --- from ~/.config/pai/prompts.yml ---
+	// CustomPrompt is the user's override for the selected role's intro,
+	// loaded from ~/.config/pai/prompts.toml.
 	CustomPrompt CustomPrompt
 
-	// --- truncation limits (0 = use defaults) ---
+	// Truncation limits for output fed back to the model (0 = built-in default).
 	TruncateExecLimit   int
 	TruncateSearchLimit int
 
-	// --- resolved at runtime, not from config files ---
-	Provider      string
-	Model         string
-	Clients       map[string]llm.Provider
-	Flags         *hq.CliFlags
-	Logger        *hq.Logger
-	RemoteManager *tool.RemoteManager
+	// Provider and Model are derived from DefaultModel's "provider:model" form.
+	Provider string
+	Model    string
 }
 
 func defaultConfig() *UserConfig {
 	return &UserConfig{
 		DefaultModel:        "deepseek:deepseek-v4-flash",
-		DefaultAgent:        "devops",
+		DefaultRole:         "devops",
 		ProvidersConfigs:    make(map[string]ProviderConfig),
-		Clients:             make(map[string]llm.Provider),
 		CustomPrompt:        CustomPrompt{},
 		TruncateExecLimit:   8000,
 		TruncateSearchLimit: 8000,
 	}
 }
 
-// fromTOML copies parsed TOML values into the flat UserConfig.
+// fromTOML copies parsed TOML values into the flat UserConfig. Empty strings are
+// ignored so an omitted key keeps its built-in default.
 func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.ProvidersConfigs = raw.Providers
-	cfg.DefaultModel = raw.App.DefaultModel
-	cfg.DefaultAgent = raw.App.DefaultAgent
+	if raw.App.DefaultModel != "" {
+		cfg.DefaultModel = raw.App.DefaultModel
+	}
+	if raw.App.DefaultRole != "" {
+		cfg.DefaultRole = raw.App.DefaultRole
+	}
 	cfg.Streaming = raw.App.Streaming
 	cfg.ReasoningEffort = raw.App.ReasoningEffort
 	cfg.Interactive = raw.App.Interactive

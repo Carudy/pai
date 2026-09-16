@@ -1,0 +1,240 @@
+package chat
+
+import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/BurntSushi/toml"
+	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/prompts"
+	"github.com/Carudy/pai/internal/provider"
+)
+
+const SelfAware = `
+Your name is PAI (Personal Agent Inside Terminal);
+You're an agent app built upon LLMs;
+`
+
+// ToolSpec is one tool a role may use, as declared in tools/<name>.toml.
+type ToolSpec struct {
+	Name        string
+	Brief       string // one-liner, used in the compact per-turn reminder
+	Description string // detailed prose, rendered once into the frozen head
+	Schema      string // payload shape, rendered into the frozen head
+}
+
+// RolePrompt is a fully-resolved role. The head (shared preamble + terminal
+// info + role intro + tool specs) is composed once and stays byte-stable for
+// the whole session, which keeps provider prefix caching effective.
+type RolePrompt struct {
+	Name        string
+	Description string
+	Intro       string
+	Tools       []ToolSpec
+
+	head string
+}
+
+// Messages renders the per-request message list:
+//
+//	[system: head] + history + [system: tail]
+//
+// The output guide sits after the history so it is the last thing the model
+// reads before generating. history holds only conversation turns.
+func (rp *RolePrompt) Messages(history []provider.Message) []provider.Message {
+	msgs := make([]provider.Message, 0, len(history)+2)
+	msgs = append(msgs, provider.Message{Role: provider.RoleSystem, Content: rp.head})
+	msgs = append(msgs, history...)
+	msgs = append(msgs, provider.Message{Role: provider.RoleSystem, Content: rp.tail()})
+	return msgs
+}
+
+// HasTool reports whether the role may use the named tool. This is the role's
+// capability boundary, not just a hint for the prompt.
+func (rp *RolePrompt) HasTool(name string) bool {
+	for _, t := range rp.Tools {
+		if t.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ToolNames returns the role's tool names in declaration order.
+func (rp *RolePrompt) ToolNames() []string {
+	names := make([]string, len(rp.Tools))
+	for i, t := range rp.Tools {
+		names[i] = t.Name
+	}
+	return names
+}
+
+// tail renders the compact per-turn reminder: the output contract plus the
+// role's available tools.
+func (rp *RolePrompt) tail() string {
+	var b strings.Builder
+	b.WriteString(OutputGuide())
+	if len(rp.Tools) > 0 {
+		b.WriteString("\n\nAvailable tools: ")
+		for i, t := range rp.Tools {
+			if i > 0 {
+				b.WriteString(" | ")
+			}
+			b.WriteString(t.Name)
+			if t.Brief != "" {
+				fmt.Fprintf(&b, " (%s)", t.Brief)
+			}
+		}
+	}
+	return b.String()
+}
+
+func composeHead(rp *RolePrompt) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(SelfAware))
+	b.WriteString("\n\nYour Terminal Info:\n")
+	b.WriteString(BuildSystemContext())
+	if intro := strings.TrimSpace(rp.Intro); intro != "" {
+		b.WriteString("\n")
+		b.WriteString(intro)
+	}
+	for _, t := range rp.Tools {
+		b.WriteString("\n\n## Tool: ")
+		b.WriteString(t.Name)
+		b.WriteString("\n")
+		if d := strings.TrimSpace(t.Description); d != "" {
+			b.WriteString(d)
+			b.WriteString("\n")
+		}
+		if s := strings.TrimSpace(t.Schema); s != "" {
+			b.WriteString("Payload schema: ")
+			b.WriteString(s)
+		}
+	}
+	return b.String()
+}
+
+// rawRole mirrors roles/<name>.toml.
+type rawRole struct {
+	Name        string   `toml:"name"`
+	Description string   `toml:"description"`
+	Intro       string   `toml:"intro"`
+	Tools       []string `toml:"tools"`
+}
+
+// rawTool mirrors roles/tools/<name>.toml.
+type rawTool struct {
+	Name        string `toml:"name"`
+	Brief       string `toml:"brief"`
+	Description string `toml:"description"`
+	Schema      string `toml:"schema"`
+}
+
+// LoadRolePrompt resolves a role (user-defined or built-in) plus its tool
+// definitions, applying the user's custom prompt to the role intro.
+//
+// The system output guide is deliberately NOT overridable: a user prompt can
+// change how the role behaves, but never the response format the loop depends on.
+func LoadRolePrompt(name string, custom config.CustomPrompt) (*RolePrompt, error) {
+	roleData, source, err := prompts.ReadRole(name)
+	if err != nil {
+		return nil, err
+	}
+	var rr rawRole
+	if err := toml.Unmarshal(roleData, &rr); err != nil {
+		return nil, fmt.Errorf("parse role %q (%s): %w", name, source, err)
+	}
+
+	specs := make([]ToolSpec, 0, len(rr.Tools))
+	for _, tn := range rr.Tools {
+		toolData, toolSource, err := prompts.ReadTool(tn)
+		if err != nil {
+			return nil, fmt.Errorf("role %q: %w", name, err)
+		}
+		var raw rawTool
+		if err := toml.Unmarshal(toolData, &raw); err != nil {
+			return nil, fmt.Errorf("parse tool %q (%s): %w", tn, toolSource, err)
+		}
+		specs = append(specs, ToolSpec{
+			Name:        tn,
+			Brief:       raw.Brief,
+			Description: raw.Description,
+			Schema:      raw.Schema,
+		})
+	}
+
+	intro := rr.Intro
+	if cp := strings.TrimSpace(custom.Prompt); cp != "" {
+		if custom.Additional {
+			intro = strings.TrimSpace(rr.Intro) + "\n\n[User:]\n" + cp
+		} else {
+			intro = cp
+		}
+	}
+
+	rp := &RolePrompt{
+		Name:        rr.Name,
+		Description: rr.Description,
+		Intro:       intro,
+		Tools:       specs,
+	}
+	rp.head = composeHead(rp)
+	return rp, nil
+}
+
+func BuildSystemContext() string {
+	osDetail := getOSDetail()
+
+	shell := os.Getenv("SHELL")
+	if shell != "" {
+		shell = filepath.Base(shell)
+	} else {
+		shell = "unknown"
+	}
+
+	userInfo := os.Getenv("USER")
+	if userInfo == "" {
+		userInfo = "unknown"
+	}
+
+	now := time.Now()
+	dateTime := fmt.Sprintf("%s %s", now.Format("2006-01-02"), now.Format("15:04:05"))
+
+	wd, _ := os.Getwd()
+
+	return fmt.Sprintf("OS: %s (%s %s)\nShell: %s User: %s\nDatetime: %s\nWorking Dir: %s\n",
+		osDetail, runtime.GOOS, runtime.GOARCH, shell, userInfo, dateTime, wd)
+}
+
+func getOSDetail() string {
+	switch runtime.GOOS {
+	case "linux":
+		data, err := os.ReadFile("/etc/os-release")
+		if err == nil {
+			lines := strings.SplitSeq(string(data), "\n")
+			for line := range lines {
+				if strings.HasPrefix(line, "PRETTY_NAME=") {
+					return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
+				}
+			}
+		}
+		return "Linux"
+	case "darwin":
+		cmd := exec.Command("sw_vers", "-productVersion")
+		out, err := cmd.Output()
+		if err == nil {
+			version := strings.TrimSpace(string(out))
+			return fmt.Sprintf("macOS %s", version)
+		}
+		return "macOS"
+	case "windows":
+		return "Windows"
+	default:
+		return runtime.GOOS
+	}
+}
