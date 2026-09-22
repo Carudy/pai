@@ -136,6 +136,44 @@ func TestLoadRolePromptWiresContextFiles(t *testing.T) {
 	}
 }
 
+// The full output contract belongs in the head, after the tool specs; the tail
+// carries only the short per-turn nudge plus the tool list.
+func TestOutputContractPlacement(t *testing.T) {
+	rp := &RolePrompt{
+		Name:  "devops",
+		Intro: "You are an SRE.",
+		Tools: []ToolSpec{{Name: "execute", Brief: "run a shell command"}},
+	}
+	head := composeHead(rp)
+
+	tool := strings.Index(head, "## Tool: execute")
+	guide := strings.Index(head, "## Response format")
+	if tool < 0 || guide < 0 || guide < tool {
+		t.Errorf("guide should follow the tool specs: tool=%d guide=%d", tool, guide)
+	}
+	// The detailed contract, with an example per action, lives in the head.
+	for _, want := range []string{`"action":"ask"`, `"action":"done"`, `"action":"terminate"`, ToolExample()} {
+		if !strings.Contains(head, want) {
+			t.Errorf("head is missing %q", want)
+		}
+	}
+
+	tail := rp.tail()
+	if !strings.Contains(tail, OutputReminder()) {
+		t.Errorf("tail is missing the reminder: %q", tail)
+	}
+	if !strings.Contains(tail, "Available tools: execute") {
+		t.Errorf("tail is missing the tool list: %q", tail)
+	}
+	// The tail must stay short: the detailed contract is not repeated there.
+	if strings.Contains(tail, `"action":"terminate"`) {
+		t.Errorf("tail repeats the detailed contract: %q", tail)
+	}
+	if strings.Contains(OutputReminder(), "\n") {
+		t.Errorf("the reminder should be a single line: %q", OutputReminder())
+	}
+}
+
 // A role that declares no context files never reads any.
 func TestLoadRolePromptWithoutContextFiles(t *testing.T) {
 	rp, err := LoadRolePrompt("devops", config.CustomPrompt{})

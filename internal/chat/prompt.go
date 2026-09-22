@@ -29,8 +29,9 @@ type ToolSpec struct {
 }
 
 // RolePrompt is a fully-resolved role. The head (shared preamble + terminal
-// info + role intro + tool specs) is composed once and stays byte-stable for
-// the whole session, which keeps provider prefix caching effective.
+// info + role intro + project instructions + tool specs + the output contract)
+// is composed once and stays byte-stable for the whole session, which keeps
+// provider prefix caching effective.
 type RolePrompt struct {
 	Name        string
 	Description string
@@ -50,8 +51,10 @@ type RolePrompt struct {
 //
 //	[system: head] + history + [system: tail]
 //
-// The output guide sits after the history so it is the last thing the model
-// reads before generating. history holds only conversation turns.
+// The head carries the full output contract, frozen with the role. The tail is a
+// short per-turn nudge (the reminder plus the role's tools) placed after the
+// history so it is the last thing the model reads. history holds only
+// conversation turns.
 func (rp *RolePrompt) Messages(history []provider.Message) []provider.Message {
 	msgs := make([]provider.Message, 0, len(history)+2)
 	msgs = append(msgs, provider.Message{Role: provider.RoleSystem, Content: rp.head})
@@ -80,13 +83,13 @@ func (rp *RolePrompt) ToolNames() []string {
 	return names
 }
 
-// tail renders the compact per-turn reminder: the output contract plus the
-// role's available tools.
+// tail renders the compact per-turn reminder: a one-line restatement of the
+// output contract plus the role's available tools.
 func (rp *RolePrompt) tail() string {
 	var b strings.Builder
-	b.WriteString(OutputGuide())
+	b.WriteString(OutputReminder())
 	if len(rp.Tools) > 0 {
-		b.WriteString("\n\nAvailable tools: ")
+		b.WriteString("\nAvailable tools: ")
 		for i, t := range rp.Tools {
 			if i > 0 {
 				b.WriteString(" | ")
@@ -132,6 +135,10 @@ func composeHead(rp *RolePrompt) string {
 			b.WriteString(s)
 		}
 	}
+	// The output contract closes the head: it is the rule the tools are used
+	// under, and keeping it byte-stable with the head preserves prefix caching.
+	b.WriteString("\n\n")
+	b.WriteString(OutputGuide())
 	return b.String()
 }
 
