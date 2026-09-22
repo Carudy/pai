@@ -149,6 +149,19 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 		rt.record(core.Turn{Role: "user", Kind: "input", Content: userInput})
 	}
 
+	// Only call the model when there is something for it to answer. A fresh
+	// session, or one resumed on an assistant turn (a finished "done"/
+	// "terminate"), must wait for the user first: otherwise attaching re-runs the
+	// last step and burns a model call on a redundant reply. History that ends on
+	// a user turn (a tool result from an interrupted step, say) still continues.
+	if rt.Interactive && (len(history) == 0 || history[len(history)-1].Role != provider.RoleUser) {
+		input, ok := rt.readInstruction()
+		if !ok {
+			return nil
+		}
+		history = append(history, provider.Message{Role: provider.RoleUser, Content: input})
+	}
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return err

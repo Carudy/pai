@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/paths"
@@ -29,23 +31,23 @@ Sessions live in $XDG_DATA_HOME/pai; see the README for the storage backend.`
 }
 
 // resolveSession opens the session store and determines which session this run
-// uses, returning the turns to resume. An empty name means "ephemeral": no
-// store is opened and nothing is persisted.
+// uses. A nil session means "ephemeral": no store is opened and nothing is
+// persisted.
 //
 // Precedence: --no-session (never persist) > --attach (must exist) >
 // --session (create or continue) > --continue (latest for this directory) >
 // config [session] persist (auto-named).
-func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, string, []provider.Message, error) {
+func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, *session.Session, error) {
 	if flags.NoSession {
-		return nil, "", nil, nil
+		return nil, nil, nil
 	}
 	if flags.Attach == "" && flags.Session == "" && !flags.Continue && !cfg.SessionPersist {
-		return nil, "", nil, nil
+		return nil, nil, nil
 	}
 
 	store, err := session.Open()
 	if err != nil {
-		return nil, "", nil, err
+		return nil, nil, err
 	}
 
 	cwd, _ := os.Getwd()
@@ -57,7 +59,7 @@ func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, stri
 		sess, err = store.Get(flags.Attach)
 		if err != nil {
 			store.Close()
-			return nil, "", nil, fmt.Errorf("attach: %w", err)
+			return nil, nil, fmt.Errorf("attach: %w", err)
 		}
 	case flags.Session != "":
 		meta.Name = flags.Session
@@ -67,28 +69,88 @@ func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, stri
 		}
 		if err != nil {
 			store.Close()
-			return nil, "", nil, fmt.Errorf("session: %w", err)
+			return nil, nil, fmt.Errorf("session: %w", err)
 		}
 	case flags.Continue:
 		sess, err = store.Latest(cwd)
 		if err != nil {
 			store.Close()
-			return nil, "", nil, fmt.Errorf("continue: %w", err)
+			return nil, nil, fmt.Errorf("continue: %w", err)
 		}
 	default: // cfg.SessionPersist
 		meta.Name = session.NewName()
 		sess, err = store.Create(meta)
 		if err != nil {
 			store.Close()
-			return nil, "", nil, err
+			return nil, nil, err
 		}
 	}
 
-	turns := sess.Turns
-	if cfg.SessionMaxTurns > 0 && len(turns) > cfg.SessionMaxTurns {
-		turns = turns[len(turns)-cfg.SessionMaxTurns:]
+	// Only the tail is replayed into the model; the recap shows the tail too.
+	if turns := sess.Turns; cfg.SessionMaxTurns > 0 && len(turns) > cfg.SessionMaxTurns {
+		sess.Turns = turns[len(turns)-cfg.SessionMaxTurns:]
 	}
-	return store, sess.Meta.Name, toMessages(turns), nil
+	return store, sess, nil
+}
+
+// exchange is one user instruction paired with PAI's final answer to it.
+type exchange struct{ user, pai string }
+
+// printRecap echoes the last few exchanges when resuming a session, so the user
+// has context without re-reading the whole transcript. A limit <= 0 disables it.
+func printRecap(w io.Writer, sess *session.Session, limit int) {
+	if limit <= 0 || len(sess.Turns) == 0 {
+		return
+	}
+	exs := exchangesOf(sess.Turns)
+	if len(exs) == 0 {
+		return
+	}
+	if len(exs) > limit {
+		exs = exs[len(exs)-limit:]
+	}
+
+	header := fmt.Sprintf("↩ resuming %q — %d turns, %s", sess.Meta.Name, sess.Meta.Turns, humanAge(sess.Meta.UpdatedAt))
+	fmt.Fprintf(w, "%s\n", tui.RenderStr("Help", header))
+	for _, e := range exs {
+		if e.user != "" {
+			fmt.Fprintf(w, "  %s %s\n", tui.RenderStr("TagUser", "you"), clip(e.user, 120))
+		}
+		if e.pai != "" {
+			fmt.Fprintf(w, "  %s %s\n", tui.RenderStr("TagAgent", "pai"), clip(e.pai, 120))
+		}
+	}
+	fmt.Fprintf(w, "%s\n", tui.RenderStr("Separator", strings.Repeat("─", 40)))
+}
+
+// exchangesOf folds turns into exchanges, keeping only the user's instructions
+// and PAI's last answer before the next instruction. Tool results and notes are
+// intentionally dropped — they are the bulk of a transcript and add no context.
+func exchangesOf(turns []core.Turn) []exchange {
+	var out []exchange
+	for _, t := range turns {
+		switch t.Kind {
+		case "input":
+			out = append(out, exchange{user: t.Content})
+		case "output":
+			if len(out) > 0 {
+				out[len(out)-1].pai = summarizeResponse(t.Content)
+			}
+		}
+	}
+	return out
+}
+
+// summarizeResponse renders the model's raw JSON response as a one-line gist.
+func summarizeResponse(content string) string {
+	resp, err := chat.ParseResponse(content)
+	if err != nil {
+		return clip(content, 120)
+	}
+	if resp.Action == chat.ActionTool {
+		return clip(resp.Reason, 120)
+	}
+	return clip(resp.GetPayload(), 120)
 }
 
 // toMessages converts persisted turns into a replayable conversation.

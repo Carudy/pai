@@ -17,7 +17,7 @@ import (
 )
 
 // Version is PAI's version string.
-const Version = "v0.6.0"
+const Version = "v0.6.3"
 
 // runChat parses chat flags, loads config, wires up the selected role, and runs
 // it. It is both the `pai chat` handler and the default action for a bare `pai`.
@@ -81,18 +81,40 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 	log.Debugf("💬 User input: %#v...\n", userInput)
 
 	// Resolve the session (if any) and the turns to resume.
-	store, sessName, history, err := resolveSession(cfg, flags)
+	store, sess, err := resolveSession(cfg, flags)
 	if err != nil {
 		log.Errorf("Error: %v\n", err)
 		return 1
 	}
+	var history []provider.Message
 	if store != nil {
 		defer store.Close()
-		log.Debugf("Session: %s (%d resumed turns, %s backend)\n", sessName, len(history), session.Backend())
+		history = toMessages(sess.Turns)
+		// Echo the tail of the transcript so the user has context, and print it
+		// before the UI starts so it lands in normal scrollback.
+		printRecap(stdout, sess, cfg.SessionRecapTurns)
+		log.Debugf("Session: %s (%d resumed turns, %s backend)\n", sess.Meta.Name, len(history), session.Backend())
+	}
+
+	// Label shown in the UI's live region: the session name, or a marker telling
+	// the user this run is not persisted.
+	sessionLabel := "<temp session>"
+	if store != nil {
+		sessionLabel = sess.Meta.Name
 	}
 
 	// Ports and per-run state for this run live in a Runtime, kept out of
 	// UserConfig (which holds configuration only).
+	//
+	// An interactive run on a real terminal gets the inline UI, which keeps the
+	// input bar available while PAI works (type-ahead queueing). Pipes and
+	// non-interactive runs keep the plain line adapters.
+	var app *tui.App
+	if interactive && canUseTUI(stdout) {
+		app = tui.NewApp(stdout, sessionLabel)
+		log.SetWriter(app.Writer())
+	}
+
 	rt := &role.Runtime{
 		Provider:    client,
 		Observer:    tui.NewLineObserver(stdout),
@@ -100,8 +122,13 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 		Logger:      log,
 		Interactive: interactive,
 	}
+	if app != nil {
+		rt.Observer = app.Observer()
+		rt.Prompter = app.Prompter()
+		app.SetInterrupt(rt.Interrupt)
+	}
 	if store != nil {
-		rt.Recorder = session.NewRecorder(store, sessName)
+		rt.Recorder = session.NewRecorder(store, sess.Meta.Name)
 	}
 
 	// Ctrl+C cancels the in-flight step and drops back to the prompt; when no
@@ -128,7 +155,32 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 	}()
 
 	log.Debugf("Entering role %s\n", cfg.DefaultRole)
-	if err := role.Run(runCtx, cfg, rt, history, userInput); err != nil {
+
+	if app != nil {
+		app.Start()
+	}
+
+	// Run the loop off the main goroutine so a cancelled context (SIGTERM) can
+	// close the UI and thereby unblock a prompt the loop is parked on, instead of
+	// leaving both sides waiting on each other.
+	runErr := make(chan error, 1)
+	go func() { runErr <- role.Run(runCtx, cfg, rt, history, userInput) }()
+	if app != nil {
+		go func() {
+			<-runCtx.Done()
+			app.Close()
+		}()
+	}
+
+	err = <-runErr
+	if app != nil {
+		if uiErr := app.Err(); uiErr != nil {
+			log.Errorf("Terminal UI error: %v\n", uiErr)
+		}
+		app.Close()
+	}
+
+	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(stdout, "\nInterrupted.")
 			return 0
@@ -138,4 +190,23 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 	}
 	log.Debugf("Role %s exited successfully.\n", cfg.DefaultRole)
 	return 0
+}
+
+// canUseTUI reports whether the inline UI can run: both stdin and stdout must be
+// terminals, so raw mode and above-the-input rendering are viable.
+func canUseTUI(stdout io.Writer) bool {
+	return isCharDevice(os.Stdin) && isCharDevice(stdout)
+}
+
+// isCharDevice approximates "is a terminal" without pulling in a dependency.
+func isCharDevice(w any) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }

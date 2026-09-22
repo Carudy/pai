@@ -12,6 +12,10 @@ var Styles = map[string]lipgloss.Style{
 	"Info":    lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
 	"Warn":    lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
 	"Help":    lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true),
+	// Hint is for actionable guidance (key bindings, status). A brighter cousin
+	// of the accent huh used (#7571F9), chosen for contrast on dark terminals —
+	// the old grey was hard to read.
+	"Hint":    lipgloss.NewStyle().Foreground(lipgloss.Color("#A78BFA")),
 	"Subdued": lipgloss.NewStyle().Foreground(lipgloss.Color("#ABFAE1")),
 	"Content": lipgloss.NewStyle().Foreground(lipgloss.Color("#ddeeff")),
 

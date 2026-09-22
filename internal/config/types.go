@@ -32,6 +32,9 @@ type tomlConfig struct {
 	Session struct {
 		Persist  bool `toml:"persist"`
 		MaxTurns int  `toml:"max_turns"`
+		// RecapTurns is a pointer so an explicit 0 (disable) is distinguishable
+		// from an omitted key (use the built-in default).
+		RecapTurns *int `toml:"recap_turns"`
 	} `toml:"session"`
 }
 
@@ -61,9 +64,11 @@ type UserConfig struct {
 
 	// SessionPersist makes every run persist to an auto-named session, even
 	// without -s/--attach/--continue. SessionMaxTurns caps how many resumed
-	// turns are replayed (0 = all).
-	SessionPersist  bool
-	SessionMaxTurns int
+	// turns are replayed (0 = all). SessionRecapTurns is how many recent
+	// exchanges are echoed back to the user when resuming (0 = no recap).
+	SessionPersist    bool
+	SessionMaxTurns   int
+	SessionRecapTurns int
 
 	// Provider and Model are derived from DefaultModel's "provider:model" form.
 	Provider string
@@ -101,6 +106,7 @@ func defaultConfig() *UserConfig {
 		CustomPrompt:        CustomPrompt{},
 		TruncateExecLimit:   8000,
 		TruncateSearchLimit: 8000,
+		SessionRecapTurns:   3,
 	}
 }
 
@@ -121,6 +127,9 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.TrustedCmds = raw.Tool.TrustedCmds
 	cfg.SessionPersist = raw.Session.Persist
 	cfg.SessionMaxTurns = raw.Session.MaxTurns
+	if raw.Session.RecapTurns != nil {
+		cfg.SessionRecapTurns = *raw.Session.RecapTurns
+	}
 	if raw.App.TruncateExecLimit > 0 {
 		cfg.TruncateExecLimit = raw.App.TruncateExecLimit
 	}

@@ -16,6 +16,10 @@ func NewLogger(w io.Writer, debug bool) *Logger {
 	return &Logger{writer: w, Debug: debug}
 }
 
+// SetWriter redirects log output — used to route diagnostics into a live UI so
+// they don't corrupt its rendering.
+func (l *Logger) SetWriter(w io.Writer) { l.writer = w }
+
 // Debugf logs a debug-level message. No-op unless Debug is set.
 func (l *Logger) Debugf(format string, a ...any) {
 	if !l.Debug {

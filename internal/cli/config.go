@@ -35,6 +35,7 @@ var configKeys = map[string]configKey{
 	"truncate_search_limit": {section: "app", key: "truncate_search_limit", kind: "int"},
 	"session.persist":       {section: "session", key: "persist", kind: "bool"},
 	"session.max_turns":     {section: "session", key: "max_turns", kind: "int"},
+	"session.recap_turns":   {section: "session", key: "recap_turns", kind: "int"},
 	"tavily_api_key":        {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
 }
 
@@ -186,6 +187,8 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return strconv.FormatBool(cfg.SessionPersist)
 	case "session.max_turns":
 		return strconv.Itoa(cfg.SessionMaxTurns)
+	case "session.recap_turns":
+		return strconv.Itoa(cfg.SessionRecapTurns)
 	case "tavily_api_key":
 		if reveal {
 			return cfg.TavilyAPIKey
