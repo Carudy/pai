@@ -2,8 +2,8 @@
 //
 // Two backends satisfy Store, chosen at build time:
 //
-//	go build ./cmd/pai               # default: zero-dependency JSONL files
-//	go build -tags sqlite ./cmd/pai  # pure-Go SQLite (adds ~3.6 MB stripped)
+//	go build ./cmd/pai                  # default: pure-Go SQLite
+//	go build -tags filestore ./cmd/pai  # zero-dependency JSONL files (lighter)
 //
 // Callers never branch on the backend.
 package session

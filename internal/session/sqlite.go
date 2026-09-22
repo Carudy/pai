@@ -1,4 +1,4 @@
-//go:build sqlite
+//go:build !filestore
 
 package session
 
@@ -19,7 +19,7 @@ import (
 // Backend name, shown by `pai session` for transparency.
 func Backend() string { return "sqlite" }
 
-// Open returns the pure-Go SQLite store. Build with -tags sqlite to enable it.
+// Open returns the pure-Go SQLite store: the default backend.
 func Open() (Store, error) {
 	dir := paths.DataDir()
 	if dir == "" {

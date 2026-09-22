@@ -197,13 +197,13 @@ Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, or
 
 | Backend | Build | Binary (stripped) |
 |---|---|---|
-| JSONL files (default) | `go build ./cmd/pai` | ~8.3 MB |
-| SQLite (pure Go) | `go build -tags sqlite ./cmd/pai` | ~12.2 MB |
+| SQLite (default) | `go build ./cmd/pai` | ~12.2 MB |
+| JSONL files | `go build -tags filestore ./cmd/pai` | ~8.3 MB |
 
-The default keeps `go install` dependency-free and light. `-tags sqlite` uses
-pure-Go SQLite (`modernc.org/sqlite`) — still cgo-free, so `go install` keeps
-working, at ~4 MB more. `make build` and `make build-sqlite` produce stripped
-binaries. Note the two backends use different on-disk formats.
+The default uses pure-Go SQLite (`modernc.org/sqlite`) — cgo-free, so `go
+install` keeps working. Pass `-tags filestore` for a ~4 MB smaller binary with no
+SQLite dependency. `make build` / `make build-file` produce stripped binaries.
+Note the two backends use different on-disk formats.
 
 ## 📄 License
 

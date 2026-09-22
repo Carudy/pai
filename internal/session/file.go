@@ -1,4 +1,4 @@
-//go:build !sqlite
+//go:build filestore
 
 package session
 
@@ -23,7 +23,8 @@ func Backend() string { return "file" }
 
 const fileExt = ".jsonl"
 
-// Open returns the default, dependency-free file store.
+// Open returns the dependency-free JSONL file store. Build with -tags filestore
+// to select it; SQLite is the default backend.
 func Open() (Store, error) {
 	dir := paths.DataDir()
 	if dir == "" {
