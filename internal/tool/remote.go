@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/Carudy/pai/internal/paths"
-	"github.com/Carudy/pai/internal/ui"
 )
 
 const remoteTimeout = 120 * time.Second
@@ -51,20 +50,10 @@ func NewRemoteManager() (*RemoteManager, error) {
 }
 
 // ExecuteRemote runs cmd on host (a Host alias from ~/.ssh/config).
-// userConfirm / streamW work the same as ExecuteCommand.
-func (rm *RemoteManager) ExecuteRemote(ctx context.Context, payload RemotePayload, userConfirm bool, streamW io.Writer) (ExecResult, error) {
+// streamW behaves as in ExecuteCommand; confirmation is the caller's job.
+func (rm *RemoteManager) ExecuteRemote(ctx context.Context, payload RemotePayload, streamW io.Writer) (ExecResult, error) {
 	if payload.Host == "" || payload.Cmd == "" {
 		return ExecResult{ExitCode: -1}, fmt.Errorf("remote: host and cmd required")
-	}
-
-	if userConfirm {
-		ok, err := ui.GetUserConfirm(fmt.Sprintf("Run on %s?", payload.Host))
-		if err != nil {
-			return ExecResult{}, fmt.Errorf("user interaction error: %w", err)
-		}
-		if !ok {
-			return ExecResult{ExitCode: -1, Output: CancelledOutput}, nil
-		}
 	}
 
 	controlPath := filepath.Join(rm.controlDir, sanitizeHost(payload.Host))

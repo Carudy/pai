@@ -63,6 +63,10 @@ tavily_api_key = "your-tavily-key"  # for web search (env TAVILY_API_KEY as fall
 trusted_cmds = [
     "ls", "cat", "grep", "pwd", "which",
 ]
+
+[session]
+persist   = false   # true = save every run to an auto-named session
+max_turns = 0       # cap on turns replayed when resuming (0 = all)
 ```
 
 ### Environment Variables
@@ -163,6 +167,43 @@ tool *implementations* live in Go, so new tools require code — new roles do no
 
 See [examples/](examples/) for detailed walkthroughs.
 
+
+## 💾 Sessions
+
+By default PAI is stateless — nothing is written unless you ask for a session.
+
+```bash
+pai -s work "check nginx, then keep digging"   # create or continue "work"
+pai --attach work "and now the disk usage"     # resume an existing session
+pai -C "what did we find?"                     # resume the most recent session for this directory
+```
+
+A named session remembers the whole conversation, so a later run (a *different
+process*) continues where you left off. Manage them with a subcommand:
+
+```bash
+pai session list                # list saved sessions
+pai session show work           # details + recent turns
+pai session rm work             # delete
+pai session rename work ops     # rename
+```
+
+Set `[session] persist = true` to save *every* run to an auto-named session.
+
+### Storage backend
+
+Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, or
+`~/.local/share/pai/`). Two backends implement the same interface:
+
+| Backend | Build | Binary (stripped) |
+|---|---|---|
+| JSONL files (default) | `go build ./cmd/pai` | ~8.3 MB |
+| SQLite (pure Go) | `go build -tags sqlite ./cmd/pai` | ~12.2 MB |
+
+The default keeps `go install` dependency-free and light. `-tags sqlite` uses
+pure-Go SQLite (`modernc.org/sqlite`) — still cgo-free, so `go install` keeps
+working, at ~4 MB more. `make build` and `make build-sqlite` produce stripped
+binaries. Note the two backends use different on-disk formats.
 
 ## 📄 License
 

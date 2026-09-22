@@ -10,7 +10,8 @@ import (
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/provider"
 	"github.com/Carudy/pai/internal/role"
-	"github.com/Carudy/pai/internal/ui"
+	"github.com/Carudy/pai/internal/session"
+	"github.com/Carudy/pai/internal/tui"
 )
 
 // Version is PAI's version string.
@@ -19,7 +20,12 @@ const Version = "v0.5.0"
 // Run is the main entry point for the PAI CLI. It parses flags, loads config,
 // wires up the selected role, and executes it. Returns an exit code.
 func Run(ctx context.Context, stdout io.Writer, args []string) int {
-	log := ui.NewLogger(stdout, false)
+	log := tui.NewLogger(stdout, false)
+
+	// `pai session …` is a management subcommand, not a chat.
+	if len(args) > 0 && args[0] == "session" {
+		return runSession(args[1:], stdout, log)
+	}
 
 	flags, helpRequested, err := GetFlags(args)
 	if err != nil {
@@ -76,15 +82,32 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	}
 	log.Debugf("💬 User input: %#v...\n", userInput)
 
-	// Runtime state for this run lives in a Session, kept out of UserConfig.
-	sess := &role.Session{
-		Client:      client,
+	// Resolve the session (if any) and the turns to resume.
+	store, sessName, history, err := resolveSession(cfg, flags)
+	if err != nil {
+		log.Errorf("Error: %v\n", err)
+		return 1
+	}
+	if store != nil {
+		defer store.Close()
+		log.Debugf("Session: %s (%d resumed turns, %s backend)\n", sessName, len(history), session.Backend())
+	}
+
+	// Ports and per-run state for this run live in a Runtime, kept out of
+	// UserConfig (which holds configuration only).
+	rt := &role.Runtime{
+		Provider:    client,
+		Observer:    tui.NewLineObserver(stdout),
+		Prompter:    tui.NewPrompter(),
 		Logger:      log,
 		Interactive: interactive,
 	}
+	if store != nil {
+		rt.Recorder = session.NewRecorder(store, sessName)
+	}
 
 	log.Debugf("Entering role %s\n", cfg.DefaultRole)
-	if err := role.Run(ctx, cfg, sess, userInput); err != nil {
+	if err := role.Run(ctx, cfg, rt, history, userInput); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(stdout, "\nInterrupted.")
 			return 0

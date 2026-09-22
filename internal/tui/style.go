@@ -1,4 +1,4 @@
-package ui
+package tui
 
 import (
 	"strings"
@@ -13,7 +13,6 @@ var Styles = map[string]lipgloss.Style{
 	"Warn":    lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
 	"Help":    lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Italic(true),
 	"Subdued": lipgloss.NewStyle().Foreground(lipgloss.Color("#ABFAE1")),
-	"Cmd":     lipgloss.NewStyle().Foreground(lipgloss.Yellow).Bold(true),
 	"Content": lipgloss.NewStyle().Foreground(lipgloss.Color("#ddeeff")),
 
 	// ── Logging ───────────────────────────────────────────────────────
@@ -28,7 +27,6 @@ var Styles = map[string]lipgloss.Style{
 	"TagAgent":  lipgloss.NewStyle().Foreground(lipgloss.Color("78")).Bold(true),
 	"TagExec":   lipgloss.NewStyle().Foreground(lipgloss.Color("#05AB6A")).Bold(true),
 	"TagUser":   lipgloss.NewStyle().Foreground(lipgloss.Color("147")).Bold(true),
-	"TagResult": lipgloss.NewStyle().Foreground(lipgloss.Color("222")).Bold(true),
 
 	// ── Reasoning / thinking ──────────────────────────────────────────
 	"Reasoning": lipgloss.NewStyle().Foreground(lipgloss.Color("172")).Italic(true),

@@ -8,7 +8,6 @@ import (
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/provider"
-	"github.com/Carudy/pai/internal/ui"
 )
 
 const maxFormatRetries = 3
@@ -95,15 +94,14 @@ func ParseResponse(content string) (*Response, error) {
 	return &resp, nil
 }
 
-// ParseResponseWithRetry parses and validates an Response from the AI's
-// output. On failure it feeds a descriptive correction message back to the AI
-// and retries up to maxFormatRetries times before giving up.
+// ParseResponseWithRetry parses and validates a Response from the AI's output.
+// On failure it feeds a descriptive correction message back to the AI and
+// retries up to maxFormatRetries times before giving up.
 func ParseResponseWithRetry(
 	ctx context.Context,
 	cfg *config.UserConfig,
-	prov provider.Provider,
 	rp *RolePrompt,
-	log *ui.Logger,
+	p Ports,
 	content string,
 	history []provider.Message,
 ) (*Response, []provider.Message, error) {
@@ -120,12 +118,10 @@ func ParseResponseWithRetry(
 			return resp, history, nil
 		}
 
-		log.Debugf("[Format Error attempt %d/%d]: %v\n", attempt+1, maxFormatRetries, err)
+		p.Logger.Debugf("[Format Error attempt %d/%d]: %v\n", attempt+1, maxFormatRetries, err)
 
 		if attempt < maxFormatRetries-1 {
-			fmt.Printf("%s \u26a0\ufe0f %s\n",
-				ui.Styles["TagSystem"].Render("[SYS]"),
-				ui.Styles["Warn"].Render(fmt.Sprintf("Response format error, retrying (%d/%d): %v", attempt+1, maxFormatRetries, err)))
+			p.Observer.Notice(fmt.Sprintf("Response format error, retrying (%d/%d): %v", attempt+1, maxFormatRetries, err))
 
 			correctionMsg := fmt.Sprintf(
 				"[system] Your previous response had a format error: %v\n"+
@@ -133,11 +129,11 @@ func ParseResponseWithRetry(
 				err, ActionEnum())
 			history = append(history, provider.Message{Role: provider.RoleUser, Content: correctionMsg})
 
-			content, history, _, err = ChatStr(ctx, cfg, prov, rp, history)
+			content, history, _, err = ChatStr(ctx, cfg, rp, p, history)
 			if err != nil {
 				return nil, history, err
 			}
-			log.Debugf("[AI Retry Output]:\n%s\n", content)
+			p.Logger.Debugf("[AI Retry Output]:\n%s\n", content)
 		}
 	}
 	return nil, history, fmt.Errorf("AI failed to produce valid JSON after %d attempts: %w", maxFormatRetries, err)

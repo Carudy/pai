@@ -29,6 +29,10 @@ type tomlConfig struct {
 		TavilyAPIKey string   `toml:"tavily_api_key"`
 		TrustedCmds  []string `toml:"trusted_cmds"`
 	} `toml:"tool"`
+	Session struct {
+		Persist  bool `toml:"persist"`
+		MaxTurns int  `toml:"max_turns"`
+	} `toml:"session"`
 }
 
 // UserConfig is PAI's configuration: everything here comes from config.toml,
@@ -54,6 +58,12 @@ type UserConfig struct {
 	// Truncation limits for output fed back to the model (0 = built-in default).
 	TruncateExecLimit   int
 	TruncateSearchLimit int
+
+	// SessionPersist makes every run persist to an auto-named session, even
+	// without -s/--attach/--continue. SessionMaxTurns caps how many resumed
+	// turns are replayed (0 = all).
+	SessionPersist  bool
+	SessionMaxTurns int
 
 	// Provider and Model are derived from DefaultModel's "provider:model" form.
 	Provider string
@@ -86,6 +96,8 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.Interactive = raw.App.Interactive
 	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey
 	cfg.TrustedCmds = raw.Tool.TrustedCmds
+	cfg.SessionPersist = raw.Session.Persist
+	cfg.SessionMaxTurns = raw.Session.MaxTurns
 	if raw.App.TruncateExecLimit > 0 {
 		cfg.TruncateExecLimit = raw.App.TruncateExecLimit
 	}

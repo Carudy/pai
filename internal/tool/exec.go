@@ -12,8 +12,6 @@ import (
 	"runtime"
 	"strings"
 	"time"
-
-	"github.com/Carudy/pai/internal/ui"
 )
 
 // CancelledOutput is the sentinel value stored in ExecResult.Output when the
@@ -158,20 +156,15 @@ func resolveShell() (string, string) {
 	return "/bin/sh", "-c"
 }
 
-// ExecuteCommand runs the specified command using the system shell (or cmd/powershell on Windows).
-// If userConfirm is true, it will prompt the user for confirmation before execution.
+// ExecuteCommand runs a command through the system shell (bash or sh on Unix,
+// cmd or powershell on Windows).
 //
-// If streamW is non-nil, command output (stdout + stderr) is written to it in real-time
-// while still being captured for the returned ExecResult. Pass os.Stdout to let the user
-// see live output instead of waiting until the command finishes.
+// Confirmation is the caller's responsibility: this layer executes what it is
+// given, which keeps it free of any presentation dependency.
 //
-// The function returns both an ExecResult containing the command output and status,
-// and an error if something went wrong with the execution process itself.
-//
-// The returned ExecResult will contain the command output, exit code, and timeout status.
-// The ExecResult.Output will include error information for better display to users.
-// The error return value should be checked to handle execution failures appropriately.
-func ExecuteCommand(ctx context.Context, command string, userConfirm bool, streamW io.Writer) (ExecResult, error) {
+// If streamW is non-nil, command output (stdout + stderr) is written to it in
+// real time while still being captured for the returned ExecResult.
+func ExecuteCommand(ctx context.Context, command string, streamW io.Writer) (ExecResult, error) {
 	command = trimCmd(command)
 
 	if command == "" {
@@ -180,17 +173,6 @@ func ExecuteCommand(ctx context.Context, command string, userConfirm bool, strea
 
 	shell, shellArg := resolveShell()
 
-	if userConfirm {
-		ok, err := ui.GetUserConfirm("Execute this command?")
-		if err != nil {
-			return ExecResult{}, fmt.Errorf("user interaction error: %w", err)
-		}
-		if !ok {
-			return ExecResult{ExitCode: -1, Output: CancelledOutput}, nil
-		}
-	}
-
-	// Check if context was cancelled while waiting for user confirmation.
 	if err := ctx.Err(); err != nil {
 		return ExecResult{ExitCode: -1, Output: CancelledOutput}, err
 	}

@@ -4,18 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"strings"
 
 	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/tool"
-	"github.com/Carudy/pai/internal/ui"
 )
 
-// toolHandler executes a single tool. It prints user-facing output itself and
-// returns the observation text to append to the conversation history (including
-// its bracketed label), so the model can read the result on the next turn.
-type toolHandler func(ctx context.Context, cfg *config.UserConfig, sess *Session, reason string, payload json.RawMessage) (string, error)
+// toolHandler executes a single tool. It reports progress through the Runtime's
+// Observer and returns the observation text to append to the conversation
+// history (including its bracketed label), so the model can read the result on
+// the next turn.
+type toolHandler func(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error)
 
 // toolHandlers maps a tool name to its implementation. Names must match the
 // files in internal/prompts/tools/*.toml; checkToolCoverage enforces that a role
@@ -36,134 +37,126 @@ func checkToolCoverage(rp *chat.RolePrompt) error {
 	return nil
 }
 
+// toolStream routes a tool's streamed output through the observer, so the
+// adapter owns how it is displayed.
+func toolStream(rt *Runtime) core.WriterFunc {
+	return func(p []byte) (int, error) {
+		rt.Observer.ToolOutput(string(p))
+		return len(p), nil
+	}
+}
+
+// cancelled is the result of a user declining to run a tool.
+func cancelled() tool.ExecResult {
+	return tool.ExecResult{ExitCode: -1, Output: tool.CancelledOutput}
+}
+
+// report renders a tool outcome to the observer.
+func report(rt *Runtime, output tool.ExecResult, execErr error, okMsg string) {
+	switch {
+	case output.Output == tool.CancelledOutput:
+		rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
+	case execErr != nil:
+		rt.Observer.ToolResult(core.ToolResult{
+			Message: fmt.Sprintf("%s: %v", okMsg, execErr),
+			Detail:  output.Output,
+		})
+	default:
+		rt.Observer.ToolResult(core.ToolResult{OK: true, Message: okMsg})
+	}
+}
+
 // runExecute runs a shell command locally.
-func runExecute(ctx context.Context, cfg *config.UserConfig, _ *Session, reason string, payload json.RawMessage) (string, error) {
+func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
 	var cmd string
 	if err := json.Unmarshal(payload, &cmd); err != nil {
 		return "", fmt.Errorf("execute payload: %w", err)
 	}
 
 	trusted := tool.IsTrusted(cmd, cfg.TrustedCmds)
+	rt.Observer.ToolCall(core.ToolCall{
+		Name:    "execute",
+		Target:  tool.Shell(),
+		Detail:  cmd,
+		Reason:  reason,
+		Trusted: trusted,
+	})
 
-	fmt.Printf("%s %s\n",
-		ui.RenderStr("TagAgent", "[CMD 💬]"),
-		ui.RenderStr("Help", reason),
-	)
-	fmt.Printf("%s %s\n",
-		ui.RenderStr("TagExec", fmt.Sprintf("[CMD 💻 %s]", tool.Shell())),
-		ui.RenderStr("Info", cmd),
-	)
-	if trusted {
-		fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
+	if !trusted {
+		ok, err := rt.Prompter.Confirm("Execute this command?")
+		if err != nil {
+			return "", fmt.Errorf("user interaction error: %w", err)
+		}
+		if !ok {
+			output := cancelled()
+			report(rt, output, nil, "Command succeeded")
+			return observation("cmd result", cmd, nil, output, cfg.TruncateExecLimit), nil
+		}
 	}
 
-	output, execErr := tool.ExecuteCommand(ctx, cmd, !trusted, os.Stdout)
-	switch {
-	case execErr != nil:
-		fmt.Printf("%s ❌ %s\n%s\n",
-			ui.RenderStr("TagSystem", "[SYS]"),
-			ui.RenderStr("Warn", "Command failed"),
-			ui.RenderStr("Warn", output.Output),
-		)
-	case output.Output == tool.CancelledOutput:
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagSystem", "[SYS]"),
-			ui.RenderStr("Subdued", "Skipped"),
-		)
-	default:
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagSystem", "[SYS]"),
-			ui.RenderStr("Success", "Command succeeded"),
-		)
-	}
-
-	observation := fmt.Sprintf(
-		"COMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-		cmd, execErr, chat.TruncateOutput(output.String(), cfg.TruncateExecLimit),
-	)
-	return "[cmd result]\n" + observation, nil
+	output, execErr := tool.ExecuteCommand(ctx, cmd, toolStream(rt))
+	report(rt, output, execErr, "Command succeeded")
+	return observation("cmd result", cmd, execErr, output, cfg.TruncateExecLimit), nil
 }
 
 // runRemote runs a command on a remote host over SSH.
-func runRemote(ctx context.Context, cfg *config.UserConfig, sess *Session, reason string, payload json.RawMessage) (string, error) {
+func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
 	var rp tool.RemotePayload
 	if err := json.Unmarshal(payload, &rp); err != nil {
 		return "", fmt.Errorf("remote payload: %w", err)
 	}
-	if sess.Remote == nil {
+	if rt.Remote == nil {
 		rm, err := tool.NewRemoteManager()
 		if err != nil {
 			return "", fmt.Errorf("init remote sessions: %w", err)
 		}
-		sess.Remote = rm
+		rt.Remote = rm
 	}
 
 	trusted := tool.IsTrusted(rp.Cmd, cfg.TrustedCmds)
+	rt.Observer.ToolCall(core.ToolCall{
+		Name:    "remote",
+		Target:  rp.Host,
+		Detail:  rp.Cmd,
+		Reason:  reason,
+		Trusted: trusted,
+	})
 
-	fmt.Printf("%s %s\n",
-		ui.RenderStr("TagAgent", "[RMT 💬]"),
-		ui.RenderStr("Help", reason),
-	)
-	fmt.Printf("%s %s\n",
-		ui.RenderStr("TagExec", fmt.Sprintf("[RMT 💻 @%s]", rp.Host)),
-		ui.RenderStr("Info", rp.Cmd),
-	)
-	if trusted {
-		fmt.Printf("%s\n", ui.RenderStr("Trusted", "  ⚡ executing trusted command"))
+	if !trusted {
+		ok, err := rt.Prompter.Confirm(fmt.Sprintf("Run on %s?", rp.Host))
+		if err != nil {
+			return "", fmt.Errorf("user interaction error: %w", err)
+		}
+		if !ok {
+			output := cancelled()
+			report(rt, output, nil, "Remote command succeeded")
+			return observation("remote result", rp.Cmd, nil, output, cfg.TruncateExecLimit), nil
+		}
 	}
 
-	output, execErr := sess.Remote.ExecuteRemote(ctx, rp, !trusted, os.Stdout)
-	switch {
-	case execErr != nil:
-		fmt.Printf("%s ❌ %s\n%s\n",
-			ui.RenderStr("TagSystem", "[SYS]"),
-			ui.RenderStr("Warn", fmt.Sprintf("Remote command failed: %v", execErr)),
-			ui.RenderStr("Warn", output.Output),
-		)
-	case output.Output == tool.CancelledOutput:
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagSystem", "[SYS]"),
-			ui.RenderStr("Subdued", "Skipped"),
-		)
-	default:
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagSystem", "[SYS]"),
-			ui.RenderStr("Success", "Remote command succeeded"),
-		)
-	}
-
-	observation := fmt.Sprintf(
-		"REMOTE HOST: %s\nCOMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-		rp.Host, rp.Cmd, execErr, chat.TruncateOutput(output.String(), cfg.TruncateExecLimit),
-	)
-	return "[remote result]\n" + observation, nil
+	output, execErr := rt.Remote.ExecuteRemote(ctx, rp, toolStream(rt))
+	report(rt, output, execErr, "Remote command succeeded")
+	return observation("remote result", rp.Cmd, execErr, output, cfg.TruncateExecLimit), nil
 }
 
 // runWebsearch searches the web for current information. A search failure is
 // non-fatal: the error is fed back so the agent can adapt.
-func runWebsearch(ctx context.Context, cfg *config.UserConfig, _ *Session, reason string, payload json.RawMessage) (string, error) {
+func runWebsearch(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
 	var query string
 	if err := json.Unmarshal(payload, &query); err != nil {
 		return "", fmt.Errorf("websearch payload: %w", err)
 	}
 
-	fmt.Printf("%s %s\n",
-		ui.RenderStr("TagAgent", "[WEB 🔍]"),
-		ui.RenderStr("Help", reason),
-	)
-	fmt.Printf("%s %s\n",
-		ui.RenderStr("TagExec", "[WEB]"),
-		ui.RenderStr("Info", query),
-	)
+	rt.Observer.ToolCall(core.ToolCall{
+		Name:   "websearch",
+		Detail: query,
+		Reason: reason,
+	})
 
 	sr, err := tool.Search(ctx, query, cfg.TavilyAPIKey)
 	if err != nil {
-		fmt.Printf("%s ❌ %s\n",
-			ui.RenderStr("TagSystem", "[SYS]"),
-			ui.RenderStr("Warn", fmt.Sprintf("Web search failed: %v", err)),
-		)
-		observation := fmt.Sprintf("SEARCH QUERY: %s\nERROR: %v", query, err)
-		return "[search error]\n" + observation, nil
+		rt.Observer.ToolResult(core.ToolResult{Message: fmt.Sprintf("Web search failed: %v", err)})
+		return fmt.Sprintf("[search error]\nSEARCH QUERY: %s\nERROR: %v", query, err), nil
 	}
 
 	// Keep the top few results for agent context (the summary shows the original count).
@@ -172,30 +165,33 @@ func runWebsearch(ctx context.Context, cfg *config.UserConfig, _ *Session, reaso
 		sr.Results = sr.Results[:3]
 	}
 
-	fmt.Printf("%s\n",
-		ui.RenderStr("Token", fmt.Sprintf("  %d results in %.2fs", total, sr.ResponseTime)),
-	)
+	rt.Observer.ToolResult(core.ToolResult{
+		OK:      true,
+		Message: fmt.Sprintf("%d results in %.2fs", total, sr.ResponseTime),
+		Detail:  searchPreview(sr),
+	})
 
-	if sr.Answer != "" {
-		fmt.Printf("%s %s\n",
-			ui.RenderStr("TagAgent", "[AI 💡]"),
-			ui.RenderStr("Content", sr.Answer),
-		)
-	}
-
-	for i, r := range sr.Results {
-		if i >= 3 {
-			break
-		}
-		fmt.Printf("  %s %s\n",
-			ui.RenderStr("Success", fmt.Sprintf("%d.", i+1)),
-			ui.RenderStr("Help", r.Title),
-		)
-	}
-
-	observation := fmt.Sprintf(
-		"SEARCH QUERY: %s\nRESULTS:\n%s",
-		query, chat.TruncateOutput(sr.Format(), cfg.TruncateSearchLimit),
-	)
+	observation := fmt.Sprintf("SEARCH QUERY: %s\nRESULTS:\n%s",
+		query, chat.TruncateOutput(sr.Format(), cfg.TruncateSearchLimit))
 	return "[search result]\n" + observation, nil
+}
+
+// observation formats the history entry fed back to the model.
+func observation(label, cmd string, execErr error, output tool.ExecResult, limit int) string {
+	return fmt.Sprintf("[%s]\nCOMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
+		label, cmd, execErr, chat.TruncateOutput(output.String(), limit))
+}
+
+// searchPreview renders the short, human-facing summary of a search (the AI
+// answer plus result titles).
+func searchPreview(sr *tool.SearchResult) string {
+	var b strings.Builder
+	if sr.Answer != "" {
+		b.WriteString(sr.Answer)
+		b.WriteString("\n")
+	}
+	for i, r := range sr.Results {
+		fmt.Fprintf(&b, "  %d. %s\n", i+1, r.Title)
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
