@@ -1,8 +1,6 @@
 package tui
 
-import (
-	"github.com/charmbracelet/huh"
-)
+import "github.com/charmbracelet/huh"
 
 func GetUserConfirm(prompt string) (bool, error) {
 	confirmed := true
@@ -12,5 +10,8 @@ func GetUserConfirm(prompt string) (bool, error) {
 		Negative("No").
 		Value(&confirmed).
 		Run()
-	return confirmed, err
+	if err != nil {
+		return false, normalizePromptErr(err)
+	}
+	return confirmed, nil
 }

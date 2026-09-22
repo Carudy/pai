@@ -10,9 +10,11 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// SIGINT is deliberately not trapped here: cli.Run handles it so Ctrl+C
+	// cancels the in-flight step and returns to the prompt (ending the run only
+	// when nothing is running). SIGTERM stays a hard shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM)
 	defer stop()
 
-	code := cli.Run(ctx, os.Stdout, os.Args[1:])
-	os.Exit(code)
+	os.Exit(cli.Run(ctx, os.Stdout, os.Args[1:]))
 }

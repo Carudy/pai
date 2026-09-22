@@ -7,9 +7,14 @@
 package core
 
 import (
+	"errors"
 	"io"
 	"time"
 )
+
+// ErrAborted is returned by a Prompter when the user cancels a prompt (Ctrl+C,
+// Ctrl+D) rather than the prompt failing. Callers treat it as a clean stop.
+var ErrAborted = errors.New("prompt aborted")
 
 // Turn is one conversation turn, as persisted and replayed.
 type Turn struct {

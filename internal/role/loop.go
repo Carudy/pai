@@ -6,9 +6,11 @@ package role
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
@@ -30,6 +32,41 @@ type Runtime struct {
 	Recorder    core.Recorder // nil = ephemeral (not persisted)
 	Interactive bool
 	Remote      *tool.RemoteManager // lazily created by the remote tool
+
+	mu         sync.Mutex
+	cancelStep context.CancelFunc
+	lastRole   string // role of the most recently recorded turn
+}
+
+func (rt *Runtime) chatPorts() chat.Ports {
+	return chat.Ports{Provider: rt.Provider, Observer: rt.Observer, Logger: rt.Logger}
+}
+
+// Interrupt cancels the in-flight step, reporting whether one was running. Used
+// by the signal handler so Ctrl+C stops the current work rather than the run.
+func (rt *Runtime) Interrupt() bool {
+	rt.mu.Lock()
+	cancel := rt.cancelStep
+	rt.mu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
+}
+
+// beginStep returns a cancellable context for one step plus its cleanup.
+func (rt *Runtime) beginStep(ctx context.Context) (context.Context, func()) {
+	stepCtx, cancel := context.WithCancel(ctx)
+	rt.mu.Lock()
+	rt.cancelStep = cancel
+	rt.mu.Unlock()
+	return stepCtx, func() {
+		rt.mu.Lock()
+		rt.cancelStep = nil
+		rt.mu.Unlock()
+		cancel()
+	}
 }
 
 // record persists a turn when this run is bound to a session. A persistence
@@ -40,11 +77,42 @@ func (rt *Runtime) record(t core.Turn) {
 	}
 	if err := rt.Recorder.AppendTurn(t); err != nil {
 		rt.Logger.Errorf("failed to record turn: %v\n", err)
+		return
 	}
+	rt.lastRole = t.Role
 }
 
-func (rt *Runtime) chatPorts() chat.Ports {
-	return chat.Ports{Provider: rt.Provider, Observer: rt.Observer, Logger: rt.Logger}
+// closeTurn makes the transcript end with an assistant turn, so a run that stops
+// part-way (error, Ctrl+C) does not leave two consecutive user turns for the
+// next attach to trip over.
+func (rt *Runtime) closeTurn(err error) {
+	if rt.Recorder == nil || rt.lastRole != "user" {
+		return
+	}
+	note := "interrupted"
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, core.ErrAborted) {
+		note = "error: " + err.Error()
+	}
+	rt.record(core.Turn{Role: "assistant", Kind: "note", Content: "[" + note + "]"})
+}
+
+// readInstruction prompts for the next user instruction. ok=false means the
+// session should end (empty input, or the user cancelled the prompt).
+func (rt *Runtime) readInstruction() (string, bool) {
+	rt.Observer.Awaiting()
+	input, err := rt.Prompter.Ask("Input:")
+	if err != nil {
+		if !errors.Is(err, core.ErrAborted) {
+			rt.Logger.Errorf("input error: %v\n", err)
+		}
+		return "", false
+	}
+	if input == "" {
+		return "", false
+	}
+	rt.Observer.User(input)
+	rt.record(core.Turn{Role: "user", Kind: "input", Content: input})
+	return input, true
 }
 
 // Run loads the configured role and drives its reason–act–observe loop. history
@@ -64,7 +132,9 @@ func Run(ctx context.Context, cfg *config.UserConfig, rt *Runtime, history []pro
 		return err
 	}
 
-	return loop(ctx, cfg, rt, rp, history, userInput)
+	err = loop(ctx, cfg, rt, rp, history, userInput)
+	rt.closeTurn(err)
+	return err
 }
 
 func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.RolePrompt, resumed []provider.Message, userInput string) error {
@@ -80,38 +150,42 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 	}
 
 	for {
-		// Bail out promptly on cancellation (e.g. SIGINT).
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		next, newHistory, err := step(ctx, cfg, rt, rp, history)
-		if err != nil {
+		// Each step gets its own context so Ctrl+C can cancel just this step.
+		stepCtx, endStep := rt.beginStep(ctx)
+		next, newHistory, err := step(stepCtx, cfg, rt, rp, history)
+		interrupted := stepCtx.Err() != nil
+		endStep()
+
+		switch {
+		case interrupted:
+			rt.Logger.Debugf("[Step interrupted by user]\n")
+			rt.record(core.Turn{Role: "assistant", Kind: "note", Content: "[interrupted by user]"})
+			if !rt.Interactive {
+				return context.Canceled
+			}
+
+		case err != nil:
 			return err
-		}
 
-		if next {
+		case next:
 			history = newHistory
-		} else if rt.Interactive {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
+			rt.Observer.Separator()
+			continue
 
-			rt.Observer.Awaiting()
-			input, err := rt.Prompter.Ask("Input:")
-			if err != nil {
-				return fmt.Errorf("user input error: %w", err)
-			}
-			if input == "" {
-				return nil
-			}
-			rt.Observer.User(input)
-			rt.record(core.Turn{Role: "user", Kind: "input", Content: input})
-			history = append(history, provider.Message{Role: provider.RoleUser, Content: input})
-		} else {
+		case !rt.Interactive:
 			return nil
 		}
 
+		// done/terminate, or an interrupt: wait for the next instruction.
+		input, ok := rt.readInstruction()
+		if !ok {
+			return nil
+		}
+		history = append(history, provider.Message{Role: provider.RoleUser, Content: input})
 		rt.Observer.Separator()
 	}
 }
@@ -179,6 +253,11 @@ func step(
 
 		answer, err := rt.Prompter.Ask("Your answer:")
 		if err != nil {
+			if errors.Is(err, core.ErrAborted) {
+				// User cancelled the question: end this turn and let the loop
+				// decide (prompt again if interactive).
+				return false, history, nil
+			}
 			return false, nil, fmt.Errorf("user input error: %w", err)
 		}
 		if answer != "" {

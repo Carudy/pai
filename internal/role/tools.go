@@ -3,6 +3,7 @@ package role
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -54,6 +55,8 @@ func cancelled() tool.ExecResult {
 // report renders a tool outcome to the observer.
 func report(rt *Runtime, output tool.ExecResult, execErr error, okMsg string) {
 	switch {
+	case errors.Is(execErr, context.Canceled):
+		rt.Observer.ToolResult(core.ToolResult{Message: "Interrupted"})
 	case output.Output == tool.CancelledOutput:
 		rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
 	case execErr != nil:

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
@@ -106,8 +108,31 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 		rt.Recorder = session.NewRecorder(store, sessName)
 	}
 
+	// Ctrl+C cancels the in-flight step and drops back to the prompt; when no
+	// step is running it ends the run. SIGTERM (handled in main) still shuts the
+	// whole process down.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	defer signal.Stop(sigCh)
+	go func() {
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-sigCh:
+				if !rt.Interrupt() {
+					cancelRun()
+					return
+				}
+			}
+		}
+	}()
+
 	log.Debugf("Entering role %s\n", cfg.DefaultRole)
-	if err := role.Run(ctx, cfg, rt, history, userInput); err != nil {
+	if err := role.Run(runCtx, cfg, rt, history, userInput); err != nil {
 		if errors.Is(err, context.Canceled) {
 			fmt.Fprintln(stdout, "\nInterrupted.")
 			return 0
