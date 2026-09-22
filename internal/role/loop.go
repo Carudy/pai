@@ -6,6 +6,7 @@ package role
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -352,13 +353,9 @@ func step(
 		history = append(history, provider.Message{Role: provider.RoleUser, Content: answerTurn})
 
 	case chat.ActionTool:
-		tp, err := resp.GetToolPayload()
-		if err != nil {
-			return false, nil, err
-		}
-		rt.Logger.Debugf("toolname: %s\n", tp.ToolName)
+		rt.Logger.Debugf("toolname: %s\n", resp.ToolName)
 
-		observation, err := invokeTool(ctx, cfg, rt, rp, tp, resp.Reason)
+		observation, err := invokeTool(ctx, cfg, rt, rp, resp.ToolName, resp.Payload, resp.Reason)
 		if err != nil {
 			return false, nil, err
 		}
@@ -384,22 +381,23 @@ func invokeTool(
 	cfg *config.UserConfig,
 	rt *Runtime,
 	rp *chat.RolePrompt,
-	tp chat.ToolPayload,
+	toolName string,
+	payload json.RawMessage,
 	reason string) (string, error) {
 
-	if !rp.HasTool(tp.ToolName) {
+	if !rp.HasTool(toolName) {
 		return fmt.Sprintf("[tool error]\nTOOL: %s\nERROR: tool is not available to this role; available tools: %s",
-			tp.ToolName, strings.Join(rp.ToolNames(), ", ")), nil
+			toolName, strings.Join(rp.ToolNames(), ", ")), nil
 	}
 
-	handler, ok := toolHandlers[tp.ToolName]
+	handler, ok := toolHandlers[toolName]
 	if !ok {
-		return "", fmt.Errorf("tool %q has no handler", tp.ToolName)
+		return "", fmt.Errorf("tool %q has no handler", toolName)
 	}
 
-	observation, err := handler(ctx, cfg, rt, reason, tp.Payload)
+	observation, err := handler(ctx, cfg, rt, reason, payload)
 	if err != nil {
-		return fmt.Sprintf("[tool error]\nTOOL: %s\nERROR: %v", tp.ToolName, err), nil
+		return fmt.Sprintf("[tool error]\nTOOL: %s\nERROR: %v", toolName, err), nil
 	}
 	return observation, nil
 }

@@ -15,7 +15,8 @@ This file covers how to build, test, and where things belong.
 - **`cli` is the composition root.** Only `cli` imports `tui` and `session`.
   The loop talks to `core` ports; adapters implement them.
 - **The model speaks JSON.** Every response is one JSON object with an
-  `action` (`tool` | `ask` | `done` | `terminate`). `chat.OutputGuide()` is
+  `action` (`tool` | `ask` | `done` | `terminate`); a `tool` action also names
+  `toolname` at the top level, beside `payload`. `chat.OutputGuide()` is
   re-rendered after the history each turn so the format can't be forgotten.
 
 ## Commands
@@ -107,6 +108,11 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 - **`role.Runtime` is per-run state**, not configuration — config lives in
   `config.UserConfig`. Don't mix them. The name `Session` is reserved for
   persistence (`session`); the loop's state is `Runtime`.
+- **Command chaining has one parser.** `tool.SplitSegments` is quote-aware and is
+  the single source of truth for "how many commands is this": `IsTrusted` and the
+  confirmation display both use it, so the count shown can't disagree with what
+  trust saw. A quoted operator is data (`grep 'a|b' f` is one command), while a
+  bare `&` separates, because backgrounding runs what follows.
 - **Two session backends use different on-disk formats**; a session written by
   one isn't visible to the other.
 

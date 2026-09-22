@@ -37,6 +37,7 @@ var configKeys = map[string]configKey{
 	"session.max_turns":     {section: "session", key: "max_turns", kind: "int"},
 	"session.recap_turns":   {section: "session", key: "recap_turns", kind: "int"},
 	"tavily_api_key":        {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
+	"remote_shell":          {section: "tool", key: "remote_shell", kind: "string"},
 }
 
 // configHelp is the detailed help for `pai config`.
@@ -194,6 +195,8 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 			return cfg.TavilyAPIKey
 		}
 		return maskSecret(cfg.TavilyAPIKey)
+	case "remote_shell":
+		return cfg.RemoteShell
 	}
 	return ""
 }

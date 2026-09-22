@@ -23,6 +23,15 @@ var Styles = map[string]lipgloss.Style{
 	"Debug": lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true),
 	"Error": lipgloss.NewStyle().Foreground(lipgloss.Red).Bold(true),
 
+	// ── Command highlighting ─────────────────────────────────────────
+	// Operators are bold because in a chain they decide what still runs when an
+	// earlier command fails — the part worth noticing before approving.
+	"CmdString":   lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
+	"CmdOperator": lipgloss.NewStyle().Foreground(lipgloss.Color("209")).Bold(true),
+	"CmdFlag":     lipgloss.NewStyle().Foreground(lipgloss.Color("75")),
+	"CmdVar":      lipgloss.NewStyle().Foreground(lipgloss.Color("180")),
+	"CmdComment":  lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true),
+
 	// ── Decor ─────────────────────────────────────────────────────────
 	"Separator": lipgloss.NewStyle().Foreground(lipgloss.Color("236")),
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Carudy/pai/internal/core"
+	"github.com/Carudy/pai/internal/tool"
 )
 
 // LineObserver renders core events as styled lines to a writer. It is the
@@ -72,10 +73,10 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 	switch c.Name {
 	case "execute":
 		o.pair("TagAgent", "[CMD 💬]", "Help", c.Reason)
-		o.pair("TagExec", fmt.Sprintf("[CMD 💻 %s]", c.Target), "Info", c.Detail)
+		o.command("TagExec", fmt.Sprintf("[CMD 💻 %s]", c.Target), c.Detail)
 	case "remote":
 		o.pair("TagAgent", "[RMT 💬]", "Help", c.Reason)
-		o.pair("TagExec", fmt.Sprintf("[RMT 💻 @%s]", c.Target), "Info", c.Detail)
+		o.command("TagExec", fmt.Sprintf("[RMT 💻 @%s]", c.Target), c.Detail)
 	case "websearch":
 		o.pair("TagAgent", "[WEB 🔍]", "Help", c.Reason)
 		o.pair("TagExec", "[WEB]", "Info", c.Detail)
@@ -85,6 +86,35 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 	}
 	if c.Trusted {
 		fmt.Fprintf(o.W, "%s\n", RenderStr("Trusted", "  ⚡ executing trusted command"))
+	}
+}
+
+// maxDisplaySegments bounds how much of a very long chain is echoed; the rest is
+// summarised rather than flooding the transcript.
+const maxDisplaySegments = 12
+
+// command prints a tool's command. A chained command ("aa && bb | cc") is broken
+// at its operators and numbered: one long wrapped line is hard to read, and the
+// operators decide what still runs if an earlier command fails. Each command is
+// printed verbatim and syntax-highlighted.
+//
+// The split comes from tool.SplitSegments, the same parser the trust check uses,
+// so the count shown here can never disagree with what trust saw.
+func (o *LineObserver) command(tag, label, cmd string) {
+	segs := tool.SplitSegments(cmd)
+	if len(segs) <= 1 {
+		fmt.Fprintf(o.W, "%s %s\n", RenderStr(tag, label), highlightCommand(cmd))
+		return
+	}
+
+	fmt.Fprintf(o.W, "%s %s\n", RenderStr(tag, label),
+		RenderStr("Info", fmt.Sprintf("%d commands:", len(segs))))
+	for i, seg := range segs {
+		if i == maxDisplaySegments {
+			fmt.Fprintf(o.W, "%s\n", RenderStr("Help", fmt.Sprintf("        … +%d more commands", len(segs)-i)))
+			break
+		}
+		fmt.Fprintf(o.W, "%s %s\n", RenderStr("Help", fmt.Sprintf("  %2d", i+1)), highlightCommand(seg.Src))
 	}
 }
 

@@ -52,20 +52,23 @@ func trimCmd(cmd string) string {
 	return strings.TrimSpace(cmd)
 }
 
-// IsTrusted reports whether every sub-command in a potentially chained /
-// piped / multi-line command starts with a tool in the trusted list.
-// Delimiters recognised: && || ; | (single pipe) and newlines.
-// An empty trusted list means nothing is trusted.
+// IsTrusted reports whether every command in a chained / piped / multi-line
+// command starts with a tool in the trusted list. An empty trusted list means
+// nothing is trusted.
+//
+// Splitting honours quoting, so an operator inside a quoted string is data rather
+// than a separator: `grep 'a|b' f` is one command, not two. A bare "&" counts as
+// a separator because backgrounding runs the rest of the line too.
 func IsTrusted(cmd string, trusted []string) bool {
 	if len(trusted) == 0 {
 		return false
 	}
-	segs := splitCommands(cmd)
+	segs := SplitSegments(cmd)
 	if len(segs) == 0 {
 		return false
 	}
 	for _, seg := range segs {
-		w := firstWord(strings.TrimSpace(seg))
+		w := firstWord(seg.Text)
 		if w == "" {
 			continue
 		}
@@ -99,26 +102,102 @@ func matchTrusted(first string, trusted []string) bool {
 	return false
 }
 
-// splitCommands breaks a command string into individual sub-commands at
-// shell delimiters: &&, ||, ;, | (single pipe), and newlines.
-func splitCommands(s string) []string {
-	// Replace multi-char delimiters first to avoid partial matches.
-	s = strings.ReplaceAll(s, "&&", "\x00")
-	s = strings.ReplaceAll(s, "||", "\x00")
-	s = strings.ReplaceAll(s, ";", "\x00")
-	s = strings.ReplaceAll(s, "\n", "\x00")
-	// Single pipe — only after || is already replaced.
-	s = strings.ReplaceAll(s, "|", "\x00")
+// Segment is one command in a shell chain.
+type Segment struct {
+	// Text is the command with the operator and surrounding space removed — what a
+	// trust check inspects.
+	Text string
+	// Op is the operator that follows this command ("&&", "||", ";", "|", "&",
+	// "\n"), or "" for the last one.
+	Op string
+	// Src is the segment exactly as written, operator included — what the UI shows,
+	// so nothing is re-worded on the way to the reader.
+	Src string
+}
 
-	parts := strings.Split(s, "\x00")
-	var out []string
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
+// SplitSegments splits a command at shell operators, honouring quoting and
+// escaping so an operator inside a quoted string does not split it.
+//
+// This is the single source of truth for "what are the separate commands here":
+// trust checks and the confirmation display both use it, so they cannot disagree
+// about how many commands the user is approving.
+func SplitSegments(cmd string) []Segment {
+	var segs []Segment
+	start := 0
+
+	for i := 0; i < len(cmd); {
+		if next, ok := skipQuoted(cmd, i); ok {
+			i = next
+			continue
 		}
+
+		op, n := operatorAt(cmd, i)
+		if n == 0 {
+			i++
+			continue
+		}
+		if text := strings.TrimSpace(cmd[start:i]); text != "" {
+			segs = append(segs, Segment{Text: text, Op: op, Src: strings.Trim(cmd[start:i+n], " \t\n")})
+		}
+		i += n
+		start = i
 	}
-	return out
+	if text := strings.TrimSpace(cmd[start:]); text != "" {
+		segs = append(segs, Segment{Text: text, Src: strings.Trim(cmd[start:], " \t\n")})
+	}
+	return segs
+}
+
+// skipQuoted reports whether a quoted or escaped run starts at i, returning the
+// index just past it. Escapes are honoured inside double quotes and outside
+// quotes; inside single quotes everything up to the next quote is literal.
+func skipQuoted(s string, i int) (next int, ok bool) {
+	switch c := s[i]; {
+	case c == '\'':
+		for j := i + 1; j < len(s); j++ {
+			if s[j] == '\'' {
+				return j + 1, true
+			}
+		}
+		return len(s), true
+	case c == '"':
+		for j := i + 1; j < len(s); j++ {
+			if s[j] == '\\' {
+				j++
+				continue
+			}
+			if s[j] == '"' {
+				return j + 1, true
+			}
+		}
+		return len(s), true
+	case c == '\\':
+		return min(i+2, len(s)), true
+	}
+	return i, false
+}
+
+// operatorAt returns the shell operator at i and its length, or 0. A single "&"
+// counts only as backgrounding: "&&", ">&", "&>" and "|&" are other tokens.
+func operatorAt(s string, i int) (string, int) {
+	rest := s[i:]
+	switch {
+	case strings.HasPrefix(rest, "&&"), strings.HasPrefix(rest, "||"), strings.HasPrefix(rest, "|&"):
+		return rest[:2], 2
+	case rest[0] == ';' || rest[0] == '|':
+		return rest[:1], 1
+	case rest[0] == '\n':
+		return "\n", 1
+	case rest[0] == '&':
+		if i > 0 && (s[i-1] == '>' || s[i-1] == '&') {
+			return "", 0
+		}
+		if i+1 < len(s) && (s[i+1] == '>' || s[i+1] == '&') {
+			return "", 0
+		}
+		return "&", 1
+	}
+	return "", 0
 }
 
 // firstWord returns the first whitespace-delimited token of s.

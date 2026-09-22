@@ -15,5 +15,12 @@ SSH ControlMaster, so repeated remote commands reuse the same connection — you
 don't need to reconnect. If you don't know the available hosts, read
 ~/.ssh/config with the "execute" tool first. Prefer "remote" over "execute" when
 the task explicitly targets a remote server.
+
+Commands run through the remote login shell non-interactively, so shell profile
+files are not sourced and PATH/env may differ from an interactive session (nix
+and asdf set PATH from /etc/profile, which non-login shells skip). If a command
+is "not found", use its absolute path (locate it with e.g. `command -v` or
+`which`), or ask the user to set `[tool] remote_shell` in the config so pai wraps
+commands in a login shell such as `bash -lc`.
 '''
 schema = '{"host": "a Host alias from ~/.ssh/config", "cmd": "command to run"}'

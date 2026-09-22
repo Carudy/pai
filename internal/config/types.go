@@ -28,6 +28,10 @@ type tomlConfig struct {
 	Tool struct {
 		TavilyAPIKey string   `toml:"tavily_api_key"`
 		TrustedCmds  []string `toml:"trusted_cmds"`
+		// RemoteShell wraps remote commands as "<shell> -lc <cmd>" so a login
+		// shell loads the remote PATH/env. Empty (the default) runs the command
+		// through the remote login shell non-interactively, exactly as ssh does.
+		RemoteShell string `toml:"remote_shell"`
 	} `toml:"tool"`
 	Session struct {
 		Persist  bool `toml:"persist"`
@@ -53,6 +57,12 @@ type UserConfig struct {
 	Interactive      bool
 	TavilyAPIKey     string
 	TrustedCmds      []string
+
+	// RemoteShell, when set, runs remote commands through a login shell so the
+	// remote PATH/env is loaded (e.g. nix profiles come from /etc/profile). A bare
+	// name like "bash" is invoked as "bash -lc <cmd>"; a value containing a space
+	// is used verbatim as the prefix. Empty means ssh's default (no wrapper).
+	RemoteShell string
 
 	// CustomPrompt is the user's override for the selected role's intro,
 	// loaded from ~/.config/pai/prompts.toml.
@@ -125,6 +135,7 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.Interactive = raw.App.Interactive
 	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey
 	cfg.TrustedCmds = raw.Tool.TrustedCmds
+	cfg.RemoteShell = raw.Tool.RemoteShell
 	cfg.SessionPersist = raw.Session.Persist
 	cfg.SessionMaxTurns = raw.Session.MaxTurns
 	if raw.Session.RecapTurns != nil {

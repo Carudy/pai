@@ -2,9 +2,8 @@ package chat
 
 import "strings"
 
-// ActionType is the action discriminator in every agent response. "tool"
-// carries a structured {toolname, payload}; the rest carry a plain string
-// payload.
+// ActionType is the action discriminator in every agent response. "tool" names
+// its tool at the top level; the rest carry a plain string payload.
 type ActionType string
 
 // The canonical, ordered action set. This is the single source of truth: both
@@ -41,11 +40,20 @@ func ActionEnum() string {
 // response format right before it generates. Keep it compact — it is repeated
 // every turn.
 func OutputGuide() string {
-	return `Respond ONLY with a single JSON object — no prose, no markdown fences.
+	return `Respond ONLY with a single JSON object — no quote like "Let me output only JSON:..." no prose, no markdown fences, every { closed.
 {"action":"` + ActionEnum() + `","payload":<payload>,"reason":"<short explanation>"}
+For a tool, add "toolname" beside "payload":
+` + ToolExample() + `
 payload by action:
-- tool:      {"toolname":"<name>","payload":<tool arguments>}
+- tool:      the tool's arguments (schema listed with each tool)
 - ask:       a string question for the user
 - done:      a string summary of what was accomplished
 - terminate: a string explaining why the task cannot be completed`
+}
+
+// ToolExample is a literal, fully-braced tool response. This shape is spelled out
+// as an example because it is the only one with a nested object, and a concrete
+// response is followed more reliably than a described one.
+func ToolExample() string {
+	return `{"action":"tool","toolname":"execute","payload":"df -h","reason":"check disk space"}`
 }

@@ -24,7 +24,7 @@ func chatFlagHelp() string {
   -m, --model <p:m>     Override the model for this run, as provider:model
   -s, --session <name>  Use or create a named session
       --attach <name>   Resume an existing session by name
-  -C, --continue        Resume the most recent session for this directory
+  -C, --continue        Resume the most recent session (this directory first)
       --no-session      Do not persist this run, even if a session would apply
   -i, --inter           Enable multi-turn interactive chat
   -d, --debug           Enable debug logging

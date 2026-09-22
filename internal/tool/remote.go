@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Carudy/pai/internal/paths"
@@ -32,12 +33,19 @@ type RemotePayload struct {
 // control sockets (persistent across runs).
 type RemoteManager struct {
 	controlDir string
+	// shell, when non-empty, is a remote login shell (e.g. "bash", "fish") used
+	// to wrap each command as "<shell> -lc <cmd>". ssh runs the command through
+	// the remote login shell non-interactively, which loads no profile and so may
+	// miss the PATH/env the user expects (nix/asdf PATH lives in /etc/profile); an
+	// explicit shell fixes that. A value containing a space is used as a verbatim
+	// prefix. Empty = no wrapper, i.e. plain ssh behaviour.
+	shell string
 }
 
 // NewRemoteManager creates the SSH control-socket directory under
 // $XDG_DATA_HOME/pai/ssh-control/ (or ~/.local/share/pai/ssh-control/)
-// and returns a ready-to-use manager.
-func NewRemoteManager() (*RemoteManager, error) {
+// and returns a ready-to-use manager. shell may be empty (see RemoteManager).
+func NewRemoteManager(shell string) (*RemoteManager, error) {
 	dataDir := paths.DataDir()
 	if dataDir == "" {
 		return nil, fmt.Errorf("cannot determine the data directory (no home directory or XDG_DATA_HOME)")
@@ -46,7 +54,7 @@ func NewRemoteManager() (*RemoteManager, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create SSH control dir %s: %w", dir, err)
 	}
-	return &RemoteManager{controlDir: dir}, nil
+	return &RemoteManager{controlDir: dir, shell: shell}, nil
 }
 
 // ExecuteRemote runs cmd on host (a Host alias from ~/.ssh/config).
@@ -63,7 +71,7 @@ func (rm *RemoteManager) ExecuteRemote(ctx context.Context, payload RemotePayloa
 		"-o", fmt.Sprintf("ControlPath=%s", controlPath),
 		"-o", "ControlPersist=5m",
 		payload.Host,
-		payload.Cmd,
+		rm.remoteCmd(payload.Cmd),
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
@@ -104,6 +112,32 @@ func (rm *RemoteManager) ExecuteRemote(ctx context.Context, payload RemotePayloa
 	}
 
 	return result, nil
+}
+
+// remoteCmd applies the configured login-shell wrapper, if any. ssh joins its
+// command arguments with spaces and hands the result to the remote login shell,
+// so cmd must be passed as one quoted word to survive that second parse.
+//
+// shell is a bare shell name ("bash", "fish") or a full prefix ("bash -lc").
+// A bare name gets "-lc" appended so it sources login profiles — that is the
+// point: nix, asdf and friends set PATH from /etc/profile, which a non-login
+// shell never reads. A value containing a space is used verbatim, so a store
+// path or extra flags can be expressed.
+func (rm *RemoteManager) remoteCmd(cmd string) string {
+	if rm.shell == "" {
+		return cmd
+	}
+	prefix := rm.shell
+	if !strings.Contains(prefix, " ") {
+		prefix += " -lc"
+	}
+	return prefix + " " + shellQuote(cmd)
+}
+
+// shellQuote wraps s in single quotes, escaping embedded single quotes, so a
+// shell re-parsing it sees exactly the original string.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // sanitizeHost replaces characters that are unsafe in a file path.

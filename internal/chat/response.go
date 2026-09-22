@@ -12,16 +12,16 @@ import (
 
 const maxFormatRetries = 3
 
+// Response is one agent response: a single JSON object with an action, a payload,
+// and a short reason.
 type Response struct {
-	Action  ActionType      `json:"action"`
-	Payload json.RawMessage `json:"payload"`
-	Reason  string          `json:"reason"`
-}
-
-// ToolPayload is the inner structure of a "tool" action (devops only).
-type ToolPayload struct {
-	ToolName string          `json:"toolname"`
+	Action ActionType `json:"action"`
+	// ToolName names the tool to run, for the "tool" action. It sits at the top
+	// level beside "payload" rather than nested inside it: "tool" was the only
+	// multi-level shape, and models miscounted its braces.
+	ToolName string          `json:"toolname,omitempty"`
 	Payload  json.RawMessage `json:"payload"`
+	Reason   string          `json:"reason"`
 }
 
 // GetPayload decodes the JSON-encoded payload string into a plain Go string.
@@ -44,18 +44,6 @@ func (r *Response) GetPayload() string {
 	return string(b)
 }
 
-// GetToolPayload parses the payload of a "tool" action into a ToolPayload.
-func (r *Response) GetToolPayload() (ToolPayload, error) {
-	var tp ToolPayload
-	if err := json.Unmarshal(r.Payload, &tp); err != nil {
-		return tp, fmt.Errorf("tool payload: %w", err)
-	}
-	if tp.ToolName == "" {
-		return tp, fmt.Errorf("tool payload missing toolname")
-	}
-	return tp, nil
-}
-
 // Validate checks the response conforms to the agent schema.
 func (r *Response) Validate() error {
 	if !isValidAction(r.Action) {
@@ -70,12 +58,9 @@ func (r *Response) Validate() error {
 		return fmt.Errorf(`"payload" must not be empty for action %q`, r.Action)
 	}
 
-	// For "tool", payload must be an object with "toolname".
-	if r.Action == ActionTool {
-		var tp ToolPayload
-		if err := json.Unmarshal(r.Payload, &tp); err != nil || tp.ToolName == "" {
-			return fmt.Errorf(`"tool" payload must be {"toolname":"...","payload":...}`)
-		}
+	// "tool" must name the tool to run, at the top level.
+	if r.Action == ActionTool && r.ToolName == "" {
+		return fmt.Errorf(`"tool" needs a top-level "toolname", e.g. %s`, ToolExample())
 	}
 
 	return nil
@@ -123,10 +108,12 @@ func ParseResponseWithRetry(
 		if attempt < maxFormatRetries-1 {
 			p.Observer.Notice(fmt.Sprintf("Response format error, retrying (%d/%d): %v", attempt+1, maxFormatRetries, err))
 
-			correctionMsg := fmt.Sprintf(
-				"[system] Your previous response had a format error: %v\n"+
-					"You must respond ONLY with valid JSON using action %q.",
-				err, ActionEnum())
+			correctionMsg := fmt.Sprintf(`[system] Your previous response was not valid JSON: %v
+Reply with exactly ONE complete JSON object — every { needs a matching }, no prose and no code fences.
+A tool action looks like:
+%s
+The other actions take a string payload: {"action":"done|ask|terminate","payload":"<string>","reason":"<short>"}`,
+				err, ToolExample())
 			history = append(history, provider.Message{Role: provider.RoleUser, Content: correctionMsg})
 
 			content, history, _, err = ChatStr(ctx, cfg, rp, p, history)

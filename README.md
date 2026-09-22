@@ -77,7 +77,7 @@ Chat flags:
 | `-m, --model <p:m>` | Override the model for this run |
 | `-s, --session <name>` | Use or create a named session |
 | `--attach <name>` | Resume an existing session |
-| `-C, --continue` | Resume the most recent session for this directory |
+| `-C, --continue` | Resume the most recent session (this directory first) |
 | `--no-session` | Do not persist this run |
 | `-i, --inter` | Multi-turn interactive chat |
 
@@ -196,6 +196,20 @@ pai "check nginx status on myserver"
 # Connections are cached via SSH ControlMaster — no re-auth between commands.
 ```
 
+ssh runs the command through the remote login shell non-interactively, so
+profile files aren't sourced and the remote `PATH`/env may be missing. This is
+common with **nix** and asdf, which set `PATH` from `/etc/profile` (a file fish,
+for example, never reads — hence `fish: Unknown command: netbird`). Point pai at
+a *login* POSIX shell and it wraps each command accordingly:
+```bash
+pai config set remote_shell bash   # → bash -lc '<cmd>'
+```
+A bare name gets `-lc` appended; set a value containing a space (e.g.
+`"bash -lc"`) to use it verbatim as the prefix.
+
+Leave `remote_shell` empty (the default) to keep plain ssh behaviour. Only set a
+shell that exists on the remote host.
+
 #### Web Search
 The role automatically searches when it encounters unfamiliar terms or needs current info:
 ```bash
@@ -300,7 +314,7 @@ By default PAI is stateless — nothing is written unless you ask for a session.
 ```bash
 pai -s work "check nginx, then keep digging"   # create or continue "work"
 pai --attach work "and now the disk usage"     # resume an existing session
-pai -C "what did we find?"                     # resume the most recent session for this directory
+pai -C "what did we find?"                     # most recent session (this directory first)
 ```
 
 A named session remembers the whole conversation, so a later run (a *different

@@ -305,6 +305,54 @@ func TestViewHidesInputBarWhenNotInteractive(t *testing.T) {
 	}
 }
 
+// Text typed while no prompt is pending gets queued. If the prompt then arrives
+// while that text is still queued, it must answer that prompt — otherwise it is
+// stranded until some later prompt, which made the first /quit after a command
+// appear to do nothing.
+func TestQueuedTextAnswersArrivingPrompt(t *testing.T) {
+	m := typeAndEnter(newAppModel(), "/quit")
+	if m.queueLen() != 1 {
+		t.Fatalf("queueLen = %d, want 1", m.queueLen())
+	}
+
+	req := promptReq{kind: promptAsk, title: "Input:", reply: make(chan promptResult, 1)}
+	mm, _ := m.Update(promptMsg{req: req})
+	m = mm.(*appModel)
+
+	select {
+	case res := <-req.reply:
+		if res.text != "/quit" {
+			t.Errorf("answer = %q, want the queued text", res.text)
+		}
+	default:
+		t.Fatal("queued text did not answer the arriving prompt")
+	}
+	if m.pending != nil {
+		t.Error("prompt should have been resolved from the queue")
+	}
+	if m.queueLen() != 0 {
+		t.Error("queue should be drained")
+	}
+}
+
+// A confirm is modal: it must never consume queued text.
+func TestQueuedTextDoesNotAnswerConfirm(t *testing.T) {
+	m := typeAndEnter(newAppModel(), "y")
+
+	req := promptReq{kind: promptConfirm, title: "Execute this command?", reply: make(chan promptResult, 1)}
+	mm, _ := m.Update(promptMsg{req: req})
+	m = mm.(*appModel)
+
+	select {
+	case res := <-req.reply:
+		t.Fatalf("confirm was auto-answered: %+v", res)
+	default:
+	}
+	if m.pending == nil {
+		t.Error("confirm should still be waiting")
+	}
+}
+
 // Ctrl+C with no prompt pending asks the host to cancel the running step.
 func TestCtrlCDuringStepInterrupts(t *testing.T) {
 	m := newAppModel()

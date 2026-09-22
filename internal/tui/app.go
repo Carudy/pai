@@ -282,7 +282,16 @@ func (m *appModel) begin(req promptReq) {
 	m.pending = &req
 	m.input.SetValue("")
 	if req.kind == promptConfirm {
+		// A confirmation is modal and must never consume typed-ahead text.
 		m.input.Blur()
+		return
+	}
+	// Text typed while PAI was busy is queued; if it is still queued now, it
+	// answers this prompt. Otherwise it would sit there until a later prompt,
+	// which made an instruction typed in the gap (a first /quit, say) look
+	// ignored.
+	if v, ok := m.popQueue(); ok {
+		m.answer(promptResult{text: v})
 		return
 	}
 	m.input.Focus()

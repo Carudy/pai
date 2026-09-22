@@ -73,6 +73,12 @@ func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, *ses
 		}
 	case flags.Continue:
 		sess, err = store.Latest(cwd)
+		if errors.Is(err, session.ErrNotFound) {
+			// Not every conversation belongs to this directory, so don't require
+			// being in the same place you last ran: fall back to the most recent
+			// session anywhere.
+			sess, err = store.Latest("")
+		}
 		if err != nil {
 			store.Close()
 			return nil, nil, fmt.Errorf("continue: %w", err)
@@ -254,9 +260,45 @@ func sessionShow(store session.Store, name string, stdout io.Writer, log *tui.Lo
 		turns = turns[len(turns)-tail:]
 	}
 	for i, t := range turns {
-		fmt.Fprintf(stdout, "%4d  %-9s %-11s %s\n", len(sess.Turns)-len(turns)+i+1, t.Role, t.Kind, clip(t.Content, 100))
+		fmt.Fprintf(stdout, "%4d  %-9s %-11s %s\n",
+			len(sess.Turns)-len(turns)+i+1, t.Role, t.Kind, describeTurn(t, 100))
 	}
 	return 0
+}
+
+// describeTurn renders a persisted turn for a human. Assistant turns hold the
+// raw JSON response and tool results hold bracketed observations, neither of
+// which is readable verbatim.
+func describeTurn(t core.Turn, width int) string {
+	switch t.Kind {
+	case "output":
+		resp, err := chat.ParseResponse(t.Content)
+		if err != nil {
+			return clip(t.Content, width)
+		}
+		if resp.Action == chat.ActionTool {
+			// A tool step is best summarised by why it was chosen.
+			return clip("["+string(resp.Action)+"] "+resp.Reason, width)
+		}
+		return clip("["+string(resp.Action)+"] "+resp.GetPayload(), width)
+
+	case "tool_result":
+		// Observed as "[cmd result]\nCOMMAND: ...\nOUTPUT:\n..." or
+		// "SEARCH QUERY: ...\nRESULTS:\n...". Show the label and the command.
+		label, rest, _ := strings.Cut(t.Content, "\n")
+		for line := range strings.SplitSeq(rest, "\n") {
+			if cmd, ok := strings.CutPrefix(line, "COMMAND: "); ok {
+				return clip(label+" "+cmd, width)
+			}
+		}
+		return clip(label, width)
+
+	case "user_answer":
+		return clip(strings.TrimPrefix(t.Content, "[user answer]\n"), width)
+
+	default:
+		return clip(t.Content, width)
+	}
 }
 
 func flush(tw *tabwriter.Writer) int {

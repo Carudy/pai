@@ -13,6 +13,15 @@ import (
 	"github.com/Carudy/pai/internal/tool"
 )
 
+// confirmTitle annotates a confirmation with how many commands it covers, so a
+// long "aa && bb && cc" is obvious at the moment of approving it.
+func confirmTitle(verb, cmd string) string {
+	if n := len(tool.SplitSegments(cmd)); n > 1 {
+		return fmt.Sprintf("%s (%d commands)", verb, n)
+	}
+	return verb
+}
+
 // toolHandler executes a single tool. It reports progress through the Runtime's
 // Observer and returns the observation text to append to the conversation
 // history (including its bracketed label), so the model can read the result on
@@ -86,7 +95,7 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 	})
 
 	if !trusted {
-		ok, err := rt.Prompter.Confirm("Execute this command?")
+		ok, err := rt.Prompter.Confirm(confirmTitle("Execute this command?", cmd))
 		if err != nil {
 			return "", fmt.Errorf("user interaction error: %w", err)
 		}
@@ -109,7 +118,7 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 		return "", fmt.Errorf("remote payload: %w", err)
 	}
 	if rt.Remote == nil {
-		rm, err := tool.NewRemoteManager()
+		rm, err := tool.NewRemoteManager(cfg.RemoteShell)
 		if err != nil {
 			return "", fmt.Errorf("init remote sessions: %w", err)
 		}
@@ -126,7 +135,7 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 	})
 
 	if !trusted {
-		ok, err := rt.Prompter.Confirm(fmt.Sprintf("Run on %s?", rp.Host))
+		ok, err := rt.Prompter.Confirm(confirmTitle(fmt.Sprintf("Run on %s?", rp.Host), rp.Cmd))
 		if err != nil {
 			return "", fmt.Errorf("user interaction error: %w", err)
 		}
