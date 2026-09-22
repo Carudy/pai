@@ -40,6 +40,18 @@ func (o *LineObserver) Notice(text string) {
 	o.pair("TagSystem", "[SYS] ⚠️", "Warn", text)
 }
 
+// Output prints informational text from a command, without a tag.
+func (o *LineObserver) Output(text string) {
+	o.closeReasoning()
+	fmt.Fprintf(o.W, "%s\n", RenderStr("Content", text))
+}
+
+// Session reports a change to the conversation's storage.
+func (o *LineObserver) Session(name string) {
+	o.closeReasoning()
+	o.pair("TagSystem", "[SYS] 🗂", "Info", "session: "+SessionLabel(name))
+}
+
 func (o *LineObserver) Separator() {
 	o.closeReasoning()
 	fmt.Fprintf(o.W, "%s\n", Styles["Separator"].Render(strings.Repeat("─", 40)))

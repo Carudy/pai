@@ -215,9 +215,93 @@ func TestViewShowsSessionLabel(t *testing.T) {
 // An unpersisted run is labelled as temporary rather than showing nothing.
 func TestViewShowsTempSessionLabel(t *testing.T) {
 	m := newAppModel()
-	m.session = "<temp session>"
-	if !strings.Contains(m.View(), "<temp session>") {
+	m.session = "" // ephemeral
+	if !strings.Contains(m.View(), "[<temp session>]") {
 		t.Errorf("View() missing temp marker:\n%s", m.View())
+	}
+}
+
+// A session event (e.g. from /rename) updates the live region's label.
+func TestSessionEventUpdatesLabel(t *testing.T) {
+	m := newAppModel()
+	if strings.Contains(m.View(), "[work]") {
+		t.Fatal("unexpected label before any session event")
+	}
+	mm, _ := m.Update(sessionMsg{name: "work"})
+	m = mm.(*appModel)
+	if !strings.Contains(m.View(), "[work]") {
+		t.Errorf("label not updated:\n%s", m.View())
+	}
+}
+
+func TestSplitLines(t *testing.T) {
+	cases := []struct {
+		name  string
+		carry string
+		chunk string
+		lines []string
+		rest  string
+	}{
+		{"two lines", "", "a\nb\n", []string{"a", "b"}, ""},
+		{"partial only", "", "abc", nil, "abc"},
+		{"carry completed", "ab", "cd\n", []string{"abcd"}, ""},
+		{"carry plus partial", "x", "\ny", []string{"x"}, "y"},
+		{"crlf stripped", "", "a\r\n", []string{"a"}, ""},
+		{"progress keeps last frame", "", "10%\r20%\r30%", nil, "30%"},
+		{"progress then newline", "", "10%\r20%\ndone\n", []string{"20%", "done"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lines, rest := splitLines(tc.carry, tc.chunk)
+			if rest != tc.rest {
+				t.Errorf("rest = %q, want %q", rest, tc.rest)
+			}
+			if strings.Join(lines, "|") != strings.Join(tc.lines, "|") {
+				t.Errorf("lines = %q, want %q", lines, tc.lines)
+			}
+		})
+	}
+}
+
+// The in-progress line renders inside the live region, before its newline.
+func TestTailRendersInLiveRegion(t *testing.T) {
+	m := newAppModel()
+	m.width = 80
+	mm, _ := m.Update(tailMsg{text: "partial reasoning"})
+	m = mm.(*appModel)
+
+	if !strings.Contains(m.View(), "partial reasoning") {
+		t.Errorf("View() missing live tail:\n%s", m.View())
+	}
+}
+
+// A long tail keeps its newest end, and truncation stays ANSI-safe.
+func TestTailTruncatedToWidth(t *testing.T) {
+	m := newAppModel()
+	m.width = 20
+	mm, _ := m.Update(tailMsg{text: "START" + strings.Repeat("x", 100) + "END"})
+	m = mm.(*appModel)
+
+	view := m.View()
+	if !strings.Contains(view, "END") {
+		t.Errorf("newest end was dropped:\n%s", view)
+	}
+	if strings.Contains(view, "START") {
+		t.Errorf("oldest end should have been trimmed:\n%s", view)
+	}
+}
+
+// A non-interactive run hides the input bar: there is nothing to type at.
+func TestViewHidesInputBarWhenNotInteractive(t *testing.T) {
+	m := newAppModel()
+	m.interactive = false
+	if strings.Contains(m.View(), "\n") {
+		t.Errorf("expected a single status line, got:\n%s", m.View())
+	}
+
+	m.interactive = true
+	if !strings.Contains(m.View(), "\n") {
+		t.Errorf("interactive view should include the input bar:\n%s", m.View())
 	}
 }
 

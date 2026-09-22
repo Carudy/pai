@@ -17,7 +17,7 @@ import (
 )
 
 // Version is PAI's version string.
-const Version = "v0.6.3"
+const Version = "v0.6.4"
 
 // runChat parses chat flags, loads config, wires up the selected role, and runs
 // it. It is both the `pai chat` handler and the default action for a bare `pai`.
@@ -96,31 +96,43 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 		log.Debugf("Session: %s (%d resumed turns, %s backend)\n", sess.Meta.Name, len(history), session.Backend())
 	}
 
-	// Label shown in the UI's live region: the session name, or a marker telling
-	// the user this run is not persisted.
-	sessionLabel := "<temp session>"
+	// The conversation's storage name; "" means this run is not persisted.
+	sessionName := ""
 	if store != nil {
-		sessionLabel = sess.Meta.Name
+		sessionName = sess.Meta.Name
 	}
+
+	// In-session storage commands (/rename, /new) go through a controller that can
+	// open a store lazily, so a temporary run only touches disk if the user names
+	// it. Closing it here releases a store it opened itself; one supplied by
+	// resolveSession stays owned by the deferred Close above.
+	cwd, _ := os.Getwd()
+	controller := session.NewController(session.Open, store, sessionName, func() session.Meta {
+		return session.Meta{Role: cfg.DefaultRole, Model: cfg.DefaultModel, Cwd: cwd}
+	})
+	defer controller.Close()
 
 	// Ports and per-run state for this run live in a Runtime, kept out of
 	// UserConfig (which holds configuration only).
 	//
-	// An interactive run on a real terminal gets the inline UI, which keeps the
-	// input bar available while PAI works (type-ahead queueing). Pipes and
-	// non-interactive runs keep the plain line adapters.
+	// On a real terminal the whole run is handed to the inline UI: it keeps the
+	// input bar available while PAI works (type-ahead queueing) and turns tool
+	// confirmations into a modal prompt. Pipes keep the plain line adapters,
+	// where whole-line reads and EOF semantics are the right behaviour.
 	var app *tui.App
-	if interactive && canUseTUI(stdout) {
-		app = tui.NewApp(stdout, sessionLabel)
+	if canUseTUI(stdout) {
+		app = tui.NewApp(stdout, sessionName, interactive)
 		log.SetWriter(app.Writer())
 	}
 
 	rt := &role.Runtime{
 		Provider:    client,
 		Observer:    tui.NewLineObserver(stdout),
-		Prompter:    tui.NewPrompter(),
+		Prompter:    tui.NewPrompter(os.Stdin, stdout),
 		Logger:      log,
 		Interactive: interactive,
+		Sessions:    controller,
+		SessionName: sessionName,
 	}
 	if app != nil {
 		rt.Observer = app.Observer()

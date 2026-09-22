@@ -29,6 +29,19 @@ type Recorder interface {
 	AppendTurn(t Turn) error
 }
 
+// Sessions gives the agent loop control over where the conversation is stored,
+// so in-session commands can name a temporary conversation, rename it, or start
+// a fresh one. It is nil when no store is configured; the commands then report
+// that rather than failing.
+type Sessions interface {
+	// Persist makes the conversation durable under name, backfilling turns when
+	// it was not being stored, and returns the recorder for later turns.
+	Persist(name string, turns []Turn) (Recorder, error)
+	// New starts a fresh conversation, optionally named, returning its recorder
+	// (nil when the new conversation is ephemeral).
+	New(name string) (Recorder, error)
+}
+
 // Usage is token accounting for a single model call.
 type Usage struct {
 	Prompt     int
@@ -62,6 +75,7 @@ type Observer interface {
 	Ask(question string)     // about to ask the user
 	Awaiting()               // waiting for the next instruction
 	User(text string)        // echo of the user's input
+	Session(name string)     // the conversation's storage changed ("" = ephemeral)
 
 	// Streaming and accounting.
 	Reasoning(delta string)
@@ -74,6 +88,7 @@ type Observer interface {
 
 	// Miscellaneous.
 	Notice(text string) // non-fatal warning
+	Output(text string) // informational output, e.g. a command's result
 	Separator()
 }
 

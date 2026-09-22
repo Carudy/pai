@@ -84,6 +84,39 @@ Chat flags:
 Global `-d/--debug`, `-v/--version`, and `-h/--help` may appear before or after a
 subcommand (`pai -d session ls`).
 
+### Interactive mode
+
+`pai -i` (or `interactive = true`) opens an input bar at the bottom of the
+terminal while output scrolls above it. On a real terminal this is a full inline
+UI; pipes and redirected output fall back to plain line prompts.
+
+- **Type while PAI works** — the text is queued and used as your next
+  instruction, so you don't have to wait for a step to finish.
+- **Ctrl+C** cancels the running step, or ends the session if nothing is running.
+- **Tool confirmations are modal**: `y`/`Enter` runs, `n`/`Esc` skips, `Ctrl+C`
+  aborts, and other keys are ignored.
+- The current session rides along in the live region: `[work]`, or
+  `[<temp session>]` for a run that isn't saved.
+
+### In-session commands
+
+A line starting with `/` is a command, not a message to the model; a line
+starting with `//` is sent literally, with one slash removed.
+
+| Command | Does |
+|---|---|
+| `/help` (`/h`, `/?`) | List the available commands |
+| `/exit` (`/quit`, `/q`) | End this session |
+| `/info` (`/status`) | Session, role, model, and turn count |
+| `/tools` | The active role's tools |
+| `/role [name]` | Show or switch the active role |
+| `/new [name]` | Start a fresh conversation, optionally named |
+| `/rename <name>` | Name (and save) this conversation |
+
+Commands run locally: they never reach the model and are not recorded as
+conversation turns. `/rename` on a run started without `-s` saves the whole
+conversation so far under that name, so a chat you decide to keep isn't lost.
+
 ## ⚙️ Configuration
 
 Create `~/.config/pai/config.toml`:
@@ -96,7 +129,7 @@ deepseek = { api_key = "your-deepseek-key" }
 
 [app]
 default_model = "deepseek:deepseek-chat"
-default_role  = "devops"      # devops | coder
+default_role  = "devops"      # see `pai role ls` for the available roles
 streaming     = true        # token-by-token output
 reasoning     = "low"       # "low" | "medium" | "high" (omit for none)
 interactive   = false       # if true, auto-enables -i mode
@@ -110,8 +143,9 @@ trusted_cmds = [
 ]
 
 [session]
-persist   = false   # true = save every run to an auto-named session
-max_turns = 0       # cap on turns replayed when resuming (0 = all)
+persist     = false  # true = save every run to an auto-named session
+max_turns   = 0      # cap on turns replayed when resuming (0 = all)
+recap_turns = 3      # recent exchanges echoed when resuming (0 = no recap)
 ```
 
 ### Environment Variables
@@ -237,6 +271,9 @@ pai session rename work ops     # rename
 
 Set `[session] persist = true` to save *every* run to an auto-named session.
 
+Resuming prints a short recap of the last few exchanges so you have context
+(`[session] recap_turns`, default 3; `0` turns it off).
+
 ### Storage backend
 
 Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, or
@@ -244,8 +281,8 @@ Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, or
 
 | Backend | Build | Binary (stripped) |
 |---|---|---|
-| SQLite (default) | `go build ./cmd/pai` | ~12.2 MB |
-| JSONL files | `go build -tags filestore ./cmd/pai` | ~8.3 MB |
+| SQLite (default) | `go build ./cmd/pai` | ~12 MB |
+| JSONL files | `go build -tags filestore ./cmd/pai` | ~8 MB |
 
 The default uses pure-Go SQLite (`modernc.org/sqlite`) — cgo-free, so `go
 install` keeps working. Pass `-tags filestore` for a ~4 MB smaller binary with no

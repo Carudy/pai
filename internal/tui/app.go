@@ -7,9 +7,11 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Carudy/pai/internal/core"
 )
@@ -39,9 +41,13 @@ type App struct {
 // NewApp builds an App that renders to w and reads from stdin. session is a
 // label for the current session (e.g. its name, or "<temp session>"), shown in
 // the live region so the user always knows where the conversation is going.
-func NewApp(w io.Writer, session string) *App {
+// When interactive is false the input bar is hidden — a one-shot run has nothing
+// to type at, but its confirmations are still better handled here than on a
+// plain line prompt.
+func NewApp(w io.Writer, session string, interactive bool) *App {
 	m := newAppModel()
 	m.session = session
+	m.interactive = interactive
 	out := &programWriter{fallback: w}
 	m.out = out
 	p := tea.NewProgram(m,
@@ -88,9 +94,33 @@ func (a *App) Close() {
 	})
 }
 
-// Observer returns the core.Observer adapter, reusing the line renderer with a
-// writer that routes finished lines above the input bar.
-func (a *App) Observer() core.Observer { return NewLineObserver(a.out) }
+// Observer returns the core.Observer adapter. Output goes through the line
+// renderer (so finished lines land in scrollback), while session changes also
+// update the live region's label.
+func (a *App) Observer() core.Observer {
+	return &appObserver{LineObserver: NewLineObserver(a.out), app: a}
+}
+
+// appObserver renders events above the input bar, and keeps the live region's
+// session label in step with the conversation's storage.
+type appObserver struct {
+	*LineObserver
+	app *App
+}
+
+func (o *appObserver) Session(name string) {
+	o.LineObserver.Session(name)
+	o.app.program.Send(sessionMsg{name: name})
+}
+
+// SessionLabel renders a session name for display; an empty name is a run that
+// is not persisted.
+func SessionLabel(name string) string {
+	if name == "" {
+		return "<temp session>"
+	}
+	return name
+}
 
 // Writer is where diagnostics should go so they don't corrupt the live region.
 func (a *App) Writer() io.Writer { return a.out }
@@ -164,7 +194,9 @@ type appModel struct {
 	out     *programWriter
 	ready   chan struct{}
 	session string
+	tail    string
 
+	interactive bool
 	pending     *promptReq
 	queue       []string
 	width       int
@@ -184,7 +216,7 @@ func newAppModel() *appModel {
 func (m *appModel) Init() tea.Cmd {
 	// The program is now consuming msgs, so buffered writes may be routed to it.
 	if m.out != nil {
-		m.out.started.Store(true)
+		m.out.markStarted()
 	}
 	close(m.ready)
 	return m.input.Focus()
@@ -204,6 +236,16 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Committed output is printed above the live region, so it persists in
 		// the terminal's scrollback.
 		return m, tea.Println(msg.text)
+
+	case sessionMsg:
+		m.session = msg.name
+		return m, nil
+
+	case tailMsg:
+		// The in-progress line renders inside the live region, so streaming is
+		// visible before its newline arrives.
+		m.tail = msg.text
+		return m, nil
 
 	case promptMsg:
 		m.begin(msg.req)
@@ -300,10 +342,7 @@ func (m *appModel) answer(res promptResult) {
 
 func (m *appModel) View() string {
 	// The session label rides the live region so it stays visible in every state.
-	label := ""
-	if m.session != "" {
-		label = RenderStr("Info", "["+m.session+"]") + " "
-	}
+	label := RenderStr("Info", "["+SessionLabel(m.session)+"]") + " "
 
 	if m.pending != nil && m.pending.kind == promptConfirm {
 		// Modal: the keys that resolve it are spelled out, since stray keys are
@@ -321,7 +360,34 @@ func (m *appModel) View() string {
 	if n := m.queueLen(); n > 0 {
 		queued = " " + RenderStr("Subdued", fmt.Sprintf("(%d queued)", n))
 	}
-	return label + status + queued + "\n" + m.input.View()
+
+	out := label + status + queued
+	if tail := m.tailView(); tail != "" {
+		out += "\n" + tail
+	}
+	if m.interactive {
+		out += "\n" + m.input.View()
+	}
+	return out
+}
+
+// tailView renders the in-progress line — streaming reasoning or command output
+// that has not been newline-terminated yet — truncated to the terminal width,
+// keeping its newest end. The text arrives already styled by the observer, so
+// the truncation has to be ANSI-aware.
+func (m *appModel) tailView() string {
+	if m.tail == "" {
+		return ""
+	}
+	s := m.tail
+	width := m.width
+	if width <= 4 {
+		width = 80
+	}
+	if w := ansi.StringWidth(s); w > width {
+		s = ansi.TruncateLeft(s, w-width, "…")
+	}
+	return "  " + s
 }
 
 // ─── Shared state (accessed from both the loop and the UI goroutine) ─────────
@@ -361,9 +427,20 @@ func (m *appModel) getErr() error {
 // is printed above the live region.
 type lineMsg struct{ text string }
 
+// sessionMsg updates the session label shown in the live region.
+type sessionMsg struct{ name string }
+
+// tailMsg carries the line currently being written (no newline yet) so it can
+// render inside the live region instead of waiting for the line to finish.
+type tailMsg struct{ text string }
+
+// tailInterval rate-limits live-tail refreshes. Command output arrives in very
+// many small chunks and every refresh is a round-trip to the UI, so the tail is
+// allowed to lag by at most a frame's worth of updates.
+const tailInterval = 33 * time.Millisecond
+
 // programWriter turns a byte stream into complete lines printed above the live
-// region. Partial lines are held back so streamed reasoning/output isn't split
-// across scrollback entries; call flush to emit a trailing partial line.
+// region, plus a live tail for the partial line still being written.
 //
 // Until the program is running (and after it exits), writes fall back to the
 // plain writer so early errors stay visible and shutdown can't strand a writer.
@@ -372,38 +449,64 @@ type programWriter struct {
 	fallback io.Writer
 	started  atomic.Bool
 
-	mu  sync.Mutex
-	buf strings.Builder
+	mu     sync.Mutex
+	carry  string    // bytes after the last newline
+	tail   string    // most recent tail text handed to the UI
+	tailAt time.Time // when that happened
 }
 
 func (w *programWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.buf.Write(p)
-	s := w.buf.String()
-	for {
-		i := strings.IndexByte(s, '\n')
-		if i < 0 {
-			break
-		}
-		w.emit(strings.TrimSuffix(s[:i], "\r"))
-		s = s[i+1:]
+
+	lines, rest := splitLines(w.carry, string(p))
+	w.carry = rest
+	for _, ln := range lines {
+		w.emitLine(ln)
 	}
-	w.buf.Reset()
-	w.buf.WriteString(s)
+	// Finishing a line clears the tail at once; otherwise the update is coalesced.
+	w.pushTail(rest, len(lines) > 0)
 	return len(p), nil
 }
 
 func (w *programWriter) flush() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.buf.Len() > 0 {
-		w.emit(w.buf.String())
-		w.buf.Reset()
+	if w.carry != "" {
+		w.emitLine(w.carry)
+		w.carry = ""
 	}
+	w.pushTail("", true)
 }
 
-func (w *programWriter) emit(line string) {
+// splitLines returns the complete lines in carry+chunk plus the new carry. A
+// carriage return restarts the line, so progress output ("10%\r20%\n") keeps
+// only its final state rather than a transcript of every frame.
+func splitLines(carry, chunk string) (lines []string, rest string) {
+	s := carry + chunk
+	for {
+		i := strings.IndexByte(s, '\n')
+		if i < 0 {
+			break
+		}
+		lines = append(lines, lastSegment(s[:i]))
+		s = s[i+1:]
+	}
+	return lines, lastSegment(s)
+}
+
+// lastSegment returns a line's visible part: carriage return moves the cursor
+// back to column 0, so only what follows the final one is ever displayed. A
+// single trailing CR is the CRLF line ending and is simply dropped.
+func lastSegment(line string) string {
+	line = strings.TrimSuffix(line, "\r")
+	if j := strings.LastIndexByte(line, '\r'); j >= 0 {
+		return line[j+1:]
+	}
+	return line
+}
+
+func (w *programWriter) emitLine(line string) {
 	if w.started.Load() && w.program != nil {
 		// Send, not Println: Send is a no-op once the program has exited, whereas
 		// Println would block forever on a channel nobody reads any more.
@@ -411,6 +514,31 @@ func (w *programWriter) emit(line string) {
 		return
 	}
 	fmt.Fprintln(w.fallback, line)
+}
+
+// pushTail refreshes the live tail. force skips the rate limit, which is used
+// when a line just completed so the tail clears immediately.
+func (w *programWriter) pushTail(text string, force bool) {
+	if text == w.tail && !force {
+		return
+	}
+	if !force && text != "" && time.Since(w.tailAt) < tailInterval {
+		return
+	}
+	w.tail = text
+	w.tailAt = time.Now()
+	if w.started.Load() && w.program != nil {
+		w.program.Send(tailMsg{text: text})
+	}
+}
+
+// markStarted enables UI routing. It forgets the remembered tail so the next
+// update renders even if its text is unchanged from before startup.
+func (w *programWriter) markStarted() {
+	w.mu.Lock()
+	w.tail = ""
+	w.mu.Unlock()
+	w.started.Store(true)
 }
 
 // markDead stops routing writes to the program once it has exited.
