@@ -26,6 +26,7 @@ make build-file   # JSONL backend (-tags filestore), ~4 MB smaller
 make test         # both tag sets
 make vet          # both tag sets
 make fmt          # gofmt
+make deps         # pre-fill the module cache
 make install      # go install ./cmd/pai
 ```
 
@@ -65,7 +66,7 @@ HTTPS_PROXY=http://127.0.0.1:7890 HTTP_PROXY=http://127.0.0.1:7890 go mod downlo
 ```
 
 Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
-`go mod tidy` keeps, producing a spurious diff.
+`go mod tidy` keeps, producing a spurious diff. `make deps` wraps this.
 
 ## Style to preserve
 
@@ -91,7 +92,7 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 | Task | Touch |
 |---|---|
 | New **role** | add `internal/prompts/roles/<name>.toml` (no Go) |
-| New **tool** | implementation in `internal/role/tools.go` **and** `internal/prompts/tools/<name>.toml`; `checkToolCoverage` enforces both exist. A `toolHandler` never prompts the user — prompting happens in `role` |
+| New **tool** | implementation in `internal/role/tools.go` **and** `internal/prompts/tools/<name>.toml`; `checkToolCoverage` enforces both exist. The `internal/tool` layer only *executes* — confirming with the user is the handler's job, via `rt.Prompter` |
 | New **config key** | `internal/config/types.go` (struct + default) **and** the `configKeys` table in `internal/cli/config.go` (so `pai config set` knows it) |
 | New **subcommand** | add to the table in `internal/cli/command.go`; put handlers in a sibling file (`config.go`, `role.go`, …) |
 | New **session backend** | implement `session.Store` and select it by build tag in `session.Open` |

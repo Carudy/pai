@@ -171,8 +171,9 @@ pai "what's the latest Kubernetes CVE and how do I patch it"
 
 #### Trusted Commands
 Commands matching the `trusted_cmds` list skip confirmation:
-```yaml
-trusted_cmds: ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
+```toml
+[tool]
+trusted_cmds = ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
 ```
 
 ### `coder` — Software engineering

@@ -17,7 +17,7 @@ import (
 )
 
 // Version is PAI's version string.
-const Version = "v0.5.0"
+const Version = "v0.6.0"
 
 // runChat parses chat flags, loads config, wires up the selected role, and runs
 // it. It is both the `pai chat` handler and the default action for a bare `pai`.
@@ -55,7 +55,7 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 	interactive := flags.Inter || cfg.Interactive
 
 	log.Debugf("📃 User flags: %#v\n", flags)
-	log.Debugf("🔧 User config: %#v\n", cfg)
+	log.Debugf("🔧 User config: %#v\n", cfg.Redacted())
 
 	// Lazily load the custom prompt for the resolved role only.
 	customPrompt, err := config.LoadCustomPrompt(cfg.DefaultRole)

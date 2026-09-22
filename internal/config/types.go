@@ -70,6 +70,29 @@ type UserConfig struct {
 	Model    string
 }
 
+// Redacted returns a copy that is safe to log: provider API keys and the
+// search key are masked. Debug output would otherwise print live credentials.
+func (cfg *UserConfig) Redacted() *UserConfig {
+	dup := *cfg
+	if cfg.ProvidersConfigs != nil {
+		dup.ProvidersConfigs = make(map[string]ProviderConfig, len(cfg.ProvidersConfigs))
+		for name, pc := range cfg.ProvidersConfigs {
+			pc.APIKey = maskSecret(pc.APIKey)
+			dup.ProvidersConfigs[name] = pc
+		}
+	}
+	dup.TavilyAPIKey = maskSecret(cfg.TavilyAPIKey)
+	return &dup
+}
+
+// maskSecret renders a secret as a presence hint, never its contents.
+func maskSecret(s string) string {
+	if s == "" {
+		return ""
+	}
+	return "****"
+}
+
 func defaultConfig() *UserConfig {
 	return &UserConfig{
 		DefaultModel:        "deepseek:deepseek-v4-flash",
