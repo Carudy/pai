@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,13 +17,28 @@ import (
 	"github.com/Carudy/pai/internal/tui"
 )
 
+// sessionHelp is the detailed help for `pai session`.
+func sessionHelp() string {
+	return `SUBCOMMANDS
+  list, ls                List saved sessions
+  show, cat <name>        Show a session's details and recent turns
+  rm, delete <name>       Delete a session
+  rename, mv <old> <new>  Rename a session
+
+Sessions live in $XDG_DATA_HOME/pai; see the README for the storage backend.`
+}
+
 // resolveSession opens the session store and determines which session this run
 // uses, returning the turns to resume. An empty name means "ephemeral": no
 // store is opened and nothing is persisted.
 //
-// Precedence: --attach (must exist) > --session (create or continue) >
-// --continue (latest for this directory) > config [session] persist (auto-named).
+// Precedence: --no-session (never persist) > --attach (must exist) >
+// --session (create or continue) > --continue (latest for this directory) >
+// config [session] persist (auto-named).
 func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, string, []provider.Message, error) {
+	if flags.NoSession {
+		return nil, "", nil, nil
+	}
 	if flags.Attach == "" && flags.Session == "" && !flags.Continue && !cfg.SessionPersist {
 		return nil, "", nil, nil
 	}
@@ -85,7 +101,7 @@ func toMessages(turns []core.Turn) []provider.Message {
 }
 
 // runSession handles `pai session <list|show|rm|rename>`.
-func runSession(args []string, stdout io.Writer, log *tui.Logger) int {
+func runSession(_ context.Context, args []string, stdout io.Writer, log *tui.Logger) int {
 	if len(args) == 0 {
 		args = []string{"list"}
 	}

@@ -39,6 +39,51 @@ pai -i
 pai "what's the latest Kubernetes LTS version and what CVEs affect it"
 ```
 
+## 🧭 Commands
+
+With no command, `pai` chats, so `pai <input>` is shorthand for `pai chat <input>`.
+Each command has a short alias, and every command has its own `--help`:
+
+| Command | Alias | Purpose |
+|---|---|---|
+| `pai chat` | — | Talk to a role (the default action) |
+| `pai session` | `sess` | List, show, rename, delete saved sessions |
+| `pai config` | `cfg` | Inspect and edit `config.toml` |
+| `pai role` | `roles` | List and inspect available roles |
+| `pai help [cmd]` | — | Show help |
+
+Subcommands and their flags accept short forms, e.g. `pai session ls`,
+`pai config set default_role coder`, `pai roles ls`.
+
+```bash
+pai config list                 # effective settings + the keys you can set
+pai config get default_model    # print one value
+pai config set default_role coder
+pai config set truncate_exec_limit 16000
+pai config unset default_role   # revert to the built-in default
+pai config path                 # where config.toml lives
+```
+
+`pai config set` edits `config.toml` in place and preserves comments. Values are
+validated (booleans, integers, `provider:model`, known roles), and arrays like
+`trusted_cmds` must still be edited by hand. `list` masks secrets; `get` reveals
+them.
+
+Chat flags:
+
+| Flag | Meaning |
+|---|---|
+| `-r, --role <name>` | Role to run (default from config) |
+| `-m, --model <p:m>` | Override the model for this run |
+| `-s, --session <name>` | Use or create a named session |
+| `--attach <name>` | Resume an existing session |
+| `-C, --continue` | Resume the most recent session for this directory |
+| `--no-session` | Do not persist this run |
+| `-i, --inter` | Multi-turn interactive chat |
+
+Global `-d/--debug`, `-v/--version`, and `-h/--help` may appear before or after a
+subcommand (`pai -d session ls`).
+
 ## ⚙️ Configuration
 
 Create `~/.config/pai/config.toml`:
@@ -179,10 +224,11 @@ pai -C "what did we find?"                     # resume the most recent session 
 ```
 
 A named session remembers the whole conversation, so a later run (a *different
-process*) continues where you left off. Manage them with a subcommand:
+process*) continues where you left off. Pass `--no-session` to force a one-off run
+even when a session would otherwise apply. Manage them with a subcommand:
 
 ```bash
-pai session list                # list saved sessions
+pai session ls                  # list saved sessions (list also works)
 pai session show work           # details + recent turns
 pai session rm work             # delete
 pai session rename work ops     # rename

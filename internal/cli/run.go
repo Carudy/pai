@@ -19,16 +19,9 @@ import (
 // Version is PAI's version string.
 const Version = "v0.5.0"
 
-// Run is the main entry point for the PAI CLI. It parses flags, loads config,
-// wires up the selected role, and executes it. Returns an exit code.
-func Run(ctx context.Context, stdout io.Writer, args []string) int {
-	log := tui.NewLogger(stdout, false)
-
-	// `pai session …` is a management subcommand, not a chat.
-	if len(args) > 0 && args[0] == "session" {
-		return runSession(args[1:], stdout, log)
-	}
-
+// runChat parses chat flags, loads config, wires up the selected role, and runs
+// it. It is both the `pai chat` handler and the default action for a bare `pai`.
+func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logger) int {
 	flags, helpRequested, err := GetFlags(args)
 	if err != nil {
 		log.Errorf("Error parsing flags: %v\n", err)
@@ -38,7 +31,7 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 		return 0
 	}
 
-	log.Debug = flags.Debug
+	log.Debug = log.Debug || flags.Debug
 
 	if flags.Version {
 		fmt.Fprintf(stdout, "PAI version: %s\n", Version)
@@ -53,6 +46,9 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 
 	if flags.Role != "" {
 		cfg.DefaultRole = flags.Role
+	}
+	if flags.Model != "" {
+		cfg.SetModel(flags.Model)
 	}
 
 	// Config "interactive: true" auto-enables -i mode.

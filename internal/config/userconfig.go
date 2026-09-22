@@ -29,13 +29,32 @@ func LoadUserConfig() (*UserConfig, error) {
 	mergeEnvAPIKeys(cfg)
 
 	// ── resolve provider & model from "provider:model" string ────────────
-	parts := strings.SplitN(cfg.DefaultModel, ":", 2)
-	cfg.Provider = parts[0]
-	if len(parts) == 2 {
-		cfg.Model = parts[1]
-	}
+	cfg.SetModel(cfg.DefaultModel)
 
 	return cfg, nil
+}
+
+// Path returns the location of the user's config.toml.
+func Path() string {
+	dir := paths.ConfigDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "config.toml")
+}
+
+// SetModel sets DefaultModel and re-derives the Provider/Model pair from its
+// "provider:model" form. A bare value with no colon is treated as the provider
+// name with an empty model.
+func (cfg *UserConfig) SetModel(s string) {
+	cfg.DefaultModel = s
+	providerName, model, found := strings.Cut(s, ":")
+	cfg.Provider = providerName
+	if found {
+		cfg.Model = model
+	} else {
+		cfg.Model = ""
+	}
 }
 
 // loadTOML reads a TOML file into dst. Missing files are silently ignored.
