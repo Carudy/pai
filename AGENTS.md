@@ -1,4 +1,4 @@
-# agent.md — notes for coding agents
+# AGENTS.md — notes for coding agents
 
 This file is for AI coding agents (and humans) working on **PAI** (*Personal
 Agent Inside Terminal*): a lightweight Go CLI that runs an LLM agent loop
