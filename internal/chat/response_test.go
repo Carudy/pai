@@ -113,7 +113,86 @@ func TestGuideExampleIsValid(t *testing.T) {
 // reported as unparseable rather than half-applied.
 func TestParseUnbalancedIsError(t *testing.T) {
 	raw := `{"action":"tool","toolname":"remote","payload":{"host":"h","cmd":"ls"},"reason":"r"`
-	if _, err := ParseResponse(raw); err == nil {
+	_, err := ParseResponse(raw)
+	if err == nil {
 		t.Fatal("expected a parse error for unbalanced JSON")
+	}
+	// The message should point at truncation rather than a cryptic decoder error.
+	if !strings.Contains(err.Error(), "truncated") {
+		t.Errorf("error = %v, want it to mention truncation", err)
+	}
+}
+
+// Prose and stray braces around the object are tolerated.
+func TestParseSurroundedByProse(t *testing.T) {
+	raw := "Sure, here you go:\n\n```json\n{\"action\":\"done\",\"payload\":\"all set\",\"reason\":\"r\"}\n```\n\nLet me know if you need {anything} else."
+	resp, err := ParseResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.Action != ActionDone || resp.GetPayload() != "all set" {
+		t.Errorf("got action=%q payload=%q", resp.Action, resp.GetPayload())
+	}
+}
+
+// A brace inside a string value must not shift the object boundary.
+func TestParseBraceInsideString(t *testing.T) {
+	raw := `{"action":"done","payload":"use {} for maps, and {a} for sets","reason":"r"}`
+	resp, err := ParseResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.GetPayload() != "use {} for maps, and {a} for sets" {
+		t.Errorf("payload = %q", resp.GetPayload())
+	}
+}
+
+// Two objects back-to-back: the decoder must not concatenate them (the old
+// first-{-to-last-} span did, producing invalid JSON).
+func TestParsePicksFirstOfTwoObjects(t *testing.T) {
+	raw := `{"action":"done","payload":"first","reason":"r"} {"action":"done","payload":"second","reason":"r"}`
+	resp, err := ParseResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.GetPayload() != "first" {
+		t.Errorf("payload = %q, want the first object", resp.GetPayload())
+	}
+}
+
+// A non-response JSON object in the prose must not shadow the real response.
+func TestParseSkipsUnrecognizedObject(t *testing.T) {
+	raw := `The config looks like {"temperature":0.5} but here is my answer: {"action":"done","payload":"ok","reason":"r"}`
+	resp, err := ParseResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.Action != ActionDone || resp.GetPayload() != "ok" {
+		t.Errorf("got action=%q payload=%q; the unrecognized object won", resp.Action, resp.GetPayload())
+	}
+}
+
+// A lone object with no recognized action still parses, so Validate (not Parse)
+// reports the field-level problem and the retry loop can correct it.
+func TestParseNoActionDefersToValidate(t *testing.T) {
+	resp, err := ParseResponse(`{"payload":"x","reason":"r"}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if err := resp.Validate(); err == nil {
+		t.Error("expected Validate to reject a missing action")
+	}
+}
+
+func TestJSONCandidates(t *testing.T) {
+	got := jsonCandidates(`a {x} b {"n":1} c`)
+	want := []string{`{x}`, `{"n":1}`}
+	if len(got) != len(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("candidate %d = %q, want %q", i, got[i], want[i])
+		}
 	}
 }

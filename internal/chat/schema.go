@@ -40,7 +40,7 @@ func ActionEnum() string {
 // response format right before it generates. Keep it compact — it is repeated
 // every turn.
 func OutputGuide() string {
-	return `Respond ONLY with a single JSON object — no quote like "Let me output only JSON:..." no prose, no markdown fences, every { closed.
+	return `Respond ONLY with one JSON — no prose, no markdown fences.
 {"action":"` + ActionEnum() + `","payload":<payload>,"reason":"<short explanation>"}
 For a tool, add "toolname" beside "payload":
 ` + ToolExample() + `
@@ -55,5 +55,5 @@ payload by action:
 // as an example because it is the only one with a nested object, and a concrete
 // response is followed more reliably than a described one.
 func ToolExample() string {
-	return `{"action":"tool","toolname":"execute","payload":"df -h","reason":"check disk space"}`
+	return `EXAMPLE JSON OUTPUT: {"action":"tool","toolname":"execute","payload":"df -h","reason":"check disk space"}`
 }

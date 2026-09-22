@@ -66,17 +66,40 @@ func (r *Response) Validate() error {
 	return nil
 }
 
+// ParseResponse extracts and decodes the agent response from raw model output.
+//
+// Models wrap the object in prose or emit stray braces, so we scan for
+// brace-balanced candidates and take the first that is a *recognized* action;
+// failing that, the first that decodes at all — field-level complaints stay with
+// Validate, which is where the retry loop expects them.
 func ParseResponse(content string) (*Response, error) {
-	json_str, err := extractJSON(content)
-	if err != nil {
-		return nil, err
+	candidates := jsonCandidates(content)
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no complete JSON object in AI response (unbalanced braces, likely truncated)")
 	}
 
-	var resp Response
-	if err := json.Unmarshal([]byte(json_str), &resp); err != nil {
-		return nil, fmt.Errorf("failed to parse agent JSON: %w\nraw: %s", err, json_str)
+	var (
+		fallback *Response
+		lastErr  error
+	)
+	for _, c := range candidates {
+		var resp Response
+		if err := json.Unmarshal([]byte(c), &resp); err != nil {
+			lastErr = err
+			continue
+		}
+		if isValidAction(resp.Action) {
+			return &resp, nil
+		}
+		if fallback == nil {
+			fallback = &resp
+			lastErr = nil
+		}
 	}
-	return &resp, nil
+	if fallback != nil {
+		return fallback, nil
+	}
+	return nil, fmt.Errorf("failed to parse agent JSON: %w\nraw: %s", lastErr, candidates[0])
 }
 
 // ParseResponseWithRetry parses and validates a Response from the AI's output.

@@ -123,14 +123,65 @@ func doStream(
 // JSON helpers
 // ---------------------------------------------------------------------------
 
-// extractJSON extracts the first JSON object from a string.
-func extractJSON(content string) (string, error) {
-	start := strings.Index(content, "{")
-	end := strings.LastIndex(content, "}")
-	if start == -1 || end == -1 || end < start {
-		return "", fmt.Errorf("no JSON found in AI response")
+// jsonCandidates returns the brace-balanced top-level {...} spans of content, in
+// order. Braces inside JSON strings are ignored (quotes and escapes honoured), so
+// prose or a string value like "use {} for maps" can't derail it.
+//
+// A regexp can't do this: RE2 has no recursion, so it can't match balanced
+// braces — greedy swallows everything to the last }, non-greedy truncates the
+// nested payload object that our protocol relies on.
+//
+// Scanning stops at the first unbalanced '{' (truncated output): returning a
+// partial object would let a half-formed action be applied.
+func jsonCandidates(content string) []string {
+	var out []string
+	for i := 0; i < len(content); {
+		if content[i] != '{' {
+			i++
+			continue
+		}
+		end, ok := matchingBrace(content, i)
+		if !ok {
+			break
+		}
+		out = append(out, content[i:end+1])
+		i = end + 1
 	}
-	return content[start : end+1], nil
+	return out
+}
+
+// matchingBrace returns the index of the '}' closing the '{' at start, counting
+// only braces outside string literals. ok is false when they never balance.
+func matchingBrace(s string, start int) (int, bool) {
+	depth := 0
+	inStr := false
+	esc := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // TruncateOutput truncates a string to max bytes, appending a notice.
