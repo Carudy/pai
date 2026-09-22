@@ -256,6 +256,9 @@ func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
 	c.cfg.DefaultRole = name
 	c.rp = rp
 	c.output(fmt.Sprintf("role switched to %s (the system prompt changed, so this turn is not prefix-cached)", name))
+	if rp.ContextSource != "" {
+		c.output("project instructions: " + rp.ContextSource)
+	}
 	return cmdHandled, ""
 }
 

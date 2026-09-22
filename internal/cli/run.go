@@ -17,7 +17,7 @@ import (
 )
 
 // Version is PAI's version string.
-const Version = "v0.6.4"
+const Version = "v0.6.5"
 
 // runChat parses chat flags, loads config, wires up the selected role, and runs
 // it. It is both the `pai chat` handler and the default action for a bare `pai`.

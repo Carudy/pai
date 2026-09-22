@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Carudy/pai/internal/prompts"
@@ -43,12 +44,12 @@ func generalHelp() string {
 		if len(c.aliases) > 0 {
 			name += " (" + strings.Join(c.aliases, ", ") + ")"
 		}
-		b.WriteString("  " + pad(name, 18) + c.summary + "\n")
+		fmt.Fprintf(&b, "  %s%s\n", pad(name, 18), c.summary)
 	}
-	b.WriteString("  " + pad("help [command]", 18) + "Show help for a command\n")
+	fmt.Fprintf(&b, "  %sShow help for a command\n", pad("help [command]", 18))
 
 	b.WriteString("\nWith no command, pai chats: `pai <input>` is shorthand for `pai chat <input>`.\n\n")
-	b.WriteString(chatFlagHelp() + "\n\n")
+	fmt.Fprintf(&b, "%s\n\n", chatFlagHelp())
 
 	b.WriteString("EXAMPLES\n")
 	b.WriteString("  pai \"list running docker containers\"\n")

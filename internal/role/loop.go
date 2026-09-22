@@ -171,6 +171,12 @@ func Run(ctx context.Context, cfg *config.UserConfig, rt *Runtime, history []pro
 		return err
 	}
 
+	// Repository content has entered the system prompt; say so rather than
+	// letting it influence the model invisibly.
+	if rp.ContextSource != "" {
+		rt.Observer.Output("project instructions: " + rp.ContextSource)
+	}
+
 	err = loop(ctx, cfg, rt, rp, history, userInput)
 	rt.closeTurn(err)
 	return err

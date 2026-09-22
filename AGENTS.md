@@ -91,7 +91,7 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 
 | Task | Touch |
 |---|---|
-| New **role** | add `internal/prompts/roles/<name>.toml` (no Go) |
+| New **role** | add `internal/prompts/roles/<name>.toml` (no Go). `context_files` folds repo instruction files (e.g. `AGENTS.md`) into the system prompt |
 | New **tool** | implementation in `internal/role/tools.go` **and** `internal/prompts/tools/<name>.toml`; `checkToolCoverage` enforces both exist. The `internal/tool` layer only *executes* — confirming with the user is the handler's job, via `rt.Prompter` |
 | New **config key** | `internal/config/types.go` (struct + default) **and** the `configKeys` table in `internal/cli/config.go` (so `pai config set` knows it) |
 | New **subcommand** | add to the table in `internal/cli/command.go`; put handlers in a sibling file (`config.go`, `role.go`, …) |

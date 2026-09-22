@@ -128,7 +128,7 @@ deepseek = { api_key = "your-deepseek-key" }
 # kimi   = { base_url = "https://api.moonshot.cn/v1/chat/completions", api_key = "your-kimi-key" }
 
 [app]
-default_model = "deepseek:deepseek-chat"
+default_model = "deepseek:deepseek-v4-flash"
 default_role  = "devops"      # see `pai role ls` for the available roles
 streaming     = true        # token-by-token output
 reasoning     = "low"       # "low" | "medium" | "high" (omit for none)
@@ -218,6 +218,11 @@ Helps read, write, refactor, and test code in the current repository. Tools:
 It deliberately has no **remote** tool: a role's tool list is its capability
 boundary, not just a prompt hint.
 
+It also folds the repository's own instructions into its system prompt: if
+`AGENTS.md` (or `CLAUDE.md`) exists in the working directory or any parent, its
+contents are appended as *project instructions* — subordinate to the role rules
+and to the response format. See `context_files` under Custom roles.
+
 ```bash
 pai -r coder "why does the build fail, and fix it"
 ```
@@ -245,8 +250,48 @@ one **overrides** it — handy for retuning `devops` without editing the source.
 `tools` may only reference built-in tools (`execute`, `remote`, `websearch`):
 tool *implementations* live in Go, so new tools require code — new roles do not.
 
+`context_files` folds project instruction files into the system prompt, searched
+upwards from the working directory (nearest match wins) and capped at 8 KiB:
+
+```toml
+context_files = ["AGENTS.md", "CLAUDE.md"]
+```
+
+PAI prints a one-line notice whenever it uses one, so repository content
+influencing the model is never silent.
+
 See [examples/](examples/) for detailed walkthroughs.
 
+## 🧠 What gets sent to the model
+
+Each request is three parts:
+
+```
+[system: head]  +  conversation history  +  [system: per-turn guide]
+```
+
+The **head** is composed once per session and then never changes, so provider
+prefix caching stays effective:
+
+1. who PAI is, plus your terminal info (OS, shell, user, time, working directory)
+2. the role's intro — replaced or extended by your `prompts.toml` entry
+3. the repository's instructions, when the role declares `context_files`
+   (`AGENTS.md` / `CLAUDE.md`)
+4. the role's tools, with descriptions and payload schemas
+
+The **per-turn guide** is re-rendered on every request and deliberately comes
+last, so the response format is the final thing the model reads before it
+answers:
+
+- the JSON action contract (`tool` | `ask` | `done` | `terminate`)
+- the role's available tools, as a short reminder
+
+The response format is **system-owned**: neither a role's intro, your custom
+prompt, nor a repository's `AGENTS.md` can change it — all three are marked
+subordinate to it.
+
+Tool output is truncated before it goes back to the model, bounded by
+`truncate_exec_limit` and `truncate_search_limit`.
 
 ## 💾 Sessions
 
