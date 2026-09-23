@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
@@ -39,7 +38,7 @@ func chat(
 
 	params := provider.CompletionParams{
 		Model:           cfg.Model,
-		Messages:        rp.Messages(history),
+		Messages:        rp.Messages(CompactHistory(history, cfg.Context)),
 		Stream:          stream,
 		ResponseFormat:  &provider.ResponseFormat{Type: "json_object"},
 		ReasoningEffort: cfg.ReasoningEffort,
@@ -59,7 +58,7 @@ func chat(
 		return "", nil, nil, err
 	}
 
-	newHistory = append(history, provider.Message{Role: provider.RoleAssistant, Content: content})
+	newHistory = append(history, provider.Message{Role: provider.RoleAssistant, Content: content, Kind: core.KindOutput})
 	return content, newHistory, usage, nil
 }
 
@@ -184,10 +183,4 @@ func matchingBrace(s string, start int) (int, bool) {
 	return 0, false
 }
 
-// TruncateOutput truncates a string to max bytes, appending a notice.
-func TruncateOutput(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + fmt.Sprintf("\n\u2026 [truncated %d bytes]", len(s)-max)
-}
+// cutBytes, CompactHistory and the Truncate policy live in context.go.

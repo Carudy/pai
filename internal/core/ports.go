@@ -16,10 +16,21 @@ import (
 // Ctrl+D) rather than the prompt failing. Callers treat it as a clean stop.
 var ErrAborted = errors.New("prompt aborted")
 
+// Kind values for Turn.Kind (and provider.Message.Kind).
+const (
+	KindInput      = "input"
+	KindOutput     = "output"
+	KindToolResult = "tool_result"
+	KindUserAnswer = "user_answer"
+	KindNote       = "note"
+	// KindSummary marks a model-written summary that stands in for older turns.
+	KindSummary = "summary"
+)
+
 // Turn is one conversation turn, as persisted and replayed.
 type Turn struct {
 	Role    string // "user" | "assistant"
-	Kind    string // "input" | "output" | "tool_result" | "user_answer"
+	Kind    string // see Kind* above
 	Content string
 	At      time.Time
 }

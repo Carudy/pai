@@ -59,9 +59,10 @@ Subcommands and their flags accept short forms, e.g. `pai session ls`,
 pai config list                 # effective settings + the keys you can set
 pai config get default_model    # print one value
 pai config set default_role coder
-pai config set truncate_exec_limit 16000
+pai config set context.keep_turns 12
 pai config unset default_role   # revert to the built-in default
 pai config path                 # where config.toml lives
+pai config init                 # write/merge a starter config.toml (asks first)
 ```
 
 `pai config set` edits `config.toml` in place and preserves comments. Values are
@@ -112,14 +113,27 @@ starting with `//` is sent literally, with one slash removed.
 | `/role [name]` | Show or switch the active role |
 | `/new [name]` | Start a fresh conversation, optionally named |
 | `/rename <name>` | Name (and save) this conversation |
+| `/compact` | Summarize older turns to shrink the context window |
 
-Commands run locally: they never reach the model and are not recorded as
-conversation turns. `/rename` on a run started without `-s` saves the whole
-conversation so far under that name, so a chat you decide to keep isn't lost.
+Commands run locally and are not recorded as conversation turns. `/rename` on a
+run started without `-s` saves the whole conversation so far under that name, so
+a chat you decide to keep isn't lost. `/compact` is the exception that calls the
+model — it summarizes older turns (see "Keeping the context bounded").
 
 ## ⚙️ Configuration
 
-Create `~/.config/pai/config.toml`:
+Create `~/.config/pai/config.toml` — or generate a documented starter file:
+
+```bash
+pai config init           # no config? writes one. Otherwise asks:
+                          #   1) reset to defaults  2) add only what's missing  3) leave it
+pai config init --merge   # add only settings you're missing (skip the prompt)
+pai config init --reset   # back to defaults (skip the prompt)
+pai config reset -y       # same as --reset, and keeps a .bak
+```
+
+`init` and `reset` never touch what you cannot easily recreate: provider API
+keys, the search key, and `trusted_cmds` (an array the CLI can't set).
 
 ```toml
 [providers]
@@ -133,8 +147,24 @@ default_role  = "devops"      # see `pai role ls` for the available roles
 streaming     = true        # token-by-token output
 reasoning     = "low"       # "low" | "medium" | "high" (omit for none)
 interactive   = false       # if true, auto-enables -i mode
-truncate_exec_limit   = 8000  # max command output chars fed back to the role
-truncate_search_limit = 8000  # max web-search result chars fed back to the role
+
+[context]
+# Byte budget for one observation fed back to the model, and the lines kept
+# from its head and tail (the tail holds errors and summaries).
+exec_limit   = 8000
+search_limit = 8000
+head_lines   = 80
+tail_lines   = 40
+# Long conversations: replay the last keep_turns messages in full, and elide
+# older command output down to its header once the conversation exceeds
+# elide_after_turns messages. See "What gets sent to the model".
+keep_turns        = 8
+elide_after_turns = 16
+elide_min_bytes   = 1000
+elide_head_lines  = 8
+# Opt-in second layer: summarize the oldest turns once the prompt exceeds this
+# many tokens (0 = off). Also on demand in-session with /compact.
+summarize_after_tokens = 0
 
 [tool]
 tavily_api_key = "your-tavily-key"  # for web search (env TAVILY_API_KEY as fallback)
@@ -147,6 +177,9 @@ persist     = false  # true = save every run to an auto-named session
 max_turns   = 0      # cap on turns replayed when resuming (0 = all)
 recap_turns = 3      # recent exchanges echoed when resuming (0 = no recap)
 ```
+
+The older `[app] truncate_exec_limit` / `truncate_search_limit` keys still work
+as aliases, but `[context]` is canonical.
 
 ### Environment Variables
 
@@ -281,7 +314,7 @@ See [examples/](examples/) for detailed walkthroughs.
 Each request is three parts:
 
 ```
-[system: head]  +  conversation history  +  [system: per-turn guide]
+[system: head]  +  conversation history  +  [system: per-turn reminder]
 ```
 
 The **head** is composed once per session and then never changes, so provider
@@ -292,20 +325,44 @@ prefix caching stays effective:
 3. the repository's instructions, when the role declares `context_files`
    (`AGENTS.md` / `CLAUDE.md`)
 4. the role's tools, with descriptions and payload schemas
+5. the response contract, with one example per action
 
-The **per-turn guide** is re-rendered on every request and deliberately comes
-last, so the response format is the final thing the model reads before it
-answers:
-
-- the JSON action contract (`tool` | `ask` | `done` | `terminate`)
-- the role's available tools, as a short reminder
+The **per-turn reminder** is re-rendered on every request and deliberately comes
+last, so the format is the final thing the model reads before it answers: a
+one-line restatement of the contract plus the role's available tools.
 
 The response format is **system-owned**: neither a role's intro, your custom
 prompt, nor a repository's `AGENTS.md` can change it — all three are marked
 subordinate to it.
 
-Tool output is truncated before it goes back to the model, bounded by
-`truncate_exec_limit` and `truncate_search_limit`.
+### Keeping the context bounded
+
+Command output is shortened before it goes back to the model: the `[context]`
+section's `exec_limit` / `search_limit` cap the bytes, while `head_lines` /
+`tail_lines` decide how much of the head and tail survives. The tail is kept on
+purpose — errors, exit codes and summaries land at the end of command output.
+
+Long conversations are compacted in two layers. The first is deterministic:
+the last `keep_turns` messages are replayed verbatim; once the conversation
+exceeds `elide_after_turns` messages, older command output larger than
+`elide_min_bytes` is reduced to its header (label, command, exit status) with a
+visible marker, so the model knows it was omitted and can re-run the command if
+it needs the result.
+
+The second layer is optional and costs one extra model call: with
+`summarize_after_tokens` set, once the prompt exceeds that token budget the
+oldest turns are summarized into a single message and only the last `keep_turns`
+messages are kept verbatim. Summarization uses a plain call — no streaming, no
+reasoning, no JSON mode. Trigger it on demand in-session with `/compact`.
+
+In both layers user input, assistant replies and answers are never dropped, and
+the full transcript stays in the session store — compression only changes what
+is *replayed* to the model.
+
+A summary is also written to the session as a **checkpoint** (a `system` turn of
+kind `summary`). Attaching later replays that summary and only the turns after
+it, so a long session resumes without re-summarizing — while every original turn
+is still on disk (visible in `pai session show`).
 
 ## 💾 Sessions
 

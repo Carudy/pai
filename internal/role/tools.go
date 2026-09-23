@@ -102,13 +102,13 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 		if !ok {
 			output := cancelled()
 			report(rt, output, nil, "Command succeeded")
-			return observation("cmd result", cmd, nil, output, cfg.TruncateExecLimit), nil
+			return observation("cmd result", cmd, nil, output, execTruncate(cfg)), nil
 		}
 	}
 
 	output, execErr := tool.ExecuteCommand(ctx, cmd, toolStream(rt))
 	report(rt, output, execErr, "Command succeeded")
-	return observation("cmd result", cmd, execErr, output, cfg.TruncateExecLimit), nil
+	return observation("cmd result", cmd, execErr, output, execTruncate(cfg)), nil
 }
 
 // runRemote runs a command on a remote host over SSH.
@@ -142,13 +142,13 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 		if !ok {
 			output := cancelled()
 			report(rt, output, nil, "Remote command succeeded")
-			return observation("remote result", rp.Cmd, nil, output, cfg.TruncateExecLimit), nil
+			return observation("remote result", rp.Cmd, nil, output, execTruncate(cfg)), nil
 		}
 	}
 
 	output, execErr := rt.Remote.ExecuteRemote(ctx, rp, toolStream(rt))
 	report(rt, output, execErr, "Remote command succeeded")
-	return observation("remote result", rp.Cmd, execErr, output, cfg.TruncateExecLimit), nil
+	return observation("remote result", rp.Cmd, execErr, output, execTruncate(cfg)), nil
 }
 
 // runWebsearch searches the web for current information. A search failure is
@@ -184,14 +184,32 @@ func runWebsearch(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reas
 	})
 
 	observation := fmt.Sprintf("SEARCH QUERY: %s\nRESULTS:\n%s",
-		query, chat.TruncateOutput(sr.Format(), cfg.TruncateSearchLimit))
+		query, searchTruncate(cfg).Apply(sr.Format()))
 	return "[search result]\n" + observation, nil
 }
 
 // observation formats the history entry fed back to the model.
-func observation(label, cmd string, execErr error, output tool.ExecResult, limit int) string {
+func observation(label, cmd string, execErr error, output tool.ExecResult, trunc chat.Truncate) string {
 	return fmt.Sprintf("[%s]\nCOMMAND: %s\nEXIT_ERROR: %v\nOUTPUT:\n%s",
-		label, cmd, execErr, chat.TruncateOutput(output.String(), limit))
+		label, cmd, execErr, trunc.Apply(output.String()))
+}
+
+// execTruncate builds the observation budget for local/remote command output.
+func execTruncate(cfg *config.UserConfig) chat.Truncate {
+	return chat.Truncate{
+		MaxBytes:  cfg.Context.ExecLimit,
+		HeadLines: cfg.Context.HeadLines,
+		TailLines: cfg.Context.TailLines,
+	}
+}
+
+// searchTruncate builds the observation budget for web-search results.
+func searchTruncate(cfg *config.UserConfig) chat.Truncate {
+	return chat.Truncate{
+		MaxBytes:  cfg.Context.SearchLimit,
+		HeadLines: cfg.Context.HeadLines,
+		TailLines: cfg.Context.TailLines,
+	}
 }
 
 // searchPreview renders the short, human-facing summary of a search (the AI

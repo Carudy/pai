@@ -1,6 +1,7 @@
 package role
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -78,8 +79,97 @@ func newTestCtx(t *testing.T) (*cmdCtx, *Runtime, *fakeObserver) {
 	obs := &fakeObserver{}
 	rt := &Runtime{Observer: obs}
 	cfg := &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}
-	cc := &cmdCtx{rt: rt, cfg: cfg, rp: rp}
+	cc := &cmdCtx{rt: rt, cfg: cfg, rp: rp, ctx: context.Background()}
 	return cc, rt, obs
+}
+
+// fakeProvider stands in for the model in commands that call it (e.g. /compact).
+type fakeProvider struct {
+	reply string
+	got   provider.CompletionParams
+	calls int
+}
+
+func (f *fakeProvider) Completion(_ context.Context, p provider.CompletionParams) (*provider.ChatCompletion, error) {
+	f.calls++
+	f.got = p
+	return &provider.ChatCompletion{Choices: []provider.Choice{
+		{Message: provider.Message{Role: provider.RoleAssistant, Content: f.reply}},
+	}}, nil
+}
+
+func (f *fakeProvider) CompletionStream(context.Context, provider.CompletionParams) (<-chan provider.ChatCompletionChunk, <-chan error) {
+	return nil, nil
+}
+
+// /compact summarizes the older turns and keeps the recent ones verbatim.
+func TestCompactCommandSummarizesOldTurns(t *testing.T) {
+	cc, rt, obs := newTestCtx(t)
+	fp := &fakeProvider{reply: "ran df -h; disk is fine"}
+	rt.Provider = fp
+	cc.cfg.Context.KeepTurns = 1
+
+	cc.history = []provider.Message{
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"},
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: `{"action":"tool","toolname":"execute","payload":"df -h","reason":"r"}`},
+		{Role: provider.RoleUser, Kind: core.KindToolResult, Content: "[cmd result]\nCOMMAND: df -h\nOUTPUT:\nok"},
+	}
+
+	if outcome, _ := dispatch(cc, "/compact"); outcome != cmdHandled {
+		t.Fatalf("outcome = %v", outcome)
+	}
+	if fp.calls != 1 {
+		t.Errorf("summarizer called %d times, want 1", fp.calls)
+	}
+	if len(cc.history) != 2 {
+		t.Fatalf("history = %d messages, want summary + 1 kept", len(cc.history))
+	}
+	if cc.history[0].Kind != core.KindSummary {
+		t.Errorf("first message kind = %q, want summary", cc.history[0].Kind)
+	}
+	if !strings.Contains(cc.history[0].Content, "disk is fine") {
+		t.Errorf("summary text missing: %q", cc.history[0].Content)
+	}
+	if cc.history[1].Kind != core.KindToolResult {
+		t.Errorf("the most recent turn was not kept verbatim: %q", cc.history[1].Kind)
+	}
+	if obs.lastOutput() == "" {
+		t.Error("expected a confirmation line")
+	}
+
+	// The checkpoint is recorded, so a later attach replays the summary instead
+	// of the turns it stands in for.
+	summaries := 0
+	for _, tn := range rt.transcript {
+		if tn.Kind == core.KindSummary {
+			summaries++
+			if !strings.Contains(tn.Content, "disk is fine") {
+				t.Errorf("checkpoint content = %q", tn.Content)
+			}
+		}
+	}
+	if summaries != 1 {
+		t.Errorf("recorded %d summary checkpoints, want 1", summaries)
+	}
+}
+
+// With nothing old enough, /compact says so instead of calling the model.
+func TestCompactCommandNothingToDo(t *testing.T) {
+	cc, rt, obs := newTestCtx(t)
+	fp := &fakeProvider{reply: "unused"}
+	rt.Provider = fp
+	cc.cfg.Context.KeepTurns = 5
+	cc.history = []provider.Message{{Role: provider.RoleUser, Kind: core.KindInput, Content: "hi"}}
+
+	if outcome, _ := dispatch(cc, "/compact"); outcome != cmdHandled {
+		t.Fatalf("outcome = %v", outcome)
+	}
+	if fp.calls != 0 {
+		t.Errorf("summarizer should not be called: %d calls", fp.calls)
+	}
+	if !strings.Contains(obs.lastOutput(), "nothing to compact") {
+		t.Errorf("output = %q", obs.lastOutput())
+	}
 }
 
 func TestSplitCommand(t *testing.T) {

@@ -1,6 +1,7 @@
 package role
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -28,7 +29,8 @@ type cmdCtx struct {
 	cfg     *config.UserConfig
 	rp      *chat.RolePrompt
 	history []provider.Message
-	session string // "" = ephemeral
+	session string          // "" = ephemeral
+	ctx     context.Context // the run's context, for commands that call the model
 }
 
 func (c *cmdCtx) output(text string) { c.rt.Observer.Output(text) }
@@ -108,6 +110,12 @@ func init() {
 			minArgs: 1,
 			maxArgs: 1,
 			run:     runRename,
+		},
+		{
+			name:    "compact",
+			usage:   "/compact",
+			summary: "Summarize older turns to shrink the context window",
+			run:     runCompact,
 		},
 	}
 }
@@ -329,4 +337,20 @@ func sessionName(name string) string {
 		return "<temp session>"
 	}
 	return name
+}
+
+func runCompact(c *cmdCtx, _ []string) (cmdOutcome, string) {
+	before := len(c.history)
+	ok, err := compactHistory(c.ctx, c.rt, c.cfg, c)
+	if err != nil {
+		c.notice("compaction failed: %v", err)
+		return cmdHandled, ""
+	}
+	if !ok {
+		c.output("nothing to compact yet")
+		return cmdHandled, ""
+	}
+	c.output(fmt.Sprintf("compacted %d messages into a summary (%d kept verbatim)",
+		before-len(c.history)+1, len(c.history)))
+	return cmdHandled, ""
 }

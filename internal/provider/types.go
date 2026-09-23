@@ -26,6 +26,10 @@ const (
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// Kind is PAI-internal conversation metadata (see core.Kind*): it lets context
+	// compaction tell a stale tool observation from the user's own words. The json
+	// tag keeps it off the wire — providers only ever see role and content.
+	Kind string `json:"-"`
 }
 
 // ResponseFormat specifies the expected response format.

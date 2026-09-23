@@ -44,6 +44,10 @@ type Runtime struct {
 	// persisted so that naming the conversation later can backfill it.
 	transcript []core.Turn
 
+	// promptTokens is the size of the last request as reported by the provider (or
+	// an estimate before the first call). It drives LLM summarization.
+	promptTokens int
+
 	mu         sync.Mutex
 	cancelStep context.CancelFunc
 }
@@ -111,7 +115,7 @@ func (rt *Runtime) closeTurn(err error) {
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, core.ErrAborted) {
 		note = "error: " + err.Error()
 	}
-	rt.record(core.Turn{Role: "assistant", Kind: "note", Content: "[" + note + "]"})
+	rt.record(core.Turn{Role: "assistant", Kind: core.KindNote, Content: "[" + note + "]"})
 }
 
 // readInstruction prompts for the next line of input. ok=false means the session
@@ -149,7 +153,7 @@ func (rt *Runtime) nextInstruction(cc *cmdCtx) (string, bool) {
 		default:
 			// Only real conversation is echoed and recorded.
 			rt.Observer.User(msg)
-			rt.record(core.Turn{Role: "user", Kind: "input", Content: msg})
+			rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: msg})
 			return msg, true
 		}
 	}
@@ -189,7 +193,7 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 	// cc owns the conversation so that in-session commands can replace the role
 	// prompt (/role) or clear the history (/new). history holds only conversation
 	// turns; the role prompt is composed around it on every request.
-	cc := &cmdCtx{rt: rt, cfg: cfg, rp: rp, session: rt.SessionName}
+	cc := &cmdCtx{rt: rt, cfg: cfg, rp: rp, session: rt.SessionName, ctx: ctx}
 	cc.history = make([]provider.Message, 0, len(resumed)+1)
 	cc.history = append(cc.history, resumed...)
 
@@ -208,8 +212,8 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 		}
 	}
 	if userInput != "" {
-		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: userInput})
-		rt.record(core.Turn{Role: "user", Kind: "input", Content: userInput})
+		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: userInput, Kind: core.KindInput})
+		rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: userInput})
 	}
 
 	// Only call the model when there is something for it to answer. A fresh
@@ -222,12 +226,27 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 		if !ok {
 			return nil
 		}
-		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: input})
+		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: input, Kind: core.KindInput})
 	}
+
+	// Seed the budget check for a resumed session, before any real usage is known.
+	rt.promptTokens = chat.EstimateTokens(cc.history)
 
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+
+		// Second compression layer: once the prompt outgrows the budget, replace
+		// the oldest turns with a model-written summary. The next step reports
+		// fresh usage, so at most one attempt happens per iteration.
+		if chat.ShouldSummarize(cfg.Context, rt.promptTokens) {
+			if ok, err := compactHistory(ctx, rt, cfg, cc); err != nil {
+				rt.Logger.Errorf("compacting conversation: %v\n", err)
+			} else if ok {
+				rt.Observer.Output("compacted older turns into a summary to stay within the context window")
+			}
+			rt.promptTokens = 0
 		}
 
 		// Each step gets its own context so Ctrl+C can cancel just this step.
@@ -239,7 +258,7 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 		switch {
 		case interrupted:
 			rt.Logger.Debugf("[Step interrupted by user]\n")
-			rt.record(core.Turn{Role: "assistant", Kind: "note", Content: "[interrupted by user]"})
+			rt.record(core.Turn{Role: "assistant", Kind: core.KindNote, Content: "[interrupted by user]"})
 			if !rt.Interactive {
 				return context.Canceled
 			}
@@ -261,9 +280,41 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 		if !ok {
 			return nil
 		}
-		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: input})
+		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: input, Kind: core.KindInput})
 		rt.Observer.Separator()
 	}
+}
+
+// compactHistory replaces the oldest turns with a model-written summary, keeping
+// the last Context.KeepTurns messages verbatim. It mutates cc.history; the
+// recorded transcript and any stored session are untouched. It reports whether
+// anything was compacted.
+func compactHistory(ctx context.Context, rt *Runtime, cfg *config.UserConfig, cc *cmdCtx) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	span, recent := chat.SplitForSummary(cc.history, cfg.Context.KeepTurns)
+	if len(span) == 0 {
+		return false, nil
+	}
+
+	// Summarization is its own step, so Ctrl+C can cancel it like any other work.
+	stepCtx, end := rt.beginStep(ctx)
+	defer end()
+
+	summary, err := chat.Summarize(stepCtx, cfg, rt.chatPorts(), chat.RenderTranscript(span))
+	if err != nil {
+		return false, err
+	}
+
+	msg := chat.SummaryMessage(summary)
+	cc.history = append([]provider.Message{msg}, recent...)
+
+	// Persist a checkpoint after the turns it stands in for. On attach the replay
+	// starts at the last summary, so summarized turns are not replayed (and not
+	// re-summarized) — while the full transcript is still kept on disk.
+	rt.record(core.Turn{Role: provider.RoleSystem, Kind: core.KindSummary, Content: msg.Content})
+	return true, nil
 }
 
 // historyEndsWithUser reports whether the composed conversation's last message
@@ -293,6 +344,7 @@ func step(
 	rt.Logger.Debugf("[AI Output]:\n%s\n", content)
 
 	if usage != nil {
+		rt.promptTokens = usage.PromptTokens
 		rt.Observer.Usage(core.Usage{
 			Prompt:     usage.PromptTokens,
 			Completion: usage.CompletionTokens,
@@ -307,7 +359,7 @@ func step(
 
 	// Persist the accepted assistant turn (after any format retries).
 	if n := len(history); n > 0 && history[n-1].Role == provider.RoleAssistant {
-		rt.record(core.Turn{Role: "assistant", Kind: "output", Content: history[n-1].Content})
+		rt.record(core.Turn{Role: "assistant", Kind: core.KindOutput, Content: history[n-1].Content})
 	}
 
 	// For tool/done the reason is shown alongside the action itself, so printing
@@ -349,8 +401,8 @@ func step(
 			answer = "[user cancelled / no answer]"
 		}
 		answerTurn := "[user answer]\n" + answer
-		rt.record(core.Turn{Role: "user", Kind: "user_answer", Content: answerTurn})
-		history = append(history, provider.Message{Role: provider.RoleUser, Content: answerTurn})
+		rt.record(core.Turn{Role: "user", Kind: core.KindUserAnswer, Content: answerTurn})
+		history = append(history, provider.Message{Role: provider.RoleUser, Content: answerTurn, Kind: core.KindUserAnswer})
 
 	case chat.ActionTool:
 		rt.Logger.Debugf("toolname: %s\n", resp.ToolName)
@@ -359,10 +411,11 @@ func step(
 		if err != nil {
 			return false, nil, err
 		}
-		rt.record(core.Turn{Role: "user", Kind: "tool_result", Content: observation})
+		rt.record(core.Turn{Role: "user", Kind: core.KindToolResult, Content: observation})
 		history = append(history, provider.Message{
 			Role:    provider.RoleUser,
 			Content: observation,
+			Kind:    core.KindToolResult,
 		})
 
 	default:

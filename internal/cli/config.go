@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,18 +28,28 @@ type configKey struct {
 }
 
 var configKeys = map[string]configKey{
-	"default_model":         {section: "app", key: "default_model", kind: "model"},
-	"default_role":          {section: "app", key: "default_role", kind: "role"},
-	"streaming":             {section: "app", key: "streaming", kind: "bool"},
-	"reasoning":             {section: "app", key: "reasoning", kind: "reasoning"},
-	"interactive":           {section: "app", key: "interactive", kind: "bool"},
-	"truncate_exec_limit":   {section: "app", key: "truncate_exec_limit", kind: "int"},
-	"truncate_search_limit": {section: "app", key: "truncate_search_limit", kind: "int"},
-	"session.persist":       {section: "session", key: "persist", kind: "bool"},
-	"session.max_turns":     {section: "session", key: "max_turns", kind: "int"},
-	"session.recap_turns":   {section: "session", key: "recap_turns", kind: "int"},
-	"tavily_api_key":        {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
-	"remote_shell":          {section: "tool", key: "remote_shell", kind: "string"},
+	"default_model":       {section: "app", key: "default_model", kind: "model"},
+	"default_role":        {section: "app", key: "default_role", kind: "role"},
+	"streaming":           {section: "app", key: "streaming", kind: "bool"},
+	"reasoning":           {section: "app", key: "reasoning", kind: "reasoning"},
+	"interactive":         {section: "app", key: "interactive", kind: "bool"},
+	"session.persist":     {section: "session", key: "persist", kind: "bool"},
+	"session.max_turns":   {section: "session", key: "max_turns", kind: "int"},
+	"session.recap_turns": {section: "session", key: "recap_turns", kind: "int"},
+	"tavily_api_key":      {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
+	"remote_shell":        {section: "tool", key: "remote_shell", kind: "string"},
+	// Deprecated aliases: [context] exec_limit/search_limit replaced these [app] keys.
+	"truncate_exec_limit":            {section: "app", key: "truncate_exec_limit", kind: "int"},
+	"truncate_search_limit":          {section: "app", key: "truncate_search_limit", kind: "int"},
+	"context.exec_limit":             {section: "context", key: "exec_limit", kind: "int"},
+	"context.search_limit":           {section: "context", key: "search_limit", kind: "int"},
+	"context.head_lines":             {section: "context", key: "head_lines", kind: "int"},
+	"context.tail_lines":             {section: "context", key: "tail_lines", kind: "int"},
+	"context.keep_turns":             {section: "context", key: "keep_turns", kind: "int"},
+	"context.elide_after_turns":      {section: "context", key: "elide_after_turns", kind: "int"},
+	"context.elide_min_bytes":        {section: "context", key: "elide_min_bytes", kind: "int"},
+	"context.elide_head_lines":       {section: "context", key: "elide_head_lines", kind: "int"},
+	"context.summarize_after_tokens": {section: "context", key: "summarize_after_tokens", kind: "int"},
 }
 
 // configHelp is the detailed help for `pai config`.
@@ -47,7 +59,9 @@ func configHelp() string {
 		"  get <key>          Print one key's value\n" +
 		"  set <key> <value>  Set a key in config.toml\n" +
 		"  unset, rm <key>    Remove a key (reverts to the built-in default)\n" +
-		"  path               Print the config.toml path\n\n" +
+		"  path               Print the config.toml path\n" +
+		"  init [--merge|--reset]  Write a starter config.toml (asks when one exists)\n" +
+		"  reset -y           Replace config.toml with defaults, keeping secrets\n\n" +
 		"KEYS\n  " + strings.Join(sortedConfigKeys(), "\n  ")
 }
 
@@ -87,10 +101,124 @@ func runConfig(_ context.Context, args []string, stdout io.Writer, log *tui.Logg
 	case "path":
 		fmt.Fprintln(stdout, path)
 		return 0
+	case "init":
+		return configInit(path, args[1:], stdout, log)
+	case "reset":
+		return configReset(path, args[1:], stdout, log)
 	default:
-		log.Errorf("Unknown config command %q; try: list | get | set | unset | path\n", args[0])
+		log.Errorf("Unknown config command %q; try: list | get | set | unset | path | init | reset\n", args[0])
 		return 1
 	}
+}
+
+// configStdin is the reader used for the interactive `config init` menu. It is a
+// variable so tests can drive the choice without a terminal.
+var configStdin io.Reader = os.Stdin
+
+// configInit writes a starter config.toml. With an existing file it offers a
+// choice rather than clobbering it; --reset and --merge skip the prompt.
+func configInit(path string, args []string, stdout io.Writer, log *tui.Logger) int {
+	switch {
+	case hasFlag(args, "--reset", "-r"):
+		return doReset(path, stdout, log)
+	case hasFlag(args, "--merge", "-m"):
+		return doMerge(path, stdout, log)
+	}
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		existed, werr := config.WriteTemplate(path, false)
+		if werr != nil {
+			log.Errorf("Error writing %s: %v\n", path, werr)
+			return 1
+		}
+		if existed {
+			return doMerge(path, stdout, log)
+		}
+		fmt.Fprintf(stdout, "Wrote a starter config to %s\nAdd your API key (or set DEEPSEEK_API_KEY), then run pai.\n", path)
+		return 0
+	}
+
+	switch chooseInitMode(path, stdout) {
+	case 1:
+		return doReset(path, stdout, log)
+	case 2:
+		return doMerge(path, stdout, log)
+	default:
+		fmt.Fprintln(stdout, "Left the config unchanged.")
+		return 0
+	}
+}
+
+// chooseInitMode prints the menu and reads the user's choice, defaulting to
+// "leave it unchanged" when there is no input (EOF, or a non-interactive run).
+func chooseInitMode(path string, stdout io.Writer) int {
+	fmt.Fprintf(stdout, "%s already exists. What should \"pai config init\" do?\n", path)
+	fmt.Fprintln(stdout, "  1) Reset to built-in defaults (keeps your API keys and trusted_cmds)")
+	fmt.Fprintln(stdout, "  2) Add only settings you are missing (keeps every current value)")
+	fmt.Fprintln(stdout, "  3) Leave it unchanged")
+	fmt.Fprint(stdout, "Choose [1/2/3] (default 3): ")
+
+	line, _ := bufio.NewReader(configStdin).ReadString('\n')
+	switch strings.TrimSpace(line) {
+	case "1":
+		return 1
+	case "2":
+		return 2
+	default:
+		return 3
+	}
+}
+
+// doMerge adds template settings the file lacks, keeping every existing value.
+func doMerge(path string, stdout io.Writer, log *tui.Logger) int {
+	added, err := config.MergeTemplate(path)
+	if err != nil {
+		log.Errorf("Error updating %s: %v\n", path, err)
+		return 1
+	}
+	if added == 0 {
+		fmt.Fprintf(stdout, "%s already has every known setting; nothing added.\n", path)
+		return 0
+	}
+	fmt.Fprintf(stdout, "Added %d missing setting(s) to %s (existing values kept).\n", added, path)
+	return 0
+}
+
+// doReset replaces the file with the starter template, keeping the values a
+// reset must not destroy: API keys, the search key, and trusted_cmds. It keeps a
+// .bak of the previous file.
+func doReset(path string, stdout io.Writer, log *tui.Logger) int {
+	if data, err := os.ReadFile(path); err == nil {
+		_ = os.WriteFile(path+".bak", data, 0600)
+	}
+	if err := config.ResetTemplate(path); err != nil {
+		log.Errorf("Error writing %s: %v\n", path, err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Reset %s to defaults (API keys and trusted_cmds kept).\n", path)
+	return 0
+}
+
+// configReset is the standalone `pai config reset`, which requires -y because it
+// rewrites the file.
+func configReset(path string, args []string, stdout io.Writer, log *tui.Logger) int {
+	if !hasFlag(args, "-y", "--yes") {
+		fmt.Fprintf(stdout, "This replaces %s with the starter template, keeping your API keys and trusted_cmds.\nRe-run with -y to confirm.\n", path)
+		return 1
+	}
+	return doReset(path, stdout, log)
+}
+
+// hasFlag reports whether any of names appears in args.
+func hasFlag(args []string, names ...string) bool {
+	for _, a := range args {
+		for _, n := range names {
+			if a == n {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func configList(path string, stdout io.Writer, log *tui.Logger) int {
@@ -181,9 +309,27 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 	case "interactive":
 		return strconv.FormatBool(cfg.Interactive)
 	case "truncate_exec_limit":
-		return strconv.Itoa(cfg.TruncateExecLimit)
+		return strconv.Itoa(cfg.Context.ExecLimit)
 	case "truncate_search_limit":
-		return strconv.Itoa(cfg.TruncateSearchLimit)
+		return strconv.Itoa(cfg.Context.SearchLimit)
+	case "context.exec_limit":
+		return strconv.Itoa(cfg.Context.ExecLimit)
+	case "context.search_limit":
+		return strconv.Itoa(cfg.Context.SearchLimit)
+	case "context.head_lines":
+		return strconv.Itoa(cfg.Context.HeadLines)
+	case "context.tail_lines":
+		return strconv.Itoa(cfg.Context.TailLines)
+	case "context.keep_turns":
+		return strconv.Itoa(cfg.Context.KeepTurns)
+	case "context.elide_after_turns":
+		return strconv.Itoa(cfg.Context.ElideAfterTurns)
+	case "context.elide_min_bytes":
+		return strconv.Itoa(cfg.Context.ElideMinBytes)
+	case "context.elide_head_lines":
+		return strconv.Itoa(cfg.Context.ElideHeadLines)
+	case "context.summarize_after_tokens":
+		return strconv.Itoa(cfg.Context.SummarizeAfterTokens)
 	case "session.persist":
 		return strconv.FormatBool(cfg.SessionPersist)
 	case "session.max_turns":

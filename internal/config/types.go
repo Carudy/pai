@@ -13,6 +13,37 @@ type CustomPrompt struct {
 	Prompt     string `toml:"prompt"`
 }
 
+// ContextConfig controls how the conversation is kept within the model's context
+// window: shortening a single tool observation, and eliding old observations from
+// the replayed history. All values come from the [context] section of config.toml
+// with built-in defaults, so an omitted key keeps its default.
+type ContextConfig struct {
+	// Byte budgets for one observation fed back to the model.
+	ExecLimit   int // execute/remote output
+	SearchLimit int // websearch result
+
+	// Lines kept from the head and tail of an observation that must be shortened.
+	// The tail matters: errors and summaries land at the end of command output.
+	HeadLines int
+	TailLines int
+
+	// Compaction of older history. The last KeepTurns messages are replayed
+	// verbatim; tool observations older than that are elided to their header. No
+	// elision happens until the conversation exceeds ElideAfterTurns messages, and
+	// observations smaller than ElideMinBytes are left alone. ElideHeadLines is how
+	// much of an elided observation survives.
+	KeepTurns       int
+	ElideAfterTurns int
+	ElideMinBytes   int
+	ElideHeadLines  int
+
+	// SummarizeAfterTokens turns on the second compression layer: when the last
+	// prompt exceeded this many tokens, the oldest turns are summarized by the
+	// model into one message and only the last KeepTurns messages are kept. Zero
+	// (the default) disables it — it costs an extra model call, so it is opt-in.
+	SummarizeAfterTokens int
+}
+
 // tomlConfig mirrors the structure of ~/.config/pai/config.toml.
 type tomlConfig struct {
 	Providers map[string]ProviderConfig `toml:"providers"`
@@ -25,6 +56,17 @@ type tomlConfig struct {
 		TruncateExecLimit   int                      `toml:"truncate_exec_limit"`
 		TruncateSearchLimit int                      `toml:"truncate_search_limit"`
 	} `toml:"app"`
+	Context struct {
+		ExecLimit            int `toml:"exec_limit"`
+		SearchLimit          int `toml:"search_limit"`
+		HeadLines            int `toml:"head_lines"`
+		TailLines            int `toml:"tail_lines"`
+		KeepTurns            int `toml:"keep_turns"`
+		ElideAfterTurns      int `toml:"elide_after_turns"`
+		ElideMinBytes        int `toml:"elide_min_bytes"`
+		ElideHeadLines       int `toml:"elide_head_lines"`
+		SummarizeAfterTokens int `toml:"summarize_after_tokens"`
+	} `toml:"context"`
 	Tool struct {
 		TavilyAPIKey string   `toml:"tavily_api_key"`
 		TrustedCmds  []string `toml:"trusted_cmds"`
@@ -68,9 +110,8 @@ type UserConfig struct {
 	// loaded from ~/.config/pai/prompts.toml.
 	CustomPrompt CustomPrompt
 
-	// Truncation limits for output fed back to the model (0 = built-in default).
-	TruncateExecLimit   int
-	TruncateSearchLimit int
+	// Truncation and compaction for output fed back to the model.
+	Context ContextConfig
 
 	// SessionPersist makes every run persist to an auto-named session, even
 	// without -s/--attach/--continue. SessionMaxTurns caps how many resumed
@@ -110,13 +151,21 @@ func maskSecret(s string) string {
 
 func defaultConfig() *UserConfig {
 	return &UserConfig{
-		DefaultModel:        "deepseek:deepseek-v4-flash",
-		DefaultRole:         "devops",
-		ProvidersConfigs:    make(map[string]ProviderConfig),
-		CustomPrompt:        CustomPrompt{},
-		TruncateExecLimit:   8000,
-		TruncateSearchLimit: 8000,
-		SessionRecapTurns:   3,
+		DefaultModel:     "deepseek:deepseek-v4-flash",
+		DefaultRole:      "devops",
+		ProvidersConfigs: make(map[string]ProviderConfig),
+		CustomPrompt:     CustomPrompt{},
+		Context: ContextConfig{
+			ExecLimit:       8000,
+			SearchLimit:     8000,
+			HeadLines:       80,
+			TailLines:       40,
+			KeepTurns:       8,
+			ElideAfterTurns: 16,
+			ElideMinBytes:   1000,
+			ElideHeadLines:  8,
+		},
+		SessionRecapTurns: 3,
 	}
 }
 
@@ -142,9 +191,38 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 		cfg.SessionRecapTurns = *raw.Session.RecapTurns
 	}
 	if raw.App.TruncateExecLimit > 0 {
-		cfg.TruncateExecLimit = raw.App.TruncateExecLimit
+		cfg.Context.ExecLimit = raw.App.TruncateExecLimit
 	}
 	if raw.App.TruncateSearchLimit > 0 {
-		cfg.TruncateSearchLimit = raw.App.TruncateSearchLimit
+		cfg.Context.SearchLimit = raw.App.TruncateSearchLimit
+	}
+	// [context] is canonical and overrides the legacy [app] keys above.
+	ctx := raw.Context
+	if ctx.ExecLimit > 0 {
+		cfg.Context.ExecLimit = ctx.ExecLimit
+	}
+	if ctx.SearchLimit > 0 {
+		cfg.Context.SearchLimit = ctx.SearchLimit
+	}
+	if ctx.HeadLines > 0 {
+		cfg.Context.HeadLines = ctx.HeadLines
+	}
+	if ctx.TailLines > 0 {
+		cfg.Context.TailLines = ctx.TailLines
+	}
+	if ctx.KeepTurns > 0 {
+		cfg.Context.KeepTurns = ctx.KeepTurns
+	}
+	if ctx.ElideAfterTurns > 0 {
+		cfg.Context.ElideAfterTurns = ctx.ElideAfterTurns
+	}
+	if ctx.ElideMinBytes > 0 {
+		cfg.Context.ElideMinBytes = ctx.ElideMinBytes
+	}
+	if ctx.ElideHeadLines > 0 {
+		cfg.Context.ElideHeadLines = ctx.ElideHeadLines
+	}
+	if ctx.SummarizeAfterTokens > 0 {
+		cfg.Context.SummarizeAfterTokens = ctx.SummarizeAfterTokens
 	}
 }

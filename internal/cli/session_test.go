@@ -50,6 +50,11 @@ func TestDescribeTurn(t *testing.T) {
 		},
 		{"input is verbatim", core.Turn{Kind: "input", Content: "check disk"}, "check disk"},
 		{"note is verbatim", core.Turn{Kind: "note", Content: "[interrupted]"}, "[interrupted]"},
+		{
+			"summary drops the header label",
+			core.Turn{Kind: "summary", Content: "[conversation summary so far]\nran df -h"},
+			"[summary] ran df -h",
+		},
 	}
 
 	for _, tc := range cases {
@@ -68,5 +73,83 @@ func TestDescribeTurnTruncates(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "…") {
 		t.Errorf("truncation marker missing: %q", got)
+	}
+}
+
+func summaryTurn(body string) core.Turn {
+	return core.Turn{Role: "system", Kind: core.KindSummary, Content: "[conversation summary so far]\n" + body}
+}
+
+func turn(kind, content string) core.Turn { return core.Turn{Kind: kind, Content: content} }
+
+// A summary checkpoint stands in for everything before it, so attaching replays
+// the summary plus only the turns after it — not the turns it summarizes.
+func TestReplayTurnsStartsAtSummary(t *testing.T) {
+	turns := []core.Turn{
+		turn("input", "old request"),
+		turn("output", "old reply"),
+		turn("tool_result", "old observation"),
+		summaryTurn("what happened so far"),
+		turn("input", "new request"),
+		turn("output", "new reply"),
+	}
+
+	got := replayTurns(turns, 0)
+	if len(got) != 3 {
+		t.Fatalf("got %d turns, want summary + 2", len(got))
+	}
+	if got[0].Kind != core.KindSummary {
+		t.Errorf("first turn = %q, want the summary", got[0].Kind)
+	}
+	if got[1].Content != "new request" {
+		t.Errorf("replayed a summarized turn: %q", got[1].Content)
+	}
+}
+
+// The newest checkpoint wins; older ones are superseded and dropped.
+func TestReplayTurnsUsesLastSummary(t *testing.T) {
+	turns := []core.Turn{
+		summaryTurn("first"),
+		turn("input", "middle"),
+		summaryTurn("second"),
+		turn("input", "latest"),
+	}
+	got := replayTurns(turns, 0)
+	if len(got) != 2 || !strings.Contains(got[0].Content, "second") {
+		t.Fatalf("expected the second summary + latest, got %+v", got)
+	}
+}
+
+// max_turns caps the tail but never discards the checkpoint itself.
+func TestReplayTurnsCapsTailKeepingSummary(t *testing.T) {
+	turns := []core.Turn{
+		turn("input", "old"),
+		summaryTurn("so far"),
+		turn("input", "a"),
+		turn("output", "b"),
+		turn("input", "c"),
+	}
+	got := replayTurns(turns, 2)
+	if len(got) != 3 {
+		t.Fatalf("got %d turns, want summary + 2", len(got))
+	}
+	if got[0].Kind != core.KindSummary {
+		t.Errorf("summary was dropped by max_turns: %+v", got)
+	}
+	if got[1].Content != "b" || got[2].Content != "c" {
+		t.Errorf("tail = %q,%q, want b,c", got[1].Content, got[2].Content)
+	}
+}
+
+// Without a checkpoint, replay is the whole transcript capped to the tail.
+func TestReplayTurnsWithoutSummary(t *testing.T) {
+	turns := []core.Turn{turn("input", "a"), turn("output", "b"), turn("input", "c")}
+
+	if got := replayTurns(turns, 0); len(got) != 3 {
+		t.Errorf("max_turns=0 should replay everything, got %d", len(got))
+	}
+	got := replayTurns(turns, 2)
+	if len(got) != 2 || got[0].Content != "b" {
+		t.Errorf("tail = %+v, want b,c", got)
 	}
 }
