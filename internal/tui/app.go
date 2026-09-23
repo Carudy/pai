@@ -156,10 +156,19 @@ func (p *appPrompter) Ask(title string) (string, error) {
 	if v, ok := p.app.model.popQueue(); ok {
 		return v, nil
 	}
+	// A steering message that never reached a step boundary still belongs to the
+	// user; deliver it rather than leaving it stranded.
+	if v, ok := p.app.model.popSteer(); ok {
+		return v, nil
+	}
 	req := promptReq{kind: promptAsk, title: title, reply: make(chan promptResult, 1)}
 	res, err := p.ask(req)
 	return res.text, err
 }
+
+// Steer implements core.Steerer: a non-blocking poll the loop makes between
+// steps to deliver a mid-task message.
+func (p *appPrompter) Steer() (string, bool) { return p.app.model.popSteer() }
 
 func (p *appPrompter) Confirm(title string) (bool, error) {
 	req := promptReq{kind: promptConfirm, title: title, reply: make(chan promptResult, 1)}
@@ -219,6 +228,7 @@ type appModel struct {
 	interactive bool
 	pending     *promptReq
 	queue       []string
+	steerQ      []string
 	width       int
 	onInterrupt func() bool
 
@@ -297,6 +307,9 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			return m.interruptKey()
+		case tea.KeyCtrlG:
+			m.steer()
+			return m, nil
 		case tea.KeyEsc:
 			if m.pending != nil {
 				m.answer(promptResult{err: core.ErrAborted})
@@ -356,6 +369,12 @@ func (m *appModel) interruptKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.onInterrupt != nil && m.onInterrupt() {
+		// Immediate: text already typed is delivered the moment the step is
+		// cancelled, so Ctrl+C reads as "stop this and do what I just said".
+		if text := strings.TrimSpace(m.input.Value()); text != "" {
+			m.pushQueue(text)
+			m.input.SetValue("")
+		}
 		return m, nil
 	}
 	return m, tea.Quit
@@ -377,6 +396,23 @@ func (m *appModel) submit() {
 	m.input.SetValue("")
 }
 
+// steer queues the typed text for delivery at the next step boundary, so it can
+// redirect the agent part-way through a job instead of waiting for it to stop.
+func (m *appModel) steer() {
+	text := strings.TrimSpace(m.input.Value())
+	if text == "" {
+		return
+	}
+	if m.pending != nil {
+		m.answer(promptResult{text: text})
+		return
+	}
+	m.mu.Lock()
+	m.steerQ = append(m.steerQ, text)
+	m.mu.Unlock()
+	m.input.SetValue("")
+}
+
 // answer resolves the pending prompt and returns the bar to its idle state.
 func (m *appModel) answer(res promptResult) {
 	if m.pending == nil {
@@ -390,27 +426,30 @@ func (m *appModel) answer(res promptResult) {
 
 func (m *appModel) View() string {
 	// The session label rides the live region so it stays visible in every state.
-	label := RenderStr("Info", "["+SessionLabel(m.session)+"]") + " "
+	label := RenderStr("Session", "["+SessionLabel(m.session)+"]") + " "
 
 	if m.pending != nil && m.pending.kind == promptConfirm {
 		// Modal: the keys that resolve it are spelled out, since stray keys are
 		// deliberately ignored and would otherwise look like an unresponsive UI.
-		prompt := RenderStr("Warn", "⚠︎  "+m.pending.title)
-		hint := RenderStr("Hint", "[y/enter] run · [n/esc] skip · [ctrl+c] abort")
-		return label + prompt + "\n" + hint
+		// The prompt is indented onto its own line so an approval reads as a
+		// distinct, deliberate step rather than more scrolling output.
+		prompt := RenderStr("Confirm", "  ⚠︎  "+m.pending.title)
+		hint := RenderStr("Hint", "  [y/enter] run · [n/esc] skip · [ctrl+c] abort")
+		return label + "\n" + prompt + "\n" + hint
 	}
 
-	status := RenderStr("Hint", "⏳ PAI is working — type to queue your next instruction")
+	status := RenderStr("Hint", "⏳ working — enter queue · ctrl+g steer · ctrl+c stop & send")
 	if m.toolLabel != "" {
-		status = RenderStr("Warn", fmt.Sprintf("⏳ running %s… %s",
+		status = RenderStr("Warn", fmt.Sprintf("⏳ running %s… %s (ctrl+c to stop)",
 			m.toolLabel, formatElapsed(time.Since(m.toolSince))))
 	}
 	if m.pending != nil {
-		status = RenderStr("Warn", "🙋 "+m.pending.title)
+		// 💬 for the input bar: PAI is waiting for you, not raising a hand to ask.
+		status = RenderStr("Warn", "💬 "+m.pending.title)
 	}
 	queued := ""
-	if n := m.queueLen(); n > 0 {
-		queued = " " + RenderStr("Subdued", fmt.Sprintf("(%d queued)", n))
+	if n, s := m.queueLen(), m.steerLen(); n > 0 || s > 0 {
+		queued = " " + RenderStr("Subdued", fmt.Sprintf("(%d queued, %d to steer)", n, s))
 	}
 
 	out := label + status + queued
@@ -501,6 +540,30 @@ func (m *appModel) queueLen() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.queue)
+}
+
+func (m *appModel) steerLen() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.steerQ)
+}
+
+func (m *appModel) popSteer() (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.steerQ) == 0 {
+		return "", false
+	}
+	v := m.steerQ[0]
+	m.steerQ = m.steerQ[1:]
+	return v, true
+}
+
+// pushQueue puts text at the front of the queue, so it is delivered next.
+func (m *appModel) pushQueue(text string) {
+	m.mu.Lock()
+	m.queue = append([]string{text}, m.queue...)
+	m.mu.Unlock()
 }
 
 func (m *appModel) setErr(err error) {

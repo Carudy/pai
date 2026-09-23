@@ -157,6 +157,14 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 		}
 	}
 
+	// Same budget as a local command; applied after confirmation so the user's
+	// deliberation is not counted against the command's time.
+	if d := cfg.CmdTimeout; d > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
+	}
+
 	output, execErr := rt.Remote.ExecuteRemote(ctx, rp, toolStream(rt))
 	report(rt, output, execErr, "Remote command succeeded")
 	return observation("remote result", rp.Cmd, execErr, output, execTruncate(cfg)), nil

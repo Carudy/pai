@@ -237,6 +237,22 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 			return err
 		}
 
+		// Steering: a message the user sent while PAI was working is delivered at
+		// the next safe point — after the current action, before the model picks
+		// the next one. Prompters that cannot steer (line mode) simply don't
+		// implement core.Steerer.
+		if s, ok := rt.Prompter.(core.Steerer); ok {
+			if msg, ok := s.Steer(); ok {
+				rt.Observer.User(msg)
+				rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: msg})
+				cc.history = append(cc.history, provider.Message{
+					Role:    provider.RoleUser,
+					Kind:    core.KindInput,
+					Content: steeringMessage(msg),
+				})
+			}
+		}
+
 		// Second compression layer: once the prompt outgrows the budget, replace
 		// the oldest turns with a model-written summary. The next step reports
 		// fresh usage, so at most one attempt happens per iteration.
@@ -315,6 +331,13 @@ func compactHistory(ctx context.Context, rt *Runtime, cfg *config.UserConfig, cc
 	// re-summarized) — while the full transcript is still kept on disk.
 	rt.record(core.Turn{Role: provider.RoleSystem, Kind: core.KindSummary, Content: msg.Content})
 	return true, nil
+}
+
+// steeringMessage marks a mid-task user message so the model can tell it apart
+// from a tool result — which also arrives as a user-role message — and knows the
+// plan changed underneath it.
+func steeringMessage(msg string) string {
+	return "[user steering]\n" + msg
 }
 
 // historyEndsWithUser reports whether the composed conversation's last message

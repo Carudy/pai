@@ -19,6 +19,15 @@ var Styles = map[string]lipgloss.Style{
 	"Subdued": lipgloss.NewStyle().Foreground(lipgloss.Color("#ABFAE1")),
 	"Content": lipgloss.NewStyle().Foreground(lipgloss.Color("#ddeeff")),
 
+	// Confirm is the modal yes/no prompt. It asks for a go/no-go before an
+	// action runs, so it is a distinct, urgent red — deliberately not the purple
+	// accent used for hints — and bold to stand out from scrolling output.
+	"Confirm": lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F5F")).Bold(true),
+	// Session labels the live region. It is an identity marker rather than a
+	// status, so a cool cyan sets it apart from the purple hints, green tool
+	// tags and amber warnings.
+	"Session": lipgloss.NewStyle().Foreground(lipgloss.Color("#7DCFFF")).Bold(true),
+
 	// ── Logging ───────────────────────────────────────────────────────
 	"Debug": lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Italic(true),
 	"Error": lipgloss.NewStyle().Foreground(lipgloss.Red).Bold(true),

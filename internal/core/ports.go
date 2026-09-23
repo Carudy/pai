@@ -110,6 +110,14 @@ type Prompter interface {
 	Confirm(title string) (bool, error)
 }
 
+// Steerer is an optional Prompter capability: a non-blocking poll for a message
+// the user sent while the agent was working, meant to be delivered at the next
+// safe point (between steps) rather than only when the agent stops for input.
+// The loop type-asserts, so prompters that cannot steer need not implement it.
+type Steerer interface {
+	Steer() (string, bool)
+}
+
 // Logger is the loop's diagnostic sink.
 type Logger interface {
 	Debugf(format string, a ...any)

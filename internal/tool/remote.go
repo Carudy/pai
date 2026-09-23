@@ -10,12 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/Carudy/pai/internal/paths"
 )
-
-const remoteTimeout = 120 * time.Second
 
 // RemotePayload is the JSON structure the AI sends inside the "remote" action payload.
 type RemotePayload struct {
@@ -31,6 +28,9 @@ type RemotePayload struct {
 // The manager is lazily created on the first "remote" action and uses
 // $XDG_DATA_HOME/pai/ssh-control/ (or ~/.local/share/pai/ssh-control/) for
 // control sockets (persistent across runs).
+//
+// A remote command's time budget is the caller's: runRemote applies
+// [tool] cmd_timeout_seconds, so it is bounded the same way a local command is.
 type RemoteManager struct {
 	controlDir string
 	// shell, when non-empty, is a remote login shell (e.g. "bash", "fish") used
@@ -74,10 +74,10 @@ func (rm *RemoteManager) ExecuteRemote(ctx context.Context, payload RemotePayloa
 		rm.remoteCmd(payload.Cmd),
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
-	defer cancel()
-
 	cmd := exec.CommandContext(ctx, "ssh", args...)
+	// ssh is left to manage its own children (killing the group could take the
+	// ControlMaster with it); WaitDelay still bounds the wait on its pipes.
+	cmd.WaitDelay = waitDelay
 
 	var result ExecResult
 	var runErr error

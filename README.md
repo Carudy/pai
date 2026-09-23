@@ -91,13 +91,15 @@ subcommand (`pai -d session ls`).
 terminal while output scrolls above it. On a real terminal this is a full inline
 UI; pipes and redirected output fall back to plain line prompts.
 
-- **Type while PAI works** — the text is queued and used as your next
-  instruction, so you don't have to wait for a step to finish.
+- **Type while PAI works**, then choose how it lands:
+  - **Enter** *queues* it — delivered when PAI next stops for input;
+  - **Ctrl+G** *steers* it — delivered at the next step boundary, so it can
+    redirect the current job without waiting for it to finish;
+  - **Ctrl+C** *interrupts* — it cancels the running step (killing the command
+    and anything it spawned) and sends whatever you typed immediately.
 - **Long commands show their elapsed time**: while a tool runs, the live line
   reads `⏳ running nix profile upgrade… 2m14s`, so a slow build is
   distinguishable from a hang.
-- **Ctrl+C** cancels the running step (killing the command *and* anything it
-  spawned), or ends the session if nothing is running.
 - **Tool confirmations are modal**: `y`/`Enter` runs, `n`/`Esc` skips, `Ctrl+C`
   aborts, and other keys are ignored.
 - The current session rides along in the live region: `[work]`, or
@@ -175,8 +177,8 @@ tavily_api_key = "your-tavily-key"  # for web search (env TAVILY_API_KEY as fall
 trusted_cmds = [
     "ls", "cat", "grep", "pwd", "which",
 ]
-# Kill a single command after this many seconds. 0 (default) = no timeout:
-# Ctrl+C stops a running command, so long builds are not cut off.
+# Kill a single command (local or remote) after this many seconds. 0 (default)
+# = no timeout: Ctrl+C stops a running command, so long builds are not cut off.
 cmd_timeout_seconds = 0
 
 [session]

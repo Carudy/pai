@@ -27,7 +27,7 @@ func (o *LineObserver) User(text string)        { o.pair("TagUser", "[User]", "I
 
 func (o *LineObserver) Awaiting() {
 	o.closeReasoning()
-	o.pair("TagAgent", "[PAI]", "Info", "[Awaiting for new instructions.]")
+	o.pair("TagAgent", "[PAI 💬]", "Info", "[Awaiting for new instructions.]")
 }
 
 func (o *LineObserver) Usage(u core.Usage) {

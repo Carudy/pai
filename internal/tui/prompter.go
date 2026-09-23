@@ -46,7 +46,7 @@ func (p *Prompter) Ask(title string) (string, error) {
 // Confirm asks a yes/no question, defaulting to no. EOF is treated as "no"
 // rather than an error: nothing was confirmed, so nothing should run.
 func (p *Prompter) Confirm(title string) (bool, error) {
-	if _, err := fmt.Fprintf(p.out, "%s %s ", RenderStr("Warn", title), RenderStr("Hint", "[y/N]")); err != nil {
+	if _, err := fmt.Fprintf(p.out, "%s %s ", RenderStr("Confirm", title), RenderStr("Hint", "[y/N]")); err != nil {
 		return false, nil
 	}
 	line, err := p.readLine()
