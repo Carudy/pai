@@ -41,6 +41,13 @@ var Styles = map[string]lipgloss.Style{
 	"CmdVar":      lipgloss.NewStyle().Foreground(lipgloss.Color("180")),
 	"CmdComment":  lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true),
 
+	// ── Edit diff ────────────────────────────────────────────────────
+	// Added/removed lines use the conventional green/red; the hunk header is a
+	// cool blue so it reads as a location marker, not more changed text.
+	"DiffAdd":  lipgloss.NewStyle().Foreground(lipgloss.Color("114")),
+	"DiffDel":  lipgloss.NewStyle().Foreground(lipgloss.Color("203")),
+	"DiffHunk": lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Bold(true),
+
 	// ── Decor ─────────────────────────────────────────────────────────
 	"Separator": lipgloss.NewStyle().Foreground(lipgloss.Color("236")),
 

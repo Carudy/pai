@@ -80,6 +80,13 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 	case "websearch":
 		o.pair("TagAgent", "[WEB 🔍]", "Help", c.Reason)
 		o.pair("TagExec", "[WEB]", "Info", c.Detail)
+	case "read":
+		o.pair("TagAgent", "[READ 💬]", "Help", c.Reason)
+		o.pair("TagExec", fmt.Sprintf("[READ 📄 %s]", c.Target), "Info", c.Detail)
+	case "edit":
+		o.pair("TagAgent", "[EDIT 💬]", "Help", c.Reason)
+		o.pair("TagExec", fmt.Sprintf("[EDIT ✏️ %s]", c.Target), "Info", c.Detail)
+		o.diff(c.Diff)
 	default:
 		o.pair("TagAgent", "[TOOL 💬]", "Help", c.Reason)
 		o.pair("TagExec", fmt.Sprintf("[TOOL %s]", c.Name), "Info", c.Detail)
@@ -115,6 +122,26 @@ func (o *LineObserver) command(tag, label, cmd string) {
 			break
 		}
 		fmt.Fprintf(o.W, "%s %s\n", RenderStr("Help", fmt.Sprintf("  %2d", i+1)), highlightCommand(seg.Src))
+	}
+}
+
+// diff prints an edit preview, colouring added, removed and context lines so a
+// change is scannable before the user approves it.
+func (o *LineObserver) diff(text string) {
+	if text == "" {
+		return
+	}
+	for _, line := range strings.Split(text, "\n") {
+		style := "Subdued"
+		switch {
+		case strings.HasPrefix(line, "+"):
+			style = "DiffAdd"
+		case strings.HasPrefix(line, "-"):
+			style = "DiffDel"
+		case strings.HasPrefix(line, "@@"):
+			style = "DiffHunk"
+		}
+		fmt.Fprintf(o.W, "%s\n", RenderStr(style, line))
 	}
 }
 

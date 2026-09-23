@@ -1,0 +1,27 @@
+# Tool: read
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "read"
+brief       = "read a text file, with line numbers"
+description = '''
+Read a text file from disk and return its contents with line numbers. Prefer it
+over `cat`: it is bounded (offset/limit), refuses binary files, and numbers every
+line so you can quote an exact "old_string" for the "edit" tool.
+
+Read only the region you need. In a large file, locate the area first (e.g.
+`rg -n <symbol>`), then read it with offset/limit instead of dumping the whole
+file — a full read buries the lines you want and burns context.
+'''
+schema = '''
+{
+  "path":   "file path to read (required)",
+  "offset": "1-based line to start at; default 1",
+  "limit":  "max lines to return; default 2000"
+}
+'''

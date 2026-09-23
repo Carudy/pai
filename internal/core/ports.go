@@ -62,11 +62,16 @@ type Usage struct {
 
 // ToolCall describes a tool about to run.
 type ToolCall struct {
-	Name    string // "execute" | "remote" | "websearch"
-	Target  string // shell name or SSH host (empty for websearch)
-	Detail  string // the command or query
+	Name    string // "execute" | "remote" | "websearch" | "read" | "edit"
+	Target  string // shell name, SSH host, or file path (empty for websearch)
+	Detail  string // the command, query, or change summary
 	Reason  string // why the model chose it
 	Trusted bool   // ran without confirmation
+
+	// Diff is an optional preview of what a file-modifying tool (edit) is about
+	// to change, rendered before the confirmation so the user reviews it. Empty
+	// for every other tool.
+	Diff string
 }
 
 // ToolResult is the outcome reported after a tool call.

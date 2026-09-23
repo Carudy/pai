@@ -1,0 +1,30 @@
+# Tool: edit
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "edit"
+brief       = "replace exact text in a file"
+description = '''
+Replace an exact block of text in a file, leaving the rest untouched. Prefer it
+over `sed -i` or a here-doc: it fails loudly when the text is missing or
+ambiguous instead of silently mangling the file, and the user reviews the change
+as a diff before it is applied.
+
+Use "read" first to copy the text to replace byte-for-byte. Keep "old_string"
+short but unambiguous: by default it must occur exactly once in the file, so
+include enough surrounding lines to pin down the location. Set "replace_all" to
+true to change every occurrence on purpose.
+'''
+schema = '''
+{
+  "path":        "file path to edit (required)",
+  "old_string":  "exact text to replace; must be unique unless replace_all is true",
+  "new_string":  "replacement text; an empty string deletes the match",
+  "replace_all": "replace every occurrence instead of requiring a unique match; default false"
+}
+'''

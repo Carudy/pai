@@ -19,6 +19,23 @@ func renderToolCall(c core.ToolCall) string {
 	return ansi.Strip(buf.String())
 }
 
+// An edit rendered to the transcript shows its diff so the user can review the
+// change before approving it.
+func TestToolCallRendersEditDiff(t *testing.T) {
+	out := renderToolCall(core.ToolCall{
+		Name:   "edit",
+		Target: "main.go",
+		Detail: "replace 1 occurrence",
+		Diff:   "@@ line 2 @@\n  a\n- old\n+ new",
+	})
+
+	for _, want := range []string{"[EDIT ✏️ main.go]", "replace 1 occurrence", "- old", "+ new"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 // A chained command is broken up and numbered, so it can be read and judged
 // before approving it.
 func TestToolCallRendersSteps(t *testing.T) {
