@@ -103,10 +103,10 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 
 - **Tool payload shapes must match the handlers.** `execute` and `websearch`
   take a **string** payload; `remote` (`{"host":..., "cmd":...}`), `read`
-  (`{"path":..., "offset":..., "limit":...}`) and `edit`
-  (`{"path":..., "old_string":..., "new_string":..., "replace_all":...}`) take an
-  **object**. Getting this wrong yields
-  `json: cannot unmarshal object into Go value of type string` at runtime.
+  (`{"path":..., "offset":..., "limit":...}`), `edit`
+  (`{"path":..., "old_string":..., "new_string":..., "replace_all":...}`) and
+  `write` (`{"path":..., "content":...}`) take an **object**. Getting this wrong
+  yields `json: cannot unmarshal object into Go value of type string` at runtime.
 - **`role.Runtime` is per-run state**, not configuration — config lives in
   `config.UserConfig`. Don't mix them. The name `Session` is reserved for
   persistence (`session`); the loop's state is `Runtime`.

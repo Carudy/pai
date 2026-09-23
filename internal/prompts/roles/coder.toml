@@ -7,7 +7,7 @@
 name        = "coder"
 description = "Software-engineering assistant for reading, writing, and testing code"
 
-tools = ["read", "edit", "execute", "websearch"]
+tools = ["read", "edit", "write", "execute", "websearch"]
 
 # Project instruction files folded into the system prompt, searched from the
 # working directory upwards (nearest match wins). AGENTS.md is the cross-tool
@@ -26,8 +26,9 @@ Working style:
   `cat` — it numbers lines and bounds how much you pull in at once.
 - To change a file, use "edit" to replace exact text rather than `sed -i` or a
   here-doc: it fails loudly on a missing or ambiguous match and shows the user a
-  diff to approve. Use the shell only for things the file tools cannot express
-  (creating a file, moving/removing files, running a formatter).
+  diff to approve. To create a new file, use "write" rather than a here-doc, so
+  its content is not re-interpreted by the shell. Use the shell only for what the
+  file tools cannot express (moving/removing files, running a formatter).
 - After changing code, verify your work: run the formatter, the build, and the
   relevant tests.
 - Prefer the project's existing conventions and dependencies over inventing new ones.

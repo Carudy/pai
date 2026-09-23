@@ -124,6 +124,75 @@ func TestRunEditDeclined(t *testing.T) {
 	}
 }
 
+// write creates a new file, byte for byte.
+func TestRunWriteCreatesFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.sh")
+	rt := testEditRuntime(true)
+
+	content := "#!/bin/sh\necho \"$HOME\"\n"
+	raw, _ := json.Marshal(writePayload{Path: path, Content: content})
+	out, err := runWrite(context.Background(), &config.UserConfig{}, rt, "r", raw)
+	if err != nil {
+		t.Fatalf("runWrite: %v", err)
+	}
+	if !strings.Contains(out, "[write result]") {
+		t.Errorf("unexpected observation: %q", out)
+	}
+
+	got, _ := os.ReadFile(path)
+	if string(got) != content {
+		t.Errorf("file = %q, want %q", got, content)
+	}
+}
+
+// write is create-only: an existing path is refused so it cannot clobber a file
+// the model meant to edit.
+func TestRunWriteRefusesExisting(t *testing.T) {
+	path := writeTemp(t, "original\n")
+	rt := testEditRuntime(true)
+
+	raw, _ := json.Marshal(writePayload{Path: path, Content: "replacement\n"})
+	_, err := runWrite(context.Background(), &config.UserConfig{}, rt, "r", raw)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("want an already-exists error, got %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "original\n" {
+		t.Errorf("file was overwritten: %q", got)
+	}
+}
+
+// Declining the confirmation creates nothing.
+func TestRunWriteDeclined(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.txt")
+	rt := testEditRuntime(false)
+
+	raw, _ := json.Marshal(writePayload{Path: path, Content: "hi\n"})
+	out, err := runWrite(context.Background(), &config.UserConfig{}, rt, "r", raw)
+	if err != nil {
+		t.Fatalf("runWrite: %v", err)
+	}
+	if !strings.Contains(out, "USER DECLINED") {
+		t.Errorf("unexpected observation: %q", out)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("file was created despite decline")
+	}
+}
+
+// A new-file preview marks every line as an addition and reports the true count.
+func TestDiffNewFile(t *testing.T) {
+	got := diffNewFile("a\nb\n")
+	for _, want := range []string{"@@ new file @@", "+ a", "+ b"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("diff missing %q:\n%s", want, got)
+		}
+	}
+	if lineCount("a\nb\n") != 2 || lineCount("") != 0 || lineCount("a") != 1 {
+		t.Errorf("lineCount wrong: %d %d %d", lineCount("a\nb\n"), lineCount(""), lineCount("a"))
+	}
+}
+
 // The diff marks the removed and added text so the user can review it.
 func TestDiffEditMarksChanges(t *testing.T) {
 	got := diffEdit("a\nb\nc\n", "b", "B", 1)

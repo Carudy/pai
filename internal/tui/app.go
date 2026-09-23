@@ -509,7 +509,7 @@ func toolLiveLabel(c core.ToolCall) string {
 		return "@" + c.Target
 	case "websearch":
 		return clipLine(c.Detail, 48)
-	case "read", "edit":
+	case "read", "edit", "write":
 		return clipLine(c.Target, 48)
 	default:
 		return c.Name

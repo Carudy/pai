@@ -37,6 +37,7 @@ var toolHandlers = map[string]toolHandler{
 	"websearch": runWebsearch,
 	"read":      runRead,
 	"edit":      runEdit,
+	"write":     runWrite,
 }
 
 // checkToolCoverage fails fast when a role declares a tool with no handler.

@@ -87,6 +87,10 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 		o.pair("TagAgent", "[EDIT 💬]", "Help", c.Reason)
 		o.pair("TagExec", fmt.Sprintf("[EDIT ✏️ %s]", c.Target), "Info", c.Detail)
 		o.diff(c.Diff)
+	case "write":
+		o.pair("TagAgent", "[WRITE 💬]", "Help", c.Reason)
+		o.pair("TagExec", fmt.Sprintf("[WRITE 📝 %s]", c.Target), "Info", c.Detail)
+		o.diff(c.Diff)
 	default:
 		o.pair("TagAgent", "[TOOL 💬]", "Help", c.Reason)
 		o.pair("TagExec", fmt.Sprintf("[TOOL %s]", c.Name), "Info", c.Detail)

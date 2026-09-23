@@ -42,6 +42,12 @@ type editPayload struct {
 	ReplaceAll bool   `json:"replace_all"`
 }
 
+// writePayload is the shape of the "write" tool's payload.
+type writePayload struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
 // runRead returns a numbered window of a text file. Unlike a shell command it is
 // never confirmed — reading changes nothing — and unlike `cat` it is bounded and
 // line-numbered, so the model can quote an exact string for runEdit.
@@ -211,6 +217,96 @@ func runEdit(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 
 	rt.Observer.ToolResult(core.ToolResult{OK: true, Message: "edited " + p.Path})
 	return fmt.Sprintf("[edit result]\nFILE: %s\nREPLACED: %s", p.Path, countNoun(n, "occurrence")), nil
+}
+
+// runWrite creates a new file, showing the user its content and asking before it
+// is written. It is create-only on purpose: overwriting is destructive and needs a
+// real line diff to be reviewable, so changing an existing file is runEdit's job.
+// The content travels as data rather than as a shell here-doc, which sidesteps the
+// escaping bugs (quotes, `$`, a stray EOF) that make here-docs unreliable.
+func runWrite(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
+	var p writePayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return "", fmt.Errorf("write payload: %w", err)
+	}
+	if strings.TrimSpace(p.Path) == "" {
+		return "", fmt.Errorf("write requires a non-empty path")
+	}
+	// fail reports a refused write to the user (not just to the model).
+	fail := func(msg string) (string, error) {
+		rt.Observer.ToolCall(core.ToolCall{Name: "write", Target: p.Path, Reason: reason})
+		rt.Observer.ToolResult(core.ToolResult{Message: msg})
+		return "", errors.New(msg)
+	}
+
+	if _, err := os.Stat(p.Path); err == nil {
+		return fail(fmt.Sprintf("%s already exists; use edit to change it, or read it first", p.Path))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fail(fmt.Sprintf("write %s: %v", p.Path, err))
+	}
+	if _, err := os.Stat(filepath.Dir(p.Path)); err != nil {
+		return fail(fmt.Sprintf("write %s: parent directory does not exist", p.Path))
+	}
+
+	n := lineCount(p.Content)
+	rt.Observer.ToolCall(core.ToolCall{
+		Name:   "write",
+		Target: p.Path,
+		Detail: fmt.Sprintf("create %s", countNoun(n, "line")),
+		Reason: reason,
+		Diff:   diffNewFile(p.Content),
+	})
+
+	ok, err := rt.Prompter.Confirm(fmt.Sprintf("Create %s?", p.Path))
+	if err != nil {
+		return "", fmt.Errorf("user interaction error: %w", err)
+	}
+	if !ok {
+		rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
+		return fmt.Sprintf("[write skipped]\nFILE: %s\nUSER DECLINED: no file was created.", p.Path), nil
+	}
+
+	if err := writeFileAtomic(p.Path, []byte(p.Content), 0o644); err != nil {
+		return "", fmt.Errorf("write %s: %w", p.Path, err)
+	}
+
+	rt.Observer.ToolResult(core.ToolResult{OK: true, Message: "created " + p.Path})
+	return fmt.Sprintf("[write result]\nFILE: %s\nCREATED: %s", p.Path, countNoun(n, "line")), nil
+}
+
+// diffNewFile previews a new file as an all-additions diff. It is capped, since a
+// long file would otherwise flood the transcript; the confirmation reports the
+// true line count.
+func diffNewFile(content string) string {
+	const maxLines = 40
+	lines := strings.Split(content, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1] // a trailing newline is not an extra empty line
+	}
+
+	var b strings.Builder
+	b.WriteString("@@ new file @@")
+	for i, l := range lines {
+		if i == maxLines {
+			fmt.Fprintf(&b, "\n… +%d more lines", len(lines)-i)
+			break
+		}
+		b.WriteString("\n+ " + l)
+	}
+	return b.String()
+}
+
+// lineCount returns the number of lines in s, treating a trailing newline as the
+// end of the last line rather than the start of an empty one.
+func lineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }
 
 // writeFileAtomic writes through a temp file in the same directory and renames

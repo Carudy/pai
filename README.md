@@ -226,6 +226,7 @@ Autonomous reason→act→observe loop for multi-step sysadmin tasks. Tools:
 - **remote** — Run commands on remote servers via SSH
 - **read** — Read a text file (numbered, bounded) instead of `cat`
 - **edit** — Replace exact text in a file, with a diff to approve
+- **write** — Create a new file (never overwrites) without a shell here-doc
 - **websearch** — Search the web for current information (config `tavily_api_key` or `TAVILY_API_KEY` env)
 
 ```bash
@@ -273,6 +274,7 @@ Helps read, write, refactor, and test code in the current repository. Tools:
 - **execute** — Inspect and modify the repo, run builds and tests
 - **read** — Read a file region with line numbers (preferred over `cat`)
 - **edit** — Replace exact text in a file, reviewed as a diff before it is written
+- **write** — Create a new file from data, not a shell here-doc (never overwrites)
 - **websearch** — Look up libraries, APIs, and error messages
 
 It deliberately has no **remote** tool: a role's tool list is its capability
@@ -308,8 +310,8 @@ Then run it with `pai -r writer`. A user role with the same name as a built-in
 one **overrides** it — handy for retuning `devops` without editing the source.
 
 `tools` may only reference built-in tools (`execute`, `remote`, `websearch`,
-`read`, `edit`): tool *implementations* live in Go, so new tools require code —
-new roles do not.
+`read`, `edit`, `write`): tool *implementations* live in Go, so new tools require
+code — new roles do not.
 
 `context_files` folds project instruction files into the system prompt, searched
 upwards from the working directory (nearest match wins) and capped at 8 KiB:

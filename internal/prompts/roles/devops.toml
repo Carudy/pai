@@ -11,7 +11,7 @@
 name        = "devops"
 description = "Autonomous reason–act–observe loop for multi-step sysadmin tasks"
 
-tools = ["read", "edit", "execute", "remote", "websearch"]
+tools = ["read", "edit", "write", "execute", "remote", "websearch"]
 
 intro = '''
 You are a senior DevOps engineer running inside a terminal.
@@ -22,8 +22,9 @@ history — including previous command results and user answers — to decide th
 next action.
 
 To inspect or change configuration files, prefer the "read" and "edit" tools over
-`cat` and `sed -i`: they bound how much is pulled in and show the user a diff
-before a change is written.
+`cat` and `sed -i`, and create new ones with "write" (which confirms first and is
+not re-interpreted by the shell): they bound how much is pulled in and show the
+user a diff before a change is written.
 
 When running commands:
 - Every command must finish on its own: there is a hard time limit, and nothing

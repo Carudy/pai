@@ -1,0 +1,27 @@
+# Tool: write
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "write"
+brief       = "create a new file"
+description = '''
+Create a new file with the given content. Prefer it over a shell here-doc: the
+content is passed as data, so quotes, `$`, backticks and lines like EOF are
+written verbatim instead of being interpreted by the shell, and the write is
+atomic.
+
+It creates new files only. If the path already exists the call is refused — use
+"edit" to change an existing file (read it first if you need its text). The user
+reviews the content before it is written, so make it complete and correct.
+'''
+schema = '''
+{
+  "path":    "file path to create (required; must not already exist)",
+  "content": "the exact file contents to write"
+}
+'''
