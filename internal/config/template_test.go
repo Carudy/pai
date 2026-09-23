@@ -76,13 +76,67 @@ func TestTemplateParsing(t *testing.T) {
 	if values["streaming"] != "true" {
 		t.Errorf("streaming = %q", values["streaming"])
 	}
-	// Commented-out settings are not template keys.
-	if _, ok := values["reasoning"]; ok {
-		t.Error("commented-out reasoning should not be a template key")
+	// Commented-out settings are template keys too, flagged as examples so a merge
+	// adds them commented rather than turning them on.
+	rk, ok := findKey(app.keys, "reasoning")
+	if !ok {
+		t.Error("commented reasoning should be a template key")
+	} else if !rk.commented {
+		t.Error("reasoning should be flagged commented")
+	} else if len(rk.insert) == 0 {
+		t.Error("a commented key should carry the block to insert")
 	}
 }
 
-// Merge adds what the file lacks without touching what it has.
+func findKey(keys []templateKey, key string) (templateKey, bool) {
+	for _, k := range keys {
+		if k.key == key {
+			return k, true
+		}
+	}
+	return templateKey{}, false
+}
+
+// A merge surfaces optional settings an older config predates — as comments, so
+// the upgrade adds no behaviour and no active value.
+func TestMergeTemplateAddsCommentedExamples(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("[app]\ndefault_role = \"coder\"\n\n[tool]\ntrusted_cmds = [\"ls\"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := MergeTemplate(path); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(path)
+	text := string(data)
+	for _, want := range []string{
+		`# trusted_paths = ["~/work/myproject"]`,
+		"# confirm_read = false",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("merge did not surface %q:\n%s", want, text)
+		}
+	}
+
+	// The examples must stay inactive: parsing the merged file leaves the new
+	// settings at their defaults.
+	var raw tomlConfig
+	if err := loadTOML(path, &raw); err != nil {
+		t.Fatalf("merged file is not valid TOML: %v", err)
+	}
+	if len(raw.Tool.TrustedPaths) != 0 || raw.Tool.ConfirmRead {
+		t.Errorf("commented examples became active: %+v", raw.Tool)
+	}
+
+	// And it is idempotent: the examples count as present next time.
+	again, err := MergeTemplate(path)
+	if err != nil || again != 0 {
+		t.Errorf("second merge added %d (err %v), want 0", again, err)
+	}
+}
+
 func TestMergeTemplate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	body := "# keep me\n[app]\ndefault_role = \"coder\"\n"

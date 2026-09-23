@@ -113,8 +113,10 @@ func WriteTemplate(path string, overwrite bool) (existed bool, err error) {
 // MergeTemplate writes any template setting that path lacks, leaving every
 // existing value untouched. A section that is absent is appended whole (its
 // comments included); a missing key in an existing section is inserted at the
-// end of that section. Placeholder empties (api_key = "") are not added, so a
-// merge never invents empty provider stubs. It returns how many keys it added.
+// end of that section. Optional settings the template ships commented out are
+// added as comments too, so upgrading surfaces new knobs without enabling them.
+// Placeholder empties (api_key = "") are not added, so a merge never invents
+// empty provider stubs. It returns how many entries it added.
 func MergeTemplate(path string) (int, error) {
 	lines, err := readLines(path)
 	if err != nil {
@@ -127,7 +129,9 @@ func MergeTemplate(path string) (int, error) {
 			if len(lines) > 0 {
 				lines = append(lines, "")
 			}
-			lines = append(lines, sec.lines...)
+			// trimBlank drops the blank the scanner swept into the section from the
+			// template's spacing, so appending it does not double a separator.
+			lines = append(lines, trimBlank(sec.lines)...)
 			added += len(sec.keys)
 			continue
 		}
@@ -135,7 +139,11 @@ func MergeTemplate(path string) (int, error) {
 			if hasKey(lines, sec.name, kv.key) {
 				continue
 			}
-			lines = appendKey(lines, sec.name, kv.key, kv.value)
+			if kv.commented {
+				lines = appendBlock(lines, sec.name, kv.insert)
+			} else {
+				lines = appendKey(lines, sec.name, kv.key, kv.value)
+			}
 			added++
 		}
 	}
@@ -228,18 +236,32 @@ type templateSection struct {
 	keys  []templateKey
 }
 
-type templateKey struct{ key, value string }
+type templateKey struct {
+	key, value string
+	// commented marks an example the template ships commented out (an optional
+	// setting shown with its explanation). A merge adds it as a comment, never as
+	// an active value, so surfacing it changes no behaviour.
+	commented bool
+	// insert is the exact block to add for a commented key: its explanatory
+	// comment lines plus the setting line, verbatim.
+	insert []string
+}
 
 // templateSections splits the template into sections, extracting each section's
-// scalar keys and values. Commented-out settings are ignored, and empty-string
-// placeholders are dropped so a merge never adds them.
+// keys. Active settings carry the value to merge; commented-out examples are kept
+// too (flagged commented, with the comment block to insert) so an upgrade can
+// surface new optional settings without enabling them. Empty-string placeholders
+// are dropped so a merge never invents empty provider stubs.
 func templateSections() []templateSection {
 	var out []templateSection
+	var pending []string // comment/blank lines since the last setting
+
 	for _, line := range strings.Split(template, "\n") {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		if trimmed == "" {
 			if len(out) > 0 {
 				out[len(out)-1].lines = append(out[len(out)-1].lines, line)
+				pending = append(pending, line)
 			}
 			continue
 		}
@@ -248,17 +270,48 @@ func templateSections() []templateSection {
 				name:  strings.Trim(strings.TrimSpace(trimmed), "[]"),
 				lines: []string{line},
 			})
+			pending = nil
 			continue
 		}
 		if len(out) == 0 {
 			continue
 		}
 		out[len(out)-1].lines = append(out[len(out)-1].lines, line)
-		if key, value, ok := splitSetting(line); ok && value != `""` {
-			out[len(out)-1].keys = append(out[len(out)-1].keys, templateKey{key, value})
+
+		if strings.HasPrefix(trimmed, "#") {
+			// A commented-out `key = value` is an optional setting, kept so a merge
+			// can add it (as a comment) to a config that predates it.
+			if key, value, ok := splitSetting(strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))); ok {
+				block := append(append([]string{}, trimBlank(pending)...), line)
+				out[len(out)-1].keys = append(out[len(out)-1].keys, templateKey{
+					key: key, value: value, commented: true, insert: block,
+				})
+				pending = nil
+				continue
+			}
+			pending = append(pending, line)
+			continue
 		}
+
+		if key, value, ok := splitSetting(line); ok && value != `""` {
+			out[len(out)-1].keys = append(out[len(out)-1].keys, templateKey{key: key, value: value})
+		}
+		pending = nil
 	}
 	return out
+}
+
+// trimBlank drops leading and trailing blank lines, so an inserted comment block
+// does not carry the blank line that separated it from the block before it.
+func trimBlank(lines []string) []string {
+	start, end := 0, len(lines)
+	for start < end && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	return lines[start:end]
 }
 
 // splitSetting parses a `key = value` line, trimming a trailing comment that is
@@ -304,19 +357,62 @@ func hasKey(lines []string, section, key string) bool {
 		return false
 	}
 	for i := start + 1; i < end; i++ {
-		if k, _, ok := splitSetting(lines[i]); ok && k == key {
+		if k, ok := settingKey(lines[i]); ok && k == key {
 			return true
 		}
 	}
 	return false
 }
 
+// settingKey extracts a setting's key from an active or a commented-out line, so
+// a merge does not re-add an example the file already carries.
+func settingKey(line string) (string, bool) {
+	t := strings.TrimSpace(line)
+	t = strings.TrimSpace(strings.TrimPrefix(t, "#"))
+	k, _, ok := splitSetting(t)
+	if !ok {
+		return "", false
+	}
+	return k, true
+}
+
 // appendKey inserts `key = value` at the end of a section (before the next
 // header), so merged keys keep the template's order without reversing.
 func appendKey(lines []string, section, key, value string) []string {
-	_, end := sectionBounds(lines, section)
-	out := make([]string, 0, len(lines)+1)
+	return insertAtSectionEnd(lines, section, []string{key + " = " + value})
+}
+
+// appendBlock inserts a commented example (its explanation plus the setting line)
+// at the end of a section.
+func appendBlock(lines []string, section string, block []string) []string {
+	return insertAtSectionEnd(lines, section, block)
+}
+
+// insertAtSectionEnd splices content before the section's next header, keeping a
+// blank line between it and the surrounding content — and before a following
+// header — so the merged file stays readable.
+func insertAtSectionEnd(lines []string, section string, content []string) []string {
+	if len(content) == 0 {
+		return lines
+	}
+	start, end := sectionBounds(lines, section)
+	if start < 0 {
+		return lines
+	}
+
+	out := make([]string, 0, len(lines)+len(content)+2)
 	out = append(out, lines[:end]...)
-	out = append(out, key+" = "+value)
+	if end > start+1 && strings.TrimSpace(lines[end-1]) != "" {
+		out = append(out, "")
+	}
+	out = append(out, content...)
+	if end < len(lines) && isSectionHeader(lines[end]) {
+		out = append(out, "")
+	}
 	return append(out, lines[end:]...)
+}
+
+func isSectionHeader(line string) bool {
+	t := strings.TrimSpace(line)
+	return strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]")
 }

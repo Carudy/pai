@@ -138,6 +138,11 @@ pai config init --reset   # back to defaults (skip the prompt)
 pai config reset -y       # same as --reset, and keeps a .bak
 ```
 
+`pai config init --merge` is the upgrade path: it adds every setting your file
+lacks — including optional ones (shown commented, with their explanation) that a
+newer pai introduced, so they appear without changing any behaviour. It is
+idempotent, so running it after an upgrade is safe.
+
 `init` and `reset` never touch what you cannot easily recreate: provider API
 keys, the search key, and the hand-edited trusted lists (`trusted_cmds`,
 `trusted_paths`).

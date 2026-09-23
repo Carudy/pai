@@ -94,7 +94,7 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 |---|---|
 | New **role** | add `internal/prompts/roles/<name>.toml` (no Go). `context_files` folds repo instruction files (e.g. `AGENTS.md`) into the system prompt |
 | New **tool** | implementation in `internal/role/tools.go` **and** `internal/prompts/tools/<name>.toml`; `checkToolCoverage` enforces both exist. The `internal/tool` layer only *executes* — confirming with the user is the handler's job, via `rt.Prompter` |
-| New **config key** | `internal/config/types.go` (struct + default) **and** the `configKeys` table in `internal/cli/config.go` (so `pai config set` knows it) |
+| New **config key** | `internal/config/types.go` (struct + default), the `configKeys` table in `internal/cli/config.go` (so `pai config set` knows it), and `internal/config/template.go` (so `config init --merge` surfaces it). An optional key belongs in the template commented out; merge adds it as a comment, never as an active value |
 | New **subcommand** | add to the table in `internal/cli/command.go`; put handlers in a sibling file (`config.go`, `role.go`, …) |
 | New **in-session `/command`** | add to `commandSpecs` in `internal/role/command.go` — arity and an optional `check` hook are declared there, and `/help` is generated from it. Storage-touching commands use the `core.Sessions` port |
 | New **session backend** | implement `session.Store` and select it by build tag in `session.Open` |
