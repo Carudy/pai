@@ -68,6 +68,9 @@ func report(rt *Runtime, output tool.ExecResult, execErr error, okMsg string) {
 		rt.Observer.ToolResult(core.ToolResult{Message: "Interrupted"})
 	case output.Output == tool.CancelledOutput:
 		rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
+	case output.TimedOut:
+		// A timeout has no error, so it would otherwise read as a success.
+		rt.Observer.ToolResult(core.ToolResult{Message: "Command timed out", Detail: output.Output})
 	case execErr != nil:
 		rt.Observer.ToolResult(core.ToolResult{
 			Message: fmt.Sprintf("%s: %v", okMsg, execErr),
@@ -104,6 +107,14 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 			report(rt, output, nil, "Command succeeded")
 			return observation("cmd result", cmd, nil, output, execTruncate(cfg)), nil
 		}
+	}
+
+	// Bound one command when configured. Zero (the default) leaves it unbounded;
+	// the user's Ctrl+C stops a running command instead.
+	if d := cfg.CmdTimeout; d > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d)
+		defer cancel()
 	}
 
 	output, execErr := tool.ExecuteCommand(ctx, cmd, toolStream(rt))

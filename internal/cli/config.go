@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/Carudy/pai/internal/config"
@@ -38,6 +39,7 @@ var configKeys = map[string]configKey{
 	"session.recap_turns": {section: "session", key: "recap_turns", kind: "int"},
 	"tavily_api_key":      {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
 	"remote_shell":        {section: "tool", key: "remote_shell", kind: "string"},
+	"cmd_timeout_seconds": {section: "tool", key: "cmd_timeout_seconds", kind: "int"},
 	// Deprecated aliases: [context] exec_limit/search_limit replaced these [app] keys.
 	"truncate_exec_limit":            {section: "app", key: "truncate_exec_limit", kind: "int"},
 	"truncate_search_limit":          {section: "app", key: "truncate_search_limit", kind: "int"},
@@ -343,6 +345,8 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return maskSecret(cfg.TavilyAPIKey)
 	case "remote_shell":
 		return cfg.RemoteShell
+	case "cmd_timeout_seconds":
+		return strconv.Itoa(int(cfg.CmdTimeout / time.Second))
 	}
 	return ""
 }

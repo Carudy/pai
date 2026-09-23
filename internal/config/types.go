@@ -1,6 +1,10 @@
 package config
 
-import "github.com/Carudy/pai/internal/provider"
+import (
+	"time"
+
+	"github.com/Carudy/pai/internal/provider"
+)
 
 // ProviderConfig holds per-provider settings from the user config.
 type ProviderConfig struct {
@@ -74,6 +78,10 @@ type tomlConfig struct {
 		// shell loads the remote PATH/env. Empty (the default) runs the command
 		// through the remote login shell non-interactively, exactly as ssh does.
 		RemoteShell string `toml:"remote_shell"`
+		// CmdTimeoutSeconds bounds one local command. 0 (the default) means no
+		// timeout: with working cancellation, Ctrl+C is the control, and legitimate
+		// long builds should not be cut off.
+		CmdTimeoutSeconds int `toml:"cmd_timeout_seconds"`
 	} `toml:"tool"`
 	Session struct {
 		Persist  bool `toml:"persist"`
@@ -105,6 +113,10 @@ type UserConfig struct {
 	// name like "bash" is invoked as "bash -lc <cmd>"; a value containing a space
 	// is used verbatim as the prefix. Empty means ssh's default (no wrapper).
 	RemoteShell string
+
+	// CmdTimeout bounds a single local command. Zero disables it (the default):
+	// cancellation via Ctrl+C is the control, so long builds are not cut off.
+	CmdTimeout time.Duration
 
 	// CustomPrompt is the user's override for the selected role's intro,
 	// loaded from ~/.config/pai/prompts.toml.
@@ -185,6 +197,9 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey
 	cfg.TrustedCmds = raw.Tool.TrustedCmds
 	cfg.RemoteShell = raw.Tool.RemoteShell
+	if raw.Tool.CmdTimeoutSeconds > 0 {
+		cfg.CmdTimeout = time.Duration(raw.Tool.CmdTimeoutSeconds) * time.Second
+	}
 	cfg.SessionPersist = raw.Session.Persist
 	cfg.SessionMaxTurns = raw.Session.MaxTurns
 	if raw.Session.RecapTurns != nil {

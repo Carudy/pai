@@ -18,7 +18,9 @@ import (
 // user declines to run the command at the confirmation prompt.
 const CancelledOutput = "[user cancelled execution]"
 
-const cmdTimeout = 120 * time.Second
+// waitDelay bounds how long Wait keeps waiting on a killed command's output
+// pipes before giving up. See isolateProcessGroup.
+const waitDelay = 5 * time.Second
 
 // ExecResult contains the result of executing a command.
 // It includes the command output, exit code, and whether the command timed out.
@@ -256,10 +258,16 @@ func ExecuteCommand(ctx context.Context, command string, streamW io.Writer) (Exe
 		return ExecResult{ExitCode: -1, Output: CancelledOutput}, err
 	}
 
-	execCtx, cancel := context.WithTimeout(ctx, cmdTimeout)
-	defer cancel()
+	cmd := exec.CommandContext(ctx, shell, shellArg, command)
 
-	cmd := exec.CommandContext(execCtx, shell, shellArg, command)
+	// Run the command in its own process group so cancellation kills all of it.
+	// Killing only the direct child (the shell) leaves its descendants — build
+	// tools, daemons — alive holding the output pipe, and Wait then blocks until
+	// they exit on their own, wedging the whole agent loop.
+	isolateProcessGroup(cmd)
+	// Belt and braces: if a descendant escapes the group, stop waiting on the
+	// pipes once cancellation has fired rather than blocking forever.
+	cmd.WaitDelay = waitDelay
 
 	var output []byte
 	var err error
@@ -279,7 +287,7 @@ func ExecuteCommand(ctx context.Context, command string, streamW io.Writer) (Exe
 
 	result := ExecResult{Output: string(output)}
 
-	if execCtx.Err() == context.DeadlineExceeded {
+	if ctx.Err() == context.DeadlineExceeded {
 		result.TimedOut = true
 		result.ExitCode = -1
 		return result, nil

@@ -64,6 +64,10 @@ elide_head_lines  = 8
 # Commands that run without confirmation. An array cannot be set from the CLI —
 # edit this file by hand.
 # trusted_cmds = ["ls", "cat", "git status"]
+
+# Seconds after which a single command is killed. 0 (the default) means no
+# timeout: Ctrl+C stops a running command, so long builds are not cut off.
+# cmd_timeout_seconds = 0
 `
 
 // Template returns the starter config.toml contents.

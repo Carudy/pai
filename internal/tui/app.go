@@ -113,6 +113,18 @@ func (o *appObserver) Session(name string) {
 	o.app.program.Send(sessionMsg{name: name})
 }
 
+// ToolCall/ToolResult drive the live "running <cmd> … 42s" indicator, so a long
+// silent command is visibly alive rather than indistinguishable from a hang.
+func (o *appObserver) ToolCall(c core.ToolCall) {
+	o.LineObserver.ToolCall(c)
+	o.app.program.Send(toolMsg{label: toolLiveLabel(c)})
+}
+
+func (o *appObserver) ToolResult(r core.ToolResult) {
+	o.LineObserver.ToolResult(r)
+	o.app.program.Send(toolMsg{})
+}
+
 // SessionLabel renders a session name for display; an empty name is a run that
 // is not persisted.
 func SessionLabel(name string) string {
@@ -189,6 +201,14 @@ type promptReq struct {
 
 type promptMsg struct{ req promptReq }
 
+// toolMsg reports the start (non-empty label) or end (empty label) of a tool, so
+// the live region can show how long it has been running.
+//
+// tickMsg is the once-a-second refresh that keeps that timer moving; it re-arms
+// itself while a tool is running.
+type toolMsg struct{ label string }
+type tickMsg time.Time
+
 type appModel struct {
 	input   textinput.Model
 	out     *programWriter
@@ -201,6 +221,9 @@ type appModel struct {
 	queue       []string
 	width       int
 	onInterrupt func() bool
+
+	toolLabel string
+	toolSince time.Time
 
 	mu  sync.Mutex // guards queue and err
 	err error
@@ -246,6 +269,22 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// visible before its newline arrives.
 		m.tail = msg.text
 		return m, nil
+
+	case toolMsg:
+		m.toolLabel = msg.label
+		if msg.label == "" {
+			m.toolSince = time.Time{}
+			return m, nil
+		}
+		m.toolSince = time.Now()
+		return m, tickCmd()
+
+	case tickMsg:
+		// Re-render each second while a tool runs; the command re-arms itself.
+		if m.toolLabel == "" {
+			return m, nil
+		}
+		return m, tickCmd()
 
 	case promptMsg:
 		m.begin(msg.req)
@@ -362,6 +401,10 @@ func (m *appModel) View() string {
 	}
 
 	status := RenderStr("Hint", "⏳ PAI is working — type to queue your next instruction")
+	if m.toolLabel != "" {
+		status = RenderStr("Warn", fmt.Sprintf("⏳ running %s… %s",
+			m.toolLabel, formatElapsed(time.Since(m.toolSince))))
+	}
 	if m.pending != nil {
 		status = RenderStr("Warn", "🙋 "+m.pending.title)
 	}
@@ -399,7 +442,49 @@ func (m *appModel) tailView() string {
 	return "  " + s
 }
 
-// ─── Shared state (accessed from both the loop and the UI goroutine) ─────────
+// tickCmd schedules the next liveness refresh.
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// formatElapsed renders a duration as a compact clock (12s, 2m14s, 1h03m).
+func formatElapsed(d time.Duration) string {
+	s := int(d.Seconds())
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%ds", s)
+	case s < 3600:
+		return fmt.Sprintf("%dm%02ds", s/60, s%60)
+	default:
+		return fmt.Sprintf("%dh%02dm", s/3600, (s%3600)/60)
+	}
+}
+
+// toolLiveLabel is the short description shown while a tool runs: what it is
+// doing is more useful than which tool it is.
+func toolLiveLabel(c core.ToolCall) string {
+	switch c.Name {
+	case "execute":
+		return clipLine(c.Detail, 48)
+	case "remote":
+		return "@" + c.Target
+	case "websearch":
+		return clipLine(c.Detail, 48)
+	default:
+		return c.Name
+	}
+}
+
+// clipLine flattens s to one line and caps it at n runes.
+func clipLine(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}
+
+// ─── Shared state (accessed from both the loop and the UI goroutine) ────────
 
 func (m *appModel) popQueue() (string, bool) {
 	m.mu.Lock()
