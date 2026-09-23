@@ -193,6 +193,65 @@ func TestDiffNewFile(t *testing.T) {
 	}
 }
 
+// A trusted path applies the edit without prompting (the diff is still shown).
+func TestRunEditTrustedPathSkipsConfirm(t *testing.T) {
+	path := writeTemp(t, "hello\n")
+	cfg := &config.UserConfig{TrustedPaths: []string{filepath.Dir(path)}}
+	// A prompter that would decline proves the confirmation was skipped.
+	rt := testEditRuntime(false)
+
+	if _, err := runEdit(context.Background(), cfg, rt, "r",
+		editPayloadJSON(t, editPayload{Path: path, OldString: "hello", NewString: "bye"})); err != nil {
+		t.Fatalf("runEdit: %v", err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "bye\n" {
+		t.Errorf("trusted edit did not apply: %q", got)
+	}
+}
+
+// A trusted path likewise lets write create without prompting.
+func TestRunWriteTrustedPathSkipsConfirm(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "new.txt")
+	cfg := &config.UserConfig{TrustedPaths: []string{dir}}
+	rt := testEditRuntime(false)
+
+	raw, _ := json.Marshal(writePayload{Path: path, Content: "hi\n"})
+	if _, err := runWrite(context.Background(), cfg, rt, "r", raw); err != nil {
+		t.Fatalf("runWrite: %v", err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != "hi\n" {
+		t.Errorf("trusted write did not apply: %q", got)
+	}
+}
+
+// confirm_read gates a read outside the trusted paths; a trusted read is not
+// gated.
+func TestRunReadConfirmOutsideTrustedPaths(t *testing.T) {
+	path := writeTemp(t, "secret\n")
+	raw, _ := json.Marshal(readPayload{Path: path})
+
+	declined := &Runtime{Observer: &fakeObserver{}, Prompter: stubPrompter{ok: false}, Logger: nopLogger{}}
+	out, err := runRead(context.Background(), &config.UserConfig{ConfirmRead: true}, declined, "r", raw)
+	if err != nil {
+		t.Fatalf("runRead: %v", err)
+	}
+	if !strings.Contains(out, "USER DECLINED") {
+		t.Errorf("declined read should be reported: %q", out)
+	}
+
+	trusted := &Runtime{Observer: &fakeObserver{}, Prompter: stubPrompter{ok: false}, Logger: nopLogger{}}
+	cfg := &config.UserConfig{ConfirmRead: true, TrustedPaths: []string{filepath.Dir(path)}}
+	out, err = runRead(context.Background(), cfg, trusted, "r", raw)
+	if err != nil {
+		t.Fatalf("runRead: %v", err)
+	}
+	if !strings.Contains(out, "secret") {
+		t.Errorf("a trusted read should not be gated: %q", out)
+	}
+}
+
 // The diff marks the removed and added text so the user can review it.
 func TestDiffEditMarksChanges(t *testing.T) {
 	got := diffEdit("a\nb\nc\n", "b", "B", 1)

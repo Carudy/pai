@@ -40,6 +40,7 @@ var configKeys = map[string]configKey{
 	"tavily_api_key":      {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
 	"remote_shell":        {section: "tool", key: "remote_shell", kind: "string"},
 	"cmd_timeout_seconds": {section: "tool", key: "cmd_timeout_seconds", kind: "int"},
+	"confirm_read":        {section: "tool", key: "confirm_read", kind: "bool"},
 	// Deprecated aliases: [context] exec_limit/search_limit replaced these [app] keys.
 	"truncate_exec_limit":            {section: "app", key: "truncate_exec_limit", kind: "int"},
 	"truncate_search_limit":          {section: "app", key: "truncate_search_limit", kind: "int"},
@@ -155,7 +156,7 @@ func configInit(path string, args []string, stdout io.Writer, log *tui.Logger) i
 // "leave it unchanged" when there is no input (EOF, or a non-interactive run).
 func chooseInitMode(path string, stdout io.Writer) int {
 	fmt.Fprintf(stdout, "%s already exists. What should \"pai config init\" do?\n", path)
-	fmt.Fprintln(stdout, "  1) Reset to built-in defaults (keeps your API keys and trusted_cmds)")
+	fmt.Fprintln(stdout, "  1) Reset to built-in defaults (keeps your API keys and trusted lists)")
 	fmt.Fprintln(stdout, "  2) Add only settings you are missing (keeps every current value)")
 	fmt.Fprintln(stdout, "  3) Leave it unchanged")
 	fmt.Fprint(stdout, "Choose [1/2/3] (default 3): ")
@@ -197,7 +198,7 @@ func doReset(path string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error writing %s: %v\n", path, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Reset %s to defaults (API keys and trusted_cmds kept).\n", path)
+	fmt.Fprintf(stdout, "Reset %s to defaults (API keys and trusted lists kept).\n", path)
 	return 0
 }
 
@@ -205,7 +206,7 @@ func doReset(path string, stdout io.Writer, log *tui.Logger) int {
 // rewrites the file.
 func configReset(path string, args []string, stdout io.Writer, log *tui.Logger) int {
 	if !hasFlag(args, "-y", "--yes") {
-		fmt.Fprintf(stdout, "This replaces %s with the starter template, keeping your API keys and trusted_cmds.\nRe-run with -y to confirm.\n", path)
+		fmt.Fprintf(stdout, "This replaces %s with the starter template, keeping your API keys and trusted lists.\nRe-run with -y to confirm.\n", path)
 		return 1
 	}
 	return doReset(path, stdout, log)
@@ -347,6 +348,8 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return cfg.RemoteShell
 	case "cmd_timeout_seconds":
 		return strconv.Itoa(int(cfg.CmdTimeout / time.Second))
+	case "confirm_read":
+		return strconv.FormatBool(cfg.ConfirmRead)
 	}
 	return ""
 }
@@ -391,8 +394,8 @@ func formatConfigValue(kind, raw string) (string, error) {
 }
 
 func unknownConfigKey(name string, log *tui.Logger) int {
-	if strings.Contains(name, "trusted_cmds") {
-		log.Errorf("Error: trusted_cmds is an array and cannot be set from the CLI; edit %s by hand.\n", config.Path())
+	if strings.Contains(name, "trusted_cmds") || strings.Contains(name, "trusted_paths") {
+		log.Errorf("Error: %s is an array and cannot be set from the CLI; edit %s by hand.\n", name, config.Path())
 		return 1
 	}
 	log.Errorf("Unknown config key %q. Known keys:\n  %s\n", name, strings.Join(sortedConfigKeys(), "\n  "))

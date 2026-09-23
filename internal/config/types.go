@@ -74,6 +74,14 @@ type tomlConfig struct {
 	Tool struct {
 		TavilyAPIKey string   `toml:"tavily_api_key"`
 		TrustedCmds  []string `toml:"trusted_cmds"`
+		// TrustedPaths are directories inside which the file tools (edit, write,
+		// and read when ConfirmRead is set) need no confirmation — the "trusted
+		// working place". Empty trusts nothing.
+		TrustedPaths []string `toml:"trusted_paths"`
+		// ConfirmRead also requires confirmation to read a file outside
+		// TrustedPaths. Off by default: a read is non-destructive, but sending a
+		// file outside the workspace to the model is the main exfiltration path.
+		ConfirmRead bool `toml:"confirm_read"`
 		// RemoteShell wraps remote commands as "<shell> -lc <cmd>" so a login
 		// shell loads the remote PATH/env. Empty (the default) runs the command
 		// through the remote login shell non-interactively, exactly as ssh does.
@@ -107,6 +115,13 @@ type UserConfig struct {
 	Interactive      bool
 	TavilyAPIKey     string
 	TrustedCmds      []string
+
+	// TrustedPaths are directories inside which file edits/creates (and reads,
+	// when ConfirmRead is set) are applied without a prompt. Empty means every
+	// mutation is confirmed. See tool.IsTrustedPath.
+	TrustedPaths []string
+	// ConfirmRead requires a prompt to read a file outside TrustedPaths.
+	ConfirmRead bool
 
 	// RemoteShell, when set, runs remote commands through a login shell so the
 	// remote PATH/env is loaded (e.g. nix profiles come from /etc/profile). A bare
@@ -196,6 +211,8 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.Interactive = raw.App.Interactive
 	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey
 	cfg.TrustedCmds = raw.Tool.TrustedCmds
+	cfg.TrustedPaths = raw.Tool.TrustedPaths
+	cfg.ConfirmRead = raw.Tool.ConfirmRead
 	cfg.RemoteShell = raw.Tool.RemoteShell
 	if raw.Tool.CmdTimeoutSeconds > 0 {
 		cfg.CmdTimeout = time.Duration(raw.Tool.CmdTimeoutSeconds) * time.Second

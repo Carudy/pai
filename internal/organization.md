@@ -36,7 +36,7 @@ the only package that knows about all of them.
 | `prompts` | Role/tool **definitions as data** (`roles/*.toml`, `tools/*.toml`), embedded, plus user overrides from `~/.config/pai/roles/`. | `RoleNames`, `ReadRole`, `ReadTool`, `ToolNames` |
 | `config` | Configuration only: `config.toml` loading, the `provider:model` split, and the comment-preserving editor. | `UserConfig`, `LoadUserConfig`, `Path`, `SetModel`, `SetScalar`/`UnsetScalar` |
 | `chat` | The LLM conversation protocol: builds the message list, parses/validates the JSON response, retries, streams, truncates tool output. | `RolePrompt`, `Ports`, `ChatStr`, `OutputGuide`, `ActionType` |
-| `tool` | Tool **execution** only: local shell, SSH, web search. Never prompts the user. | `ExecuteCommand`, `RemoteManager`, `Search` |
+| `tool` | Tool **execution** and trust checks: local shell, SSH, web search, plus command/path allowlists (`IsTrusted`, `IsTrustedPath`). Never prompts the user. | `ExecuteCommand`, `RemoteManager`, `Search`, `IsTrustedPath` |
 | `role` | The **single agent loop** and the tool-handler registry. Runs a role to completion. | `Runtime`, `Run` |
 | `session` | Session persistence behind one `Store` interface; SQLite by default, JSONL with `-tags filestore`. | `Store`, `Meta`, `Session`, `Recorder` |
 | `tui` | Terminal adapters implementing `core` ports. Knows about styling; core does not. | `LineObserver`, `Prompter`, `Logger` |

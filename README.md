@@ -67,8 +67,8 @@ pai config init                 # write/merge a starter config.toml (asks first)
 
 `pai config set` edits `config.toml` in place and preserves comments. Values are
 validated (booleans, integers, `provider:model`, known roles), and arrays like
-`trusted_cmds` must still be edited by hand. `list` masks secrets; `get` reveals
-them.
+`trusted_cmds` and `trusted_paths` must still be edited by hand. `list` masks
+secrets; `get` reveals them.
 
 Chat flags:
 
@@ -139,7 +139,8 @@ pai config reset -y       # same as --reset, and keeps a .bak
 ```
 
 `init` and `reset` never touch what you cannot easily recreate: provider API
-keys, the search key, and `trusted_cmds` (an array the CLI can't set).
+keys, the search key, and the hand-edited trusted lists (`trusted_cmds`,
+`trusted_paths`).
 
 ```toml
 [providers]
@@ -177,6 +178,15 @@ tavily_api_key = "your-tavily-key"  # for web search (env TAVILY_API_KEY as fall
 trusted_cmds = [
     "ls", "cat", "grep", "pwd", "which",
 ]
+# Directories where the file tools (edit, write) apply without confirmation —
+# your "trusted working place". A leading ~ is expanded; empty = confirm every
+# change. Prefer an absolute path over "." so a run from an unexpected
+# directory is not silently trusted.
+trusted_paths = ["~/work/myproject"]
+# Also confirm reads of files outside trusted_paths (off by default: reads are
+# non-destructive, but this stops a file outside the workspace reaching the model
+# unprompted).
+confirm_read = false
 # Kill a single command (local or remote) after this many seconds. 0 (default)
 # = no timeout: Ctrl+C stops a running command, so long builds are not cut off.
 cmd_timeout_seconds = 0
@@ -268,6 +278,28 @@ Commands matching the `trusted_cmds` list skip confirmation:
 [tool]
 trusted_cmds = ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
 ```
+
+#### Trusted Paths (file tools)
+By default every `edit` and `write` asks for approval. List the directories you
+work in and changes under them apply straight away — the diff is still shown, so
+the change stays visible, but you aren't asked each time:
+```toml
+[tool]
+trusted_paths = ["~/work/myproject"]
+```
+Paths are resolved (symlinks included) before matching, so a `..` or a symlink
+cannot escape a trusted directory. An empty list (the default) confirms
+everything; `~` expands, and a relative path resolves against the working
+directory. Prefer an absolute path — `["."]` trusts wherever you happen to run
+pai, which is rarely what you want.
+
+This covers the file tools only. Shell commands are still governed by
+`trusted_cmds`, so an untrusted `sed -i`/`tee` still prompts even inside a
+trusted path.
+
+Reads are not confirmed by default. Set `confirm_read = true` to also require
+approval before a file *outside* `trusted_paths` is read — the one place where
+content could leave your workspace without a prompt.
 
 ### `coder` — Software engineering
 Helps read, write, refactor, and test code in the current repository. Tools:

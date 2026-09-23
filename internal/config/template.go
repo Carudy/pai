@@ -65,6 +65,19 @@ elide_head_lines  = 8
 # edit this file by hand.
 # trusted_cmds = ["ls", "cat", "git status"]
 
+# Directories where the file tools (edit, write) need no confirmation — your
+# "trusted working place". Also an array, so also hand-edited. A leading ~ is
+# expanded; a relative path resolves against the working directory. Empty (the
+# default) confirms every edit and write. Prefer an absolute path (e.g.
+# "~/work/myproject") over "." so a run from an unexpected directory is not
+# silently trusted.
+# trusted_paths = ["~/work/myproject"]
+
+# Also require confirmation to read a file outside trusted_paths. Off by
+# default: a read changes nothing, but this closes the gap where a file outside
+# the workspace is sent to the model without a prompt.
+# confirm_read = false
+
 # Seconds after which a single command is killed. 0 (the default) means no
 # timeout: Ctrl+C stops a running command, so long builds are not cut off.
 # cmd_timeout_seconds = 0
@@ -139,8 +152,8 @@ func MergeTemplate(path string) (int, error) {
 
 // ResetTemplate replaces path with the starter template, then restores the
 // values a reset must never destroy: provider credentials, the search key, and
-// trusted_cmds (an array that cannot be set from the CLI). Everything else
-// returns to its default.
+// the hand-edited trusted lists (trusted_cmds, trusted_paths) that cannot be set
+// from the CLI. Everything else returns to its default.
 func ResetTemplate(path string) error {
 	raw := preserved(path)
 
@@ -176,6 +189,11 @@ func ResetTemplate(path string) error {
 	}
 	if len(raw.Tool.TrustedCmds) > 0 {
 		if err := SetScalar(path, "tool", "trusted_cmds", arrayLiteral(raw.Tool.TrustedCmds)); err != nil {
+			return err
+		}
+	}
+	if len(raw.Tool.TrustedPaths) > 0 {
+		if err := SetScalar(path, "tool", "trusted_paths", arrayLiteral(raw.Tool.TrustedPaths)); err != nil {
 			return err
 		}
 	}

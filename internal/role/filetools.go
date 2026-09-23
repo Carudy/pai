@@ -20,6 +20,7 @@ import (
 	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
+	"github.com/Carudy/pai/internal/tool"
 )
 
 // defaultReadLimit bounds a single read when the model gives no limit. It is
@@ -68,15 +69,31 @@ func runRead(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 
 	// Announce the attempt before opening, so a failure is visible to the user and
 	// not just an observation the model sees.
+	trusted := tool.IsTrustedPath(p.Path, cfg.TrustedPaths)
 	rt.Observer.ToolCall(core.ToolCall{
-		Name:   "read",
-		Target: p.Path,
-		Detail: fmt.Sprintf("lines %d–%d", p.Offset, p.Offset+p.Limit-1),
-		Reason: reason,
+		Name:    "read",
+		Target:  p.Path,
+		Detail:  fmt.Sprintf("lines %d–%d", p.Offset, p.Offset+p.Limit-1),
+		Reason:  reason,
+		Trusted: trusted,
 	})
 	fail := func(err error) (string, error) {
 		rt.Observer.ToolResult(core.ToolResult{Message: err.Error()})
 		return "", err
+	}
+
+	// ConfirmRead is off by default: a read is non-destructive. When it is on, a
+	// file outside the trusted paths needs approval before its contents reach the
+	// model.
+	if cfg.ConfirmRead && !trusted {
+		ok, err := rt.Prompter.Confirm(fmt.Sprintf("Read %s?", p.Path))
+		if err != nil {
+			return "", fmt.Errorf("user interaction error: %w", err)
+		}
+		if !ok {
+			rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
+			return fmt.Sprintf("[read skipped]\nFILE: %s\nUSER DECLINED: the file was not read.", p.Path), nil
+		}
 	}
 
 	f, err := os.Open(p.Path)
@@ -190,21 +207,27 @@ func runEdit(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 	}
 
 	diff := diffEdit(content, p.OldString, p.NewString, n)
+	trusted := tool.IsTrustedPath(p.Path, cfg.TrustedPaths)
 	rt.Observer.ToolCall(core.ToolCall{
-		Name:   "edit",
-		Target: p.Path,
-		Detail: fmt.Sprintf("replace %s", countNoun(n, "occurrence")),
-		Reason: reason,
-		Diff:   diff,
+		Name:    "edit",
+		Target:  p.Path,
+		Detail:  fmt.Sprintf("replace %s", countNoun(n, "occurrence")),
+		Reason:  reason,
+		Diff:    diff,
+		Trusted: trusted,
 	})
 
-	ok, err := rt.Prompter.Confirm(fmt.Sprintf("Apply this edit to %s?", p.Path))
-	if err != nil {
-		return "", fmt.Errorf("user interaction error: %w", err)
-	}
-	if !ok {
-		rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
-		return fmt.Sprintf("[edit skipped]\nFILE: %s\nUSER DECLINED: the file was not changed.", p.Path), nil
+	// A trusted path skips the prompt but not the diff above, so the change is
+	// still visible; only the approval step is saved.
+	if !trusted {
+		ok, err := rt.Prompter.Confirm(fmt.Sprintf("Apply this edit to %s?", p.Path))
+		if err != nil {
+			return "", fmt.Errorf("user interaction error: %w", err)
+		}
+		if !ok {
+			rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
+			return fmt.Sprintf("[edit skipped]\nFILE: %s\nUSER DECLINED: the file was not changed.", p.Path), nil
+		}
 	}
 
 	replacements := 1
@@ -249,21 +272,25 @@ func runWrite(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason s
 	}
 
 	n := lineCount(p.Content)
+	trusted := tool.IsTrustedPath(p.Path, cfg.TrustedPaths)
 	rt.Observer.ToolCall(core.ToolCall{
-		Name:   "write",
-		Target: p.Path,
-		Detail: fmt.Sprintf("create %s", countNoun(n, "line")),
-		Reason: reason,
-		Diff:   diffNewFile(p.Content),
+		Name:    "write",
+		Target:  p.Path,
+		Detail:  fmt.Sprintf("create %s", countNoun(n, "line")),
+		Reason:  reason,
+		Diff:    diffNewFile(p.Content),
+		Trusted: trusted,
 	})
 
-	ok, err := rt.Prompter.Confirm(fmt.Sprintf("Create %s?", p.Path))
-	if err != nil {
-		return "", fmt.Errorf("user interaction error: %w", err)
-	}
-	if !ok {
-		rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
-		return fmt.Sprintf("[write skipped]\nFILE: %s\nUSER DECLINED: no file was created.", p.Path), nil
+	if !trusted {
+		ok, err := rt.Prompter.Confirm(fmt.Sprintf("Create %s?", p.Path))
+		if err != nil {
+			return "", fmt.Errorf("user interaction error: %w", err)
+		}
+		if !ok {
+			rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
+			return fmt.Sprintf("[write skipped]\nFILE: %s\nUSER DECLINED: no file was created.", p.Path), nil
+		}
 	}
 
 	if err := writeFileAtomic(p.Path, []byte(p.Content), 0o644); err != nil {

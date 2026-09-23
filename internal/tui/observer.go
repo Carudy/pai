@@ -96,7 +96,13 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 		o.pair("TagExec", fmt.Sprintf("[TOOL %s]", c.Name), "Info", c.Detail)
 	}
 	if c.Trusted {
-		fmt.Fprintf(o.W, "%s\n", RenderStr("Trusted", "  ⚡ executing trusted command"))
+		// A trusted command and a trusted path are different grants; say which, so
+		// the auto-approval is not mistaken for the other.
+		if c.Name == "edit" || c.Name == "write" {
+			fmt.Fprintf(o.W, "%s\n", RenderStr("Trusted", "  ⚡ auto-approved (trusted path)"))
+		} else {
+			fmt.Fprintf(o.W, "%s\n", RenderStr("Trusted", "  ⚡ executing trusted command"))
+		}
 	}
 }
 
