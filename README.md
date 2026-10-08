@@ -10,10 +10,10 @@ An ultra-lightweight, module-decoupled, highly customizable CLI tool that levera
 - (Optional) Tavily API key for web search
 
 ### Prebuilt binaries
-Each tagged release ships cgo-free binaries for Linux, macOS and Windows
-(amd64/arm64) on the [Releases](https://github.com/Carudy/pai/releases) page,
-alongside a `checksums.txt`. Download one, make it executable, and put it on
-your `PATH` — there are no runtime dependencies.
+Each tagged release ships cgo-free binaries on the
+[Releases](https://github.com/Carudy/pai/releases) page — Linux (amd64), macOS
+(arm64), and Windows (amd64) — alongside a `checksums.txt`. Download one, make
+it executable, and put it on your `PATH`; there are no runtime dependencies.
 
 ### Build from Source
 ```bash
