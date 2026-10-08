@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/tui"
 )
 
@@ -83,7 +84,7 @@ type globals struct {
 // (e.g. `pai -d session ls`). Peeling stops at the first token that is not a
 // known global flag, so flags that take a value stay with their subcommand.
 func splitGlobals(args []string) (g globals, rest []string) {
-	for i := 0; i < len(args); i++ {
+	for i := range len(args) {
 		switch args[i] {
 		case "-d", "--debug":
 			g.debug = true
@@ -106,7 +107,7 @@ func Run(ctx context.Context, stdout io.Writer, args []string) int {
 	log := tui.NewLogger(stdout, global.debug)
 
 	if global.version {
-		fmt.Fprintf(stdout, "PAI version: %s\n", Version)
+		fmt.Fprintf(stdout, "PAI version: %s\n", core.Version)
 		return 0
 	}
 

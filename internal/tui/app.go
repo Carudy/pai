@@ -452,10 +452,15 @@ func (m *appModel) View() string {
 		queued = " " + RenderStr("Subdued", fmt.Sprintf("(%d queued, %d to steer)", n, s))
 	}
 
-	out := label + status + queued
+	// The streaming preview (reasoning, or command output not yet newline-
+	// terminated) sits just above the chrome. The session/status line and the
+	// input bar stay pinned to the bottom of the live region, so the stream never
+	// splits the two apart.
+	out := ""
 	if tail := m.tailView(); tail != "" {
-		out += "\n" + tail
+		out = tail + "\n"
 	}
+	out += label + status + queued
 	if m.interactive {
 		out += "\n" + m.input.View()
 	}

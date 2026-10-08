@@ -10,14 +10,12 @@ import (
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/provider"
 	"github.com/Carudy/pai/internal/role"
 	"github.com/Carudy/pai/internal/session"
 	"github.com/Carudy/pai/internal/tui"
 )
-
-// Version is PAI's version string.
-const Version = "v0.7.0"
 
 // runChat parses chat flags, loads config, wires up the selected role, and runs
 // it. It is both the `pai chat` handler and the default action for a bare `pai`.
@@ -34,7 +32,7 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 	log.Debug = log.Debug || flags.Debug
 
 	if flags.Version {
-		fmt.Fprintf(stdout, "PAI version: %s\n", Version)
+		fmt.Fprintf(stdout, "PAI version: %s\n", core.Version)
 		return 0
 	}
 

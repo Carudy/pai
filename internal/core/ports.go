@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+// Version is PAI's version string.
+const Version = "v0.7.0"
+
 // ErrAborted is returned by a Prompter when the user cancels a prompt (Ctrl+C,
 // Ctrl+D) rather than the prompt failing. Callers treat it as a clean stop.
 var ErrAborted = errors.New("prompt aborted")

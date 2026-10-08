@@ -318,7 +318,8 @@ func diffNewFile(content string) string {
 			fmt.Fprintf(&b, "\n… +%d more lines", len(lines)-i)
 			break
 		}
-		b.WriteString("\n+ " + l)
+		b.WriteString("\n+ ")
+		b.WriteString(l)
 	}
 	return b.String()
 }
@@ -375,7 +376,7 @@ func diffEdit(content, oldStr, newStr string, occurrences int) string {
 
 	var b strings.Builder
 	shown := 0
-	for i := 0; i < occurrences; i++ {
+	for i := range occurrences {
 		if shown == maxHunks {
 			fmt.Fprintf(&b, "\n… +%d more change(s)", occurrences-shown)
 			break
@@ -392,16 +393,24 @@ func diffEdit(content, oldStr, newStr string, occurrences int) string {
 
 		fmt.Fprintf(&b, "@@ line %d @@\n", start+1)
 		for _, l := range lines[from:start] {
-			b.WriteString("  " + l + "\n")
+			b.WriteString("  ")
+			b.WriteString(l)
+			b.WriteString("\n")
 		}
 		for _, l := range oldLines {
-			b.WriteString("- " + l + "\n")
+			b.WriteString("- ")
+			b.WriteString(l)
+			b.WriteString("\n")
 		}
 		for _, l := range newLines {
-			b.WriteString("+ " + l + "\n")
+			b.WriteString("+ ")
+			b.WriteString(l)
+			b.WriteString("\n")
 		}
 		for _, l := range lines[after:to] {
-			b.WriteString("  " + l + "\n")
+			b.WriteString("  ")
+			b.WriteString(l)
+			b.WriteString("\n")
 		}
 		shown++
 	}

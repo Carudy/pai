@@ -275,6 +275,31 @@ func TestTailRendersInLiveRegion(t *testing.T) {
 	}
 }
 
+// The streaming tail sits above the chrome: the session/status line stays
+// directly above the input bar instead of being split from it by a stream.
+func TestTailSitsAboveChrome(t *testing.T) {
+	m := newAppModel()
+	m.width = 80
+	m.session = "work"
+	m.interactive = true
+	mm, _ := m.Update(tailMsg{text: "streaming reasoning"})
+	m = mm.(*appModel)
+
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected tail, chrome and input lines, got %d:\n%s", len(lines), m.View())
+	}
+	if !strings.Contains(lines[0], "streaming reasoning") {
+		t.Errorf("tail should be the top live line, got %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "[work]") {
+		t.Errorf("chrome should sit directly above the input, got %q", lines[1])
+	}
+	if lines[2] != m.input.View() {
+		t.Errorf("last line should be the input bar:\ngot  %q\nwant %q", lines[2], m.input.View())
+	}
+}
+
 // A long tail keeps its newest end, and truncation stays ANSI-safe.
 func TestTailTruncatedToWidth(t *testing.T) {
 	m := newAppModel()
