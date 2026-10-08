@@ -19,6 +19,19 @@ This file covers how to build, test, and where things belong.
   `toolname` at the top level, beside `payload`. `chat.OutputGuide()` is
   re-rendered after the history each turn so the format can't be forgotten.
 
+## Releasing
+
+Pushing a `v*` tag is the whole release process: `.github/workflows/release.yml`
+runs the tests, cross-compiles the static binaries (linux/darwin/windows),
+and publishes a GitHub Release with `--generate-notes` and a `checksums.txt`.
+`.github/workflows/ci.yml` runs gofmt/vet/test on `main` and PRs.
+
+`core.Version` is a `var` so the release workflow can inject the tag with
+`-ldflags "-X github.com/Carudy/pai/internal/core.Version=<tag>"`. The value in
+source is only the fallback for `go install` / local builds, so a release does
+not strictly need it bumped — but keep it near the latest tag so those builds
+report something sensible.
+
 ## Commands
 
 ```bash

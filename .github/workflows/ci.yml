@@ -1,0 +1,39 @@
+name: ci
+
+# Tests on every push to main and every pull request. The tag-triggered release
+# workflow lives in release.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # Both tag sets matter: a change can compile under one backend and not the
+      # other (see AGENTS.md).
+      - name: vet
+        run: go vet ./... && go vet -tags filestore ./...
+
+      - name: test
+        run: go test ./... && go test -tags filestore ./...

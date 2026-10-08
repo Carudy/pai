@@ -12,8 +12,11 @@ import (
 	"time"
 )
 
-// Version is PAI's version string.
-const Version = "v0.7.0"
+// Version is PAI's version string. Release builds override it at link time with
+// -ldflags "-X github.com/Carudy/pai/internal/core.Version=<tag>", so a released
+// binary reports the exact tag it was built from. The value here is the fallback
+// for `go install` and local builds; keep it at the latest release.
+var Version = "v0.7.1"
 
 // ErrAborted is returned by a Prompter when the user cancels a prompt (Ctrl+C,
 // Ctrl+D) rather than the prompt failing. Callers treat it as a clean stop.

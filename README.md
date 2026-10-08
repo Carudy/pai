@@ -5,9 +5,15 @@ An ultra-lightweight, module-decoupled, highly customizable CLI tool that levera
 ## 📦 Installation
 
 ### Prerequisites
-- Go 1.26 or later
+- Go 1.26 or later (or a prebuilt binary)
 - API key for at least one supported LLM provider
 - (Optional) Tavily API key for web search
+
+### Prebuilt binaries
+Each tagged release ships cgo-free binaries for Linux, macOS and Windows
+(amd64/arm64) on the [Releases](https://github.com/Carudy/pai/releases) page,
+alongside a `checksums.txt`. Download one, make it executable, and put it on
+your `PATH` — there are no runtime dependencies.
 
 ### Build from Source
 ```bash

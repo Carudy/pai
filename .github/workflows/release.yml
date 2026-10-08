@@ -1,0 +1,59 @@
+name: release
+
+# Pushing a v* tag cuts a GitHub Release with prebuilt binaries. Requires only
+# the default GITHUB_TOKEN, granted write access to contents below.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Never publish something that does not pass its own checks.
+      - name: Verify
+        run: |
+          go vet ./... && go vet -tags filestore ./...
+          go test ./... && go test -tags filestore ./...
+
+      # Cross-compiled with CGO_ENABLED=0, so no toolchain per target is needed
+      # (the SQLite backend is pure Go). The tag is injected as the version, so
+      # the binary reports exactly what it was released as.
+      - name: Build binaries
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          ldflags="-s -w -X github.com/Carudy/pai/internal/core.Version=${TAG}"
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            os="${target%%/*}"
+            arch="${target##*/}"
+            ext=""
+            if [ "$os" = "windows" ]; then ext=".exe"; fi
+            out="dist/pai_${version}_${os}_${arch}${ext}"
+            echo "building ${out}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags="$ldflags" -o "$out" ./cmd/pai
+          done
+          (cd dist && sha256sum ./* > checksums.txt)
+          ls -l dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=(--title "${{ github.ref_name }}" --generate-notes)
+          case "${{ github.ref_name }}" in *-*) flags+=(--prerelease);; esac
+          gh release create "${{ github.ref_name }}" dist/* "${flags[@]}"
