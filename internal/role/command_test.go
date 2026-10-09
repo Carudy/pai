@@ -266,6 +266,24 @@ func TestExitAndHelp(t *testing.T) {
 	}
 }
 
+// /trusted reports both the run-only list and the config list.
+func TestTrustedCommand(t *testing.T) {
+	cc, rt, obs := newTestCtx(t)
+	rt.TrustedCmds = []string{"make"}
+	rt.TrustedPaths = []string{"/srv/run"}
+	cc.cfg.TrustedCmds = []string{"ls"}
+	cc.cfg.TrustedPaths = []string{"/srv/cfg"}
+	if outcome, _ := dispatch(cc, "/trusted"); outcome != cmdHandled {
+		t.Fatalf("outcome = %v", outcome)
+	}
+	out := obs.lastOutput()
+	for _, want := range []string{"this run only", "commands: make", "paths:    /srv/run", "from config", "commands: ls", "paths:    /srv/cfg"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("/trusted output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRoleSwitch(t *testing.T) {
 	cc, _, obs := newTestCtx(t)
 

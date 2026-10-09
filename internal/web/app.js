@@ -340,14 +340,23 @@ async function refreshHistory() {
 }
 function scheduleHistory() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshHistory, 150); }
 // ── Snapshot, prompts, live updates ─────────────────────────
+function tokenCount(n) { return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n); }
 function usageSnapshot(s) {
   const node = $('token-usage');
   node.hidden = !(s.usage_calls > 0);
   node.textContent = ''; node.title = '';
   if (node.hidden) return;
   const total = s.total_usage, latest = s.usage;
-  node.textContent = `Tokens · sent ${total.Prompt} · received ${total.Completion} · total ${total.Total} (this run)`;
-  node.title = `Latest request: sent ${latest.Prompt} · received ${latest.Completion} · total ${latest.Total}. This run covers this worker runtime only; resuming a retired runtime starts fresh.`;
+  // The latest request's prompt size is the current context; compared to the
+  // compaction threshold it answers "am I about to compress?", not just "how much
+  // have I spent". Only shown when compaction is configured (context_tokens > 0).
+  const budget = s.context_tokens > 0
+    ? `context ${tokenCount(latest.Prompt)} / ${tokenCount(s.context_tokens)} (${Math.round(100 * latest.Prompt / s.context_tokens)}%) · `
+    : '';
+  node.textContent = `Tokens · ${budget}sent ${total.Prompt} · received ${total.Completion} · total ${total.Total} (this run)`;
+  node.title = `Latest request: sent ${latest.Prompt} · received ${latest.Completion} · total ${latest.Total}.`
+    + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${s.context_tokens} tokens.` : '')
+    + ' This run covers this worker runtime only; resuming a retired runtime starts fresh.';
 }
 function snapshot(s) {
   usageSnapshot(s);
@@ -411,9 +420,10 @@ function snapshot(s) {
   if (p.kind === 'confirm') {
     const untrusted = Array.isArray(p.untrusted) ? p.untrusted : [];
     if (untrusted.length) {
-      // A chained command needs approval for specific programs: offer to trust
-      // them for this run or for good, not just yes/no.
-      $('pending').append(text('p', '⚠ not trusted: ' + untrusted.join(', '), 'untrusted-names'));
+      // A chained command needs approval for specific programs (or a file change
+      // for its directory): offer to trust for this run or for good.
+      const label = p.trust_target === 'path' ? 'outside trusted paths: ' : 'not trusted: ';
+      $('pending').append(text('p', '⚠ ' + label + untrusted.join(', '), 'untrusted-names'));
       const once = text('button', 'Once'), session = text('button', 'Trust session'), always = text('button', 'Always'), no = text('button', 'Decline');
       once.className = 'primary'; session.className = 'secondary'; always.className = 'secondary'; no.className = 'caution';
       once.onclick = () => reply('', 'once'); session.onclick = () => reply('', 'session');
@@ -468,7 +478,7 @@ async function select(name, cwd) {
     $('title').textContent = name; $('workspace').textContent = 'Workspace: ' + (cwd || 'server working directory');
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
-    $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('live-notices').replaceChildren(); $('error').textContent = '';
+    $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   $('conversation').scrollTop = 0; controls();
   for (const button of $('sessions').children) { const active = button.textContent === name; button.classList.toggle('selected', active); button.setAttribute('aria-current', active ? 'page' : 'false'); }
   $('app').classList.remove('sessions-open'); $('toggle-sessions').setAttribute('aria-expanded', 'false');

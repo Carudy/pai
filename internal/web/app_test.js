@@ -227,6 +227,8 @@ assert.match(page.pending().textContent, /not trusted: sudo/);
 const marked = descendants(page.pending()).filter(n => n.tag === 'span' && n.className === 'cmd-untrusted');
 assert.equal(marked.length, 1, 'only the untrusted segment is marked');
 assert.match(marked[0].textContent, /sudo rm x/);
+page.run("selected='one'; snapshot(" + JSON.stringify({state:'busy',queued:0,pending:{id:'pth',kind:'confirm',title:'Create /etc/x?',tool:{Name:'write',Target:'/etc/x'},untrusted:['/etc'],trust_target:'path'}}) + ')');
+assert.match(page.pending().textContent, /outside trusted paths: \/etc/, 'a path confirmation is worded as a path, not a command');
 page.run("for(let i=0;i<120;i++) activity({type:'notice',data:'event '+i}); activity({type:'output',data:'x'.repeat(20000)}); activity({type:'output',data:'tail'})");
 assert.equal(page.get('live-progress').children.length, 100, 'activity is bounded');
 assert.equal(page.get('live-progress').lastElementChild.lastElementChild.textContent.length, 16000);
@@ -444,6 +446,10 @@ for (let i = 0; i < 2; i++) {
 usagePage.run("snapshot({state:'starting',usage_calls:0})");
 assert.equal(usagePage.get('token-usage').hidden, true);
 assert.equal(usagePage.get('token-usage').textContent, '');
+const budgetState = {state:'awaiting',usage_calls:3,usage:{Prompt:78000,Completion:100,Total:78100},total_usage:{Prompt:200000,Completion:5000,Total:205000},context_tokens:128000};
+usagePage.run(`snapshot(${JSON.stringify(budgetState)})`);
+assert.match(usagePage.get('token-usage').textContent, /context 78k \/ 128k \(61%\)/, 'context fill appears when compaction is configured');
+assert.match(usagePage.get('token-usage').title, /exceeds 128000 tokens/);
 
 async function verifyModels() {
   const p = browser();

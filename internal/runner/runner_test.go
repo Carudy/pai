@@ -475,7 +475,7 @@ func TestApprovalReconnectToolCopy(t *testing.T) {
 		case "awaiting":
 			w.Awaiting()
 		case "ask":
-			go func() { _, err := w.prompt("ask", "question?", nil); done <- err }()
+			go func() { _, err := w.prompt("ask", "question?", nil, ""); done <- err }()
 			question := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
 			if question.Pending.Tool != nil {
 				t.Fatal("question inherited tool")

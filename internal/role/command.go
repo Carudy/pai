@@ -89,6 +89,12 @@ func init() {
 			run:     runTools,
 		},
 		{
+			name:    "trusted",
+			usage:   "/trusted",
+			summary: "Show commands and paths trusted this run or from config",
+			run:     runTrusted,
+		},
+		{
 			name:    "role",
 			usage:   "/role [name]",
 			summary: "Show or switch the active role",
@@ -217,6 +223,18 @@ func runTools(c *cmdCtx, _ []string) (cmdOutcome, string) {
 		fmt.Fprintf(&b, "\n  %s — %s", t.Name, t.Brief)
 	}
 	c.output(b.String())
+	return cmdHandled, ""
+}
+
+func runTrusted(c *cmdCtx, _ []string) (cmdOutcome, string) {
+	list := func(items []string) string {
+		if len(items) == 0 {
+			return "(none)"
+		}
+		return strings.Join(items, ", ")
+	}
+	c.output(fmt.Sprintf("trusted for this run only:\n  commands: %s\n  paths:    %s\ntrusted from config (all runs):\n  commands: %s\n  paths:    %s",
+		list(c.rt.TrustedCmds), list(c.rt.TrustedPaths), list(c.cfg.TrustedCmds), list(c.cfg.TrustedPaths)))
 	return cmdHandled, ""
 }
 

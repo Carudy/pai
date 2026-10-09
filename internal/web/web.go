@@ -2,6 +2,7 @@
 package web
 
 import (
+	"bytes"
 	"compress/gzip"
 	"crypto/rand"
 	"crypto/sha256"
@@ -37,6 +38,43 @@ type Options struct {
 
 //go:embed index.html style.css app.js vendor/*.js
 var assets embed.FS
+
+// assetNames is the closed set of static files served, and doubles as the gzip
+// precompute list.
+var assetNames = []string{"index.html", "app.js", "style.css", "vendor/marked.min.js", "vendor/purify.min.js"}
+
+var assetSet = func() map[string]bool {
+	set := make(map[string]bool, len(assetNames))
+	for _, name := range assetNames {
+		set[name] = true
+	}
+	return set
+}()
+
+// gzipOnce compresses every asset exactly once. They are embedded and never
+// change, so per-request compression only burns CPU.
+var (
+	gzipOnce sync.Once
+	gzipData map[string][]byte
+)
+
+func gzippedAssets() map[string][]byte {
+	gzipOnce.Do(func() {
+		gzipData = make(map[string][]byte, len(assetNames))
+		for _, name := range assetNames {
+			data, err := assets.ReadFile(name)
+			if err != nil {
+				continue
+			}
+			var buf bytes.Buffer
+			gz := gzip.NewWriter(&buf)
+			_, _ = gz.Write(data)
+			_ = gz.Close()
+			gzipData[name] = buf.Bytes()
+		}
+	})
+	return gzipData
+}
 
 const cookieName = "pai_session"
 const sessionLifetime = 12 * time.Hour
@@ -89,7 +127,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = "index.html"
 		}
-		if name != "index.html" && name != "app.js" && name != "style.css" && name != "vendor/marked.min.js" && name != "vendor/purify.min.js" {
+		if !assetSet[name] {
 			fail(w, 404, "not found")
 			return
 		}
@@ -108,13 +146,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Add("Vary", "Accept-Encoding")
 		if acceptsGzip(r) {
-			// Assets are embedded in readable source form (hand-editable); gzip
-			// gives the small transfer a minified asset would, with no build step.
-			w.Header().Set("Content-Encoding", "gzip")
-			gz := gzip.NewWriter(w)
-			_, _ = gz.Write(data)
-			_ = gz.Close()
-			return
+			// Assets are embedded in readable source form (hand-editable) and
+			// compressed once; gzip gives the small transfer a minified asset
+			// would, with no build step.
+			if gz, ok := gzippedAssets()[name]; ok {
+				w.Header().Set("Content-Encoding", "gzip")
+				_, _ = w.Write(gz)
+				return
+			}
 		}
 		_, _ = w.Write(data)
 		return

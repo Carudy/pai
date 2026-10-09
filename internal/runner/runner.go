@@ -85,6 +85,9 @@ type Prompt struct {
 	Title     string         `json:"title"`
 	Tool      *core.ToolCall `json:"tool,omitempty"`
 	Untrusted []string       `json:"untrusted,omitempty"`
+	// TrustTarget says what Untrusted names are: "command" for command names or
+	// "path" for a directory, so a client can word the approval correctly.
+	TrustTarget string `json:"trust_target,omitempty"`
 }
 
 func clonePrompt(p *Prompt) *Prompt {
@@ -110,18 +113,22 @@ func cloneToolCall(c *core.ToolCall) *core.ToolCall {
 }
 
 type Snapshot struct {
-	Usage      core.Usage     `json:"usage"`
-	TotalUsage core.Usage     `json:"total_usage"`
-	UsageCalls int            `json:"usage_calls"`
-	Name       string         `json:"name"`
-	Model      string         `json:"model"`
-	State      string         `json:"state"` // starting, busy, awaiting, stopped
-	Phase      string         `json:"phase"`
-	ActiveTool *core.ToolCall `json:"active_tool,omitempty"`
-	Queued     int            `json:"queued"`
-	Pending    *Prompt        `json:"pending,omitempty"`
-	Error      string         `json:"error,omitempty"`
-	Reasoning  string         `json:"reasoning,omitempty"`
+	Usage      core.Usage `json:"usage"`
+	TotalUsage core.Usage `json:"total_usage"`
+	UsageCalls int        `json:"usage_calls"`
+	// ContextTokens is the configured compaction threshold: the last prompt size
+	// at which older turns get summarized. 0 means compaction is disabled, so a
+	// client should not render a context budget.
+	ContextTokens int            `json:"context_tokens,omitempty"`
+	Name          string         `json:"name"`
+	Model         string         `json:"model"`
+	State         string         `json:"state"` // starting, busy, awaiting, stopped
+	Phase         string         `json:"phase"`
+	ActiveTool    *core.ToolCall `json:"active_tool,omitempty"`
+	Queued        int            `json:"queued"`
+	Pending       *Prompt        `json:"pending,omitempty"`
+	Error         string         `json:"error,omitempty"`
+	Reasoning     string         `json:"reasoning,omitempty"`
 }
 type Event struct {
 	Type     string   `json:"type"`
@@ -223,30 +230,31 @@ type answer struct {
 	aborted bool
 }
 type worker struct {
-	m            *Manager
-	name         string
-	workingDir   string
-	model        string
-	ctx          context.Context
-	cancel       context.CancelFunc
-	done         chan struct{}
-	tasks        chan string
-	steering     chan string
-	rt           *role.Runtime
-	state        string
-	phase        string
-	reasoning    string
-	usage        core.Usage
-	totalUsage   core.Usage
-	usageCalls   int
-	activeTool   *core.ToolCall
-	failure      string
-	instruction  bool
-	abortPrompts bool
-	latestTool   *core.ToolCall
-	pending      *Prompt
-	reply        chan answer
-	subs         map[chan Event]struct{}
+	m             *Manager
+	name          string
+	workingDir    string
+	model         string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{}
+	tasks         chan string
+	steering      chan string
+	rt            *role.Runtime
+	state         string
+	phase         string
+	reasoning     string
+	usage         core.Usage
+	totalUsage    core.Usage
+	usageCalls    int
+	contextTokens int // compaction trigger from config; 0 = disabled
+	activeTool    *core.ToolCall
+	failure       string
+	instruction   bool
+	abortPrompts  bool
+	latestTool    *core.ToolCall
+	pending       *Prompt
+	reply         chan answer
+	subs          map[chan Event]struct{}
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {
@@ -482,6 +490,7 @@ func (w *worker) snapshotLocked() Snapshot {
 	s.Phase = w.phase
 	s.Reasoning = w.reasoning
 	s.Usage, s.TotalUsage, s.UsageCalls = w.usage, w.totalUsage, w.usageCalls
+	s.ContextTokens = w.contextTokens
 	if w.activeTool != nil {
 		s.ActiveTool = cloneToolCall(w.activeTool)
 	}
@@ -658,6 +667,7 @@ func (w *worker) run() {
 		w.rt = rt
 		w.model = copyCfg.DefaultModel
 		w.workingDir = cwd
+		w.contextTokens = copyCfg.Context.SummarizeAfterTokens
 		if w.state != "stopped" {
 			w.state = "busy"
 			w.phase = "waiting_model"
@@ -696,7 +706,7 @@ func (w *worker) Ask(title string) (string, error) {
 	w.instruction = false
 	w.m.mu.Unlock()
 	if !instruction {
-		a, err := w.prompt("ask", title, nil)
+		a, err := w.prompt("ask", title, nil, "")
 		return a.text, err
 	}
 	var text string
@@ -717,7 +727,7 @@ func (w *worker) Ask(title string) (string, error) {
 	w.emitLocked("busy", nil)
 	return text, nil
 }
-func (w *worker) prompt(kind, title string, untrusted []string) (answer, error) {
+func (w *worker) prompt(kind, title string, untrusted []string, target string) (answer, error) {
 	w.m.mu.Lock()
 	tool := w.latestTool
 	w.latestTool = nil // A tool can belong to only its immediately following prompt.
@@ -730,7 +740,7 @@ func (w *worker) prompt(kind, title string, untrusted []string) (answer, error) 
 		w.phase = "waiting_model"
 	}
 	w.m.sequence++
-	w.pending = &Prompt{ID: fmt.Sprint(w.m.sequence), Kind: kind, Title: title}
+	w.pending = &Prompt{ID: fmt.Sprint(w.m.sequence), Kind: kind, Title: title, TrustTarget: target}
 	if kind == "confirm" {
 		w.pending.Tool = cloneToolCall(tool)
 	}
@@ -759,14 +769,14 @@ func (w *worker) prompt(kind, title string, untrusted []string) (answer, error) 
 	return a, nil
 }
 func (w *worker) Confirm(title string) (bool, error) {
-	a, err := w.prompt("confirm", title, nil)
+	a, err := w.prompt("confirm", title, nil, "")
 	return a.choice != core.TrustDeny, err
 }
 
 // ConfirmCommand implements core.CommandConfirmer: a command confirmation that
 // also offers to trust the flagged command names for this run or future runs.
 func (w *worker) ConfirmCommand(title string, untrusted []string) (core.TrustChoice, error) {
-	a, err := w.prompt("confirm", title, untrusted)
+	a, err := w.prompt("confirm", title, untrusted, "command")
 	if err != nil {
 		return core.TrustDeny, err
 	}
@@ -776,7 +786,7 @@ func (w *worker) ConfirmCommand(title string, untrusted []string) (core.TrustCho
 // ConfirmPath implements core.PathConfirmer: a file confirmation that also offers
 // to trust the containing directory.
 func (w *worker) ConfirmPath(title, dir string) (core.TrustChoice, error) {
-	a, err := w.prompt("confirm", title, []string{dir})
+	a, err := w.prompt("confirm", title, []string{dir}, "path")
 	if err != nil {
 		return core.TrustDeny, err
 	}

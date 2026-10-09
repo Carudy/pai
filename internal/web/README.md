@@ -66,7 +66,9 @@ Slow consumers are also bounded/disconnected by runner. No event replay is
 promised; reconnect yields a snapshot and the UI reloads durable history.
 Snapshots include `usage` (latest reported request), `total_usage` (sum of
 reported request usage), and `usage_calls`. Token fields use core's `Prompt`,
-`Completion`, and `Total` names. The UI hides usage until a report arrives and
+`Completion`, and `Total` names. `context_tokens`, when present, is the
+configured compaction threshold, letting the UI show the latest prompt size
+against the budget. The UI hides usage until a report arrives and
 renders snapshots rather than adding SSE events, so reconnects cannot double
 count. “This run” means the worker runtime, including subsequent instructions;
 resuming a retired worker starts fresh, not session-lifetime totals.
@@ -131,7 +133,9 @@ rejected; there is no URL authentication.
   "choice": "once"|"deny"|"session"|"always" }`; text answers questions and
   choice answers confirmations (an omitted choice defaults to deny). A
   confirmation whose `pending.untrusted` is non-empty additionally offers
-  trusting those command names for the run (`session`) or for good (`always`).
+  trusting those command names — or the containing directory when
+  `pending.trust_target` is `path` — for the run (`session`) or for good
+  (`always`).
 
 Send/steer/cancel/reply success is 202 (login/model 200), not a promise that the task completed. Stale
 prompt IDs are 409, missing live workers 404, full capacity/queues 429, closed
@@ -153,8 +157,9 @@ Diff previews and reply cards, and replaces history on state refresh rather
 than treating transient SSE output as durable turns. Snapshots recover pending
 prompt titles/IDs and retained `pending.tool` approval context (native core
 keys `Name`, `Target`, `Detail`, `Reason`, `Diff`) on reconnect, page reload, and
-session switch, together with `pending.untrusted` (the command names a
-confirmation can trust). Approval cards render only this retained tool, not a transient
+session switch, together with `pending.untrusted` (what a confirmation can
+trust) and `pending.trust_target` (`command` or `path`, so the card words it
+correctly). Approval cards render only this retained tool, not a transient
 last tool event. Repeated snapshots for the same session/pending ID preserve
 the existing question form, focus, and draft; a new ID or cleared prompt resets
 the card. Drafts are not persisted across page reloads or session switches. Selecting

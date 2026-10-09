@@ -200,6 +200,7 @@ starting with `//` is sent literally, with one slash removed.
 | `/exit` (`/quit`, `/q`) | End this session |
 | `/info` (`/status`) | Session, role, model, and turn count |
 | `/tools` | The active role's tools |
+| `/trusted` | Show commands and paths trusted this run or from config |
 | `/role [name]` | Show or switch the active role |
 | `/new [name]` | Start a fresh conversation, optionally named |
 | `/rename <name>` | Name (and save) this conversation |

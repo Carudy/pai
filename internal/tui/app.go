@@ -191,7 +191,7 @@ func (p *appPrompter) ConfirmCommand(title string, untrusted []string) (core.Tru
 // also trust the containing directory for this run or for future runs. It reuses
 // the command modal, showing the directory as the thing to trust.
 func (p *appPrompter) ConfirmPath(title, dir string) (core.TrustChoice, error) {
-	req := promptReq{kind: promptConfirmCommand, title: title, untrusted: []string{dir}, reply: make(chan promptResult, 1)}
+	req := promptReq{kind: promptConfirmCommand, title: title, untrusted: []string{dir}, path: true, reply: make(chan promptResult, 1)}
 	res, err := p.ask(req)
 	if err != nil {
 		return core.TrustDeny, err
@@ -231,6 +231,7 @@ type promptReq struct {
 	kind      promptKind
 	title     string
 	untrusted []string
+	path      bool // untrusted names a directory, not command names
 	reply     chan promptResult
 }
 
@@ -463,7 +464,11 @@ func (m *appModel) View() string {
 	if m.pending != nil && m.pending.kind == promptConfirmCommand {
 		out := label + "\n" + RenderStr("Confirm", "  ⚠︎  "+m.pending.title)
 		if len(m.pending.untrusted) > 0 {
-			out += "\n" + RenderStr("Warn", "  not trusted: "+strings.Join(m.pending.untrusted, ", "))
+			what := "not trusted: "
+			if m.pending.path {
+				what = "outside trusted paths: "
+			}
+			out += "\n" + RenderStr("Warn", "  "+what+strings.Join(m.pending.untrusted, ", "))
 		}
 		return out + "\n" + RenderStr("Hint", "  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort")
 	}
