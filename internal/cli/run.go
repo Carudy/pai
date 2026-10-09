@@ -55,14 +55,6 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 	log.Debugf("📃 User flags: %#v\n", flags)
 	log.Debugf("🔧 User config: %#v\n", cfg.Redacted())
 
-	// Lazily load the custom prompt for the resolved role only.
-	customPrompt, err := config.LoadCustomPrompt(cfg.DefaultRole)
-	if err != nil {
-		log.Errorf("Error loading custom prompt: %v\n", err)
-		return 1
-	}
-	cfg.CustomPrompt = customPrompt
-
 	log.Debugf("🔌 Connecting to %#v...\n", cfg.DefaultModel)
 	providerCfg := cfg.ProvidersConfigs[cfg.Provider]
 	client, err := provider.CreateClient(cfg.Provider, providerCfg.APIKey, cfg.Model, providerCfg.BaseURL)
@@ -84,6 +76,15 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 		log.Errorf("Error: %v\n", err)
 		return 1
 	}
+
+	// Load the custom prompt for the final role: resolving a session may have
+	// switched it away from the config default (a session keeps its role).
+	customPrompt, err := config.LoadCustomPrompt(cfg.DefaultRole)
+	if err != nil {
+		log.Errorf("Error loading custom prompt: %v\n", err)
+		return 1
+	}
+	cfg.CustomPrompt = customPrompt
 	var history []provider.Message
 	if store != nil {
 		defer store.Close()

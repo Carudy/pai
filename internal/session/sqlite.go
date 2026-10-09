@@ -205,13 +205,18 @@ func (s *sqliteStore) Append(name string, turns ...core.Turn) error {
 	return tx.Commit()
 }
 
-func (s *sqliteStore) SetModel(name, model string) error {
+func (s *sqliteStore) SetModel(name, model string) error { return s.setField(name, "model", model) }
+func (s *sqliteStore) SetRole(name, role string) error   { return s.setField(name, "role", role) }
+
+// setField rewrites one metadata column. column is a compile-time constant, never
+// caller input, so concatenating it into the statement is safe.
+func (s *sqliteStore) setField(name, column, value string) error {
 	if err := validate(name); err != nil {
 		return err
 	}
-	res, err := s.db.Exec(`UPDATE sessions SET model = ?, updated_at = ? WHERE name = ?`, model, time.Now().Unix(), name)
+	res, err := s.db.Exec(`UPDATE sessions SET `+column+` = ?, updated_at = ? WHERE name = ?`, value, time.Now().Unix(), name)
 	if err != nil {
-		return fmt.Errorf("update session model: %w", err)
+		return fmt.Errorf("update session %s: %w", column, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {

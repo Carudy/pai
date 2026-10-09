@@ -92,6 +92,13 @@ func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, *ses
 		}
 	}
 
+	// A session carries its role: honor the saved role unless -r overrode it.
+	// Sessions created above already carry cfg.DefaultRole, so this is a no-op
+	// for them.
+	if flags.Role == "" && sess.Meta.Role != "" {
+		cfg.DefaultRole = sess.Meta.Role
+	}
+
 	// Only part of the transcript is replayed into the model. A summary
 	// checkpoint, if any, replaces everything before it; max_turns then caps the
 	// tail after it. The recap reads sess.Turns, so it is unaffected.

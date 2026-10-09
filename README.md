@@ -201,7 +201,7 @@ starting with `//` is sent literally, with one slash removed.
 | `/info` (`/status`) | Session, role, model, and turn count |
 | `/tools` | The active role's tools |
 | `/trusted` | Show commands and paths trusted this run or from config |
-| `/role [name]` | Show or switch the active role |
+| `/role [name]` | Show or switch the active role (saved to the session) |
 | `/new [name]` | Start a fresh conversation, optionally named |
 | `/rename <name>` | Name (and save) this conversation |
 | `/compact` | Summarize older turns to shrink the context window |
@@ -210,6 +210,10 @@ Commands run locally and are not recorded as conversation turns. `/rename` on a
 run started without `-s` saves the whole conversation so far under that name, so
 a chat you decide to keep isn't lost. `/compact` is the exception that calls the
 model — it summarizes older turns (see "Keeping the context bounded").
+
+A session carries its role: switching with `/role <name>` saves the new role to
+the session (when it is persisted), so reattaching later resumes the same role.
+The switch changes the system prompt, so that turn is not prefix-cached.
 
 ## ⚙️ Configuration
 

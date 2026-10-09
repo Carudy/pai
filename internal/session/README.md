@@ -10,7 +10,8 @@ See the [module map](../organization.md) for the storage adapter boundary.
 - `Store` creates, loads, lists, appends, renames, and deletes sessions.
 - `Meta` includes role, model, cwd, title, timestamps, and turn count;
   `Session` pairs metadata with ordered `core.Turn` history.
-- `Store.SetModel` changes saved model metadata without changing history.
+- `Store.SetModel` and `Store.SetRole` change saved model/role metadata without
+  changing history; both backends implement them.
 - `NewRecorder` implements `core.Recorder`; `controller.go` adapts session
   operations to the loop's storage port.
 

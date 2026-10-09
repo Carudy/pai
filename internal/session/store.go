@@ -17,6 +17,8 @@ type Store interface {
 	Append(name string, turns ...core.Turn) error
 	// SetModel updates metadata without changing conversation history.
 	SetModel(name, model string) error
+	// SetRole updates the session's role without changing conversation history.
+	SetRole(name, role string) error
 	// Rename renames a session, or ErrNotFound / ErrExists.
 	Rename(oldName, newName string) error
 	// Delete removes a session, or ErrNotFound.

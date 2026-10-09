@@ -57,6 +57,10 @@ type Sessions interface {
 	// New starts a fresh conversation, optionally named, returning its recorder
 	// (nil when the new conversation is ephemeral).
 	New(name string) (Recorder, error)
+	// SetRole updates the stored session's role without changing its history.
+	// It errors for an ephemeral conversation or when storage is unavailable, so
+	// the caller can report that a change applies to this run only.
+	SetRole(role string) error
 }
 
 // Usage is token accounting for a single model call.

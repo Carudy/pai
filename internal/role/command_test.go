@@ -52,6 +52,7 @@ func (o *fakeObserver) lastNotice() string {
 type fakeSessions struct {
 	persisted []string
 	created   []string
+	roles     []string
 	turns     int
 }
 
@@ -64,6 +65,11 @@ func (s *fakeSessions) Persist(name string, turns []core.Turn) (core.Recorder, e
 func (s *fakeSessions) New(name string) (core.Recorder, error) {
 	s.created = append(s.created, name)
 	return nil, nil
+}
+
+func (s *fakeSessions) SetRole(role string) error {
+	s.roles = append(s.roles, role)
+	return nil
 }
 
 // newTestCtx builds a command context against the real built-in devops role,
@@ -301,6 +307,18 @@ func TestRoleSwitch(t *testing.T) {
 		if tl.Name == "remote" {
 			t.Error("coder should not have the remote tool")
 		}
+	}
+}
+
+// Switching role saves it to the session so a later attach keeps it.
+func TestRoleSwitchSavesRole(t *testing.T) {
+	cc, rt, _ := newTestCtx(t)
+	sessions := &fakeSessions{}
+	rt.Sessions = sessions
+
+	dispatch(cc, "/role coder")
+	if len(sessions.roles) != 1 || sessions.roles[0] != "coder" {
+		t.Fatalf("saved roles = %v, want [coder]", sessions.roles)
 	}
 }
 

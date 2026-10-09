@@ -282,6 +282,13 @@ func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
 	c.cfg.DefaultRole = name
 	c.rp = rp
 	c.output(fmt.Sprintf("role switched to %s (the system prompt changed, so this turn is not prefix-cached)", name))
+	if c.rt.Sessions != nil {
+		if err := c.rt.Sessions.SetRole(name); err != nil {
+			c.output("this switch applies to this run only: " + err.Error())
+		} else {
+			c.output("saved this session's role")
+		}
+	}
 	if rp.ContextSource != "" {
 		c.output("project instructions: " + rp.ContextSource)
 	}

@@ -199,6 +199,16 @@ func (s *fileStore) Append(name string, turns ...core.Turn) error {
 }
 
 func (s *fileStore) SetModel(name, model string) error {
+	return s.updateMeta(name, func(m *Meta) { m.Model = model })
+}
+
+func (s *fileStore) SetRole(name, role string) error {
+	return s.updateMeta(name, func(m *Meta) { m.Role = role })
+}
+
+// updateMeta rewrites a session's header with apply's change, preserving its
+// history byte-for-byte (including a truncated final turn).
+func (s *fileStore) updateMeta(name string, apply func(*Meta)) error {
 	if err := validate(name); err != nil {
 		return err
 	}
@@ -216,9 +226,9 @@ func (s *fileStore) SetModel(name, model string) error {
 	if err := json.Unmarshal(header, &meta); err != nil {
 		return fmt.Errorf("parse session metadata: %w", err)
 	}
-	meta.Model = model
+	apply(&meta)
 	meta.UpdatedAt = time.Now()
-	f, err := os.CreateTemp(s.dir, ".model-*")
+	f, err := os.CreateTemp(s.dir, ".meta-*")
 	if err != nil {
 		return err
 	}

@@ -102,6 +102,21 @@ func (c *Controller) Name() string {
 	return c.name
 }
 
+// SetRole updates the stored session's role without changing its history. It
+// errors when the conversation is ephemeral or storage is unavailable, so the
+// caller can report that the switch is run-only.
+func (c *Controller) SetRole(role string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.name == "" {
+		return fmt.Errorf("this conversation is not saved")
+	}
+	if c.store == nil {
+		return fmt.Errorf("session storage is unavailable")
+	}
+	return c.store.SetRole(c.name, role)
+}
+
 // Close releases a store this controller opened. It does not close a store the
 // caller supplied.
 func (c *Controller) Close() error {
