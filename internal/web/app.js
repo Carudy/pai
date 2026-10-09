@@ -1,9 +1,15 @@
+// PAI browser workspace. No framework or build step: plain DOM plus SSE.
+//
+// Sections: state → model controls → run status → response parsing →
+// API/DOM helpers → rendering → history → snapshot/prompts → activity feed →
+// session actions → event wiring.
 'use strict';
 const $ = id => document.getElementById(id);
 let selected = '', generation = 0, stream = null, retry = null, refreshTimer = null;
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
 let pendingID = null, pendingSession = null;
 let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
+// ── Model controls ──────────────────────────────────────────
 function normalizeModel(value) { return value.trim().replace(/\s*:\s*/, ':'); }
 function modelControls() {
   const disabled = !selected || modelBlocked || modelApplying;
@@ -38,6 +44,7 @@ async function applyModel(e) {
   } catch (err) { if (name === selected && version === generation) { error(err); await loadSnapshot(); } }
   finally { modelApplying = false; modelControls(); }
 }
+// ── Run status, live transcript, response parsing ───────────
 let durable = [], liveSteps = [], currentStep = null, thinking = '';
 let liveCard = null, liveType = '', liveText = '';
 const liveTextLimit = 16000;
@@ -104,6 +111,7 @@ function parsedResponse(content) {
   }
   return null;
 }
+// ── API and small DOM helpers ───────────────────────────────
 function clearPending() { $('pending').replaceChildren(); pendingID = null; pendingSession = null; }
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
 function error(e) { $('error').textContent = e.message || String(e); }
@@ -137,6 +145,7 @@ function controls() {
   $('cancel').disabled = !ready;
   $('composer-hint').textContent = !ready ? 'Open a session to send instructions' : 'Enter to send · Shift+Enter for newline · Busy? Sends are queued';
 }
+// ── Rendering ───────────────────────────────────────────────
 function diff(value) {
   const pre = text('pre', '', 'diff');
   const lines = String(value).split('\n');
@@ -256,6 +265,7 @@ function paintConversation() {
   }
 
 }
+// ── History and session metadata ────────────────────────────
 function sessionMetadata(meta = {}) {
   modelMetadata(meta.model);
   for (const field of ['role', 'model']) {
@@ -302,6 +312,7 @@ async function refreshHistory() {
   catch (e) { error(e); } finally { refreshing = false; }
 }
 function scheduleHistory() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshHistory, 150); }
+// ── Snapshot, prompts, live updates ─────────────────────────
 function usageSnapshot(s) {
   const node = $('token-usage');
   node.hidden = !(s.usage_calls > 0);
@@ -398,6 +409,7 @@ function connect() {
     retry = setTimeout(async () => { if (version !== generation) return; await loadSnapshot(); scheduleHistory(); if (version === generation) connect(); }, 2500);
   };
 }
+// ── Session actions ─────────────────────────────────────────
 async function select(name, cwd) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0;
   clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; modelBlocked = true; sessionMetadata();
@@ -425,6 +437,7 @@ async function action(kind) {
     await sessions(true);
   } catch (e) { error(e); }
 }
+// ── Activity feed ───────────────────────────────────────────
 function activity(event) {
   const type = event.type, data = event.data;
   // Phased snapshots are authoritative even when event output is stale.
@@ -514,6 +527,7 @@ async function createSession(e) {
 function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
 }
+// ── Event wiring ────────────────────────────────────────────
 $('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; $('login').hidden = true; $('app').hidden = false; await Promise.all([sessions(true), roles(), models()]); if (selected) connect(); } catch (err) { error(err); } };
 $('model-form').onsubmit = applyModel;
 $('session-model').oninput = () => { modelDirty = true; modelControls(); };

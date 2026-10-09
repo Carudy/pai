@@ -2,12 +2,14 @@ package web
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -289,6 +291,35 @@ func TestCreateAPI(t *testing.T) {
 	legacy, _ := setup(t, "")
 	if w := request(legacy, "POST", "/api/send", `{"name":"one","text":"task","working_dir":"`+dir+`"}`, nil, "http://pai.test"); w.Code != 400 || !strings.Contains(w.Body.String(), "does not support working directories") {
 		t.Fatalf("send: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Assets are gzip-encoded when the client asks, and decompress to the embedded
+// bytes unchanged.
+func TestAssetsGzip(t *testing.T) {
+	h, _ := setup(t, "")
+	r := httptest.NewRequest(http.MethodGet, "/style.css", nil)
+	r.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK || w.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("status %d, encoding %q", w.Code, w.Header().Get("Content-Encoding"))
+	}
+	if w.Header().Get("Vary") != "Accept-Encoding" {
+		t.Errorf("missing Vary: Accept-Encoding")
+	}
+	gz, err := gzip.NewReader(w.Body)
+	if err != nil {
+		t.Fatalf("gzip reader: %v", err)
+	}
+	got, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	want, _ := assets.ReadFile("style.css")
+	if string(got) != string(want) {
+		t.Error("decompressed body differs from the embedded asset")
 	}
 }
 

@@ -2,6 +2,7 @@
 package web
 
 import (
+	"compress/gzip"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -50,6 +51,17 @@ func New(m *runner.Manager, options Options) http.Handler {
 	return &handler{manager: m, token: options.Token, publicOrigin: options.PublicOrigin, sessions: make(map[[32]byte]time.Time)}
 }
 
+// acceptsGzip reports whether the client advertised gzip. Only static assets are
+// compressed: API JSON is small, and SSE must stream unbuffered.
+func acceptsGzip(r *http.Request) bool {
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		if strings.EqualFold(strings.TrimSpace(strings.SplitN(part, ";", 2)[0]), "gzip") {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -87,6 +99,16 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		default:
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		}
+		w.Header().Add("Vary", "Accept-Encoding")
+		if acceptsGzip(r) {
+			// Assets are embedded in readable source form (hand-editable); gzip
+			// gives the small transfer a minified asset would, with no build step.
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			_, _ = gz.Write(data)
+			_ = gz.Close()
+			return
 		}
 		_, _ = w.Write(data)
 		return

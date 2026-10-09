@@ -87,8 +87,10 @@ providers that send reasoning deltas. SSE flushes each event and sets
 
 ## HTTP contract
 
-All responses have CSP, nosniff, no-store and no-referrer headers. API failures
-are JSON `{ "error": "..." }`. Cross-site Sec-Fetch-Site is rejected for all
+All responses have CSP, nosniff, no-store and no-referrer headers. Static assets
+(page, JS, CSS) are gzip-encoded when the client advertises gzip, with
+`Vary: Accept-Encoding`; the sources stay readable in the repository rather than
+being committed minified. API failures are JSON `{ "error": "..." }`. Cross-site Sec-Fetch-Site is rejected for all
 API requests. Every POST, **including login**, requires an Origin whose scheme
 and host match PublicOrigin when set, otherwise the request (no forwarded-header
 trust, no CORS). Cookie-authenticated
