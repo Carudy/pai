@@ -3,6 +3,7 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="color-scheme" content="light dark" />
         <title>PAI workspace</title>
         <link rel="stylesheet" href="/style.css" />
         <script src="/vendor/marked.min.js" defer></script>
@@ -127,11 +128,11 @@
                         <div class="actions">
                             <span id="composer-hint"
                                 >Open a session to send instructions</span
-                            ><button id="send" type="submit" disabled>
+                            ><button id="send" type="submit" title="Send an instruction; queued while PAI is busy" disabled>
                                 Send</button
-                            ><button id="steer" type="button" disabled>
+                            ><button id="steer" type="button" title="Redirect the running task at its next step" disabled>
                                 Steer</button
-                            ><button id="cancel" type="button" disabled>
+                            ><button id="cancel" type="button" title="Stop the current step" disabled>
                                 Cancel
                             </button>
                         </div>

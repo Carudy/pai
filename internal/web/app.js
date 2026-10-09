@@ -143,7 +143,7 @@ function controls() {
   const ready = !!selected, filled = !!$('message').value.trim();
   $('send').disabled = $('steer').disabled = !ready || !filled;
   $('cancel').disabled = !ready;
-  $('composer-hint').textContent = !ready ? 'Open a session to send instructions' : 'Enter to send · Shift+Enter for newline · Busy? Sends are queued';
+  $('composer-hint').textContent = !ready ? 'Open a session to send instructions' : 'Enter to send · Shift+Enter for newline · While busy: Sends queue, Steer redirects, Cancel stops';
 }
 // ── Rendering ───────────────────────────────────────────────
 function diff(value) {
