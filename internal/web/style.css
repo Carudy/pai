@@ -375,6 +375,7 @@ header p {
 }
 
 #token-usage {
+    margin-top: 2px;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     color: var(--muted);

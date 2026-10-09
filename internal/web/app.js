@@ -358,7 +358,7 @@ function snapshot(s) {
   modelControls();
   controls();
   runSnapshot(s);
-  if (s.state !== 'busy' || s.pending) clearReasoning();
+  if (s.state !== 'busy' || s.pending) flushReasoning();
     else if (s.reasoning !== undefined) {
       thinking = String(s.reasoning).slice(-liveTextLimit);
       $('reasoning-text').textContent = thinking; $('reasoning-preview').hidden = !thinking;
@@ -375,7 +375,7 @@ function snapshot(s) {
   if (pendingID === p.id && pendingSession === name) return;
   clearPending(); pendingID = p.id; pendingSession = name;
   const title = text('h3', p.kind === 'confirm' ? 'Confirmation required' : 'Question'); title.id = 'pending-title';
-  clearReasoning();
+  flushReasoning();
   $('pending').append(title);
   if (p.kind === 'confirm' && p.tool) {
     const tool = p.tool;
@@ -445,7 +445,7 @@ function connect() {
     if (version !== generation || stream !== connection) return;
     const event = JSON.parse(e.data);
 
-    if (!['reasoning','notice','snapshot'].includes(event.type)) clearReasoning();
+    if (!['reasoning','notice','snapshot'].includes(event.type)) flushReasoning();
     snapshot(event.snapshot);
     if (event.data !== undefined) {
       activity(event);
@@ -510,8 +510,17 @@ function activity(event) {
     } else if (['reasoning','output','tool_result'].includes(type)) runPhase('Thinking…', type === 'tool_result');
   }
   }
-  if (!['reasoning','notice','snapshot'].includes(type)) clearReasoning();
-  const streaming = ['reasoning','tool_output','output'].includes(type);
+  if (type === 'reasoning') {
+    // Reasoning lives only in the dedicated preview while it streams; flushReasoning
+    // hands the finished block to the activity log, so it is never shown in both
+    // places at once.
+    currentStep = null; thinking = (thinking + String(data)).slice(-liveTextLimit);
+    $('reasoning-text').textContent = thinking; $('reasoning-preview').hidden = false;
+    $('reasoning-text').scrollTop = $('reasoning-text').scrollHeight;
+    return;
+  }
+  if (type !== 'notice' && type !== 'snapshot') flushReasoning();
+  const streaming = ['tool_output','output'].includes(type);
   if (!streaming || liveType !== type || !liveCard) {
     liveCard = text('article', '', 'activity-card');
     liveCard.append(text('div', type.replaceAll('_', ' '), 'card-heading'), text('pre', ''));
@@ -522,19 +531,13 @@ function activity(event) {
   liveCard.lastElementChild.textContent = liveText;
   liveCard.lastElementChild.scrollTop = liveCard.lastElementChild.scrollHeight;
   activityScroll();
-  if (type === 'reasoning') {
-      currentStep = null; thinking = (thinking + String(data)).slice(-liveTextLimit);
-      $('reasoning-text').textContent = thinking; $('reasoning-preview').hidden = false;
-      $('reasoning-text').scrollTop = $('reasoning-text').scrollHeight;
-    }
-  else if (type === 'tool_call') {
-    thinking = '';
+  if (type === 'tool_call') {
     currentStep = {call:data, floor:Math.max(0, historyTotal - 1), output:'', result:null};
     liveSteps.push(currentStep); if (liveSteps.length > 100) liveSteps.shift(); scheduleHistory();
   } else if (type === 'tool_output' && currentStep) currentStep.output = (currentStep.output + String(data)).slice(-liveTextLimit);
   else if (type === 'tool_result' && currentStep) { currentStep.result = data; scheduleHistory(); }
   else if (type === 'notice') toast(typeof data === 'string' ? data : String(data));
-  else if (['done','terminate','ask','user'].includes(type)) { thinking = ''; scheduleHistory(); }
+  else if (['done','terminate','ask','user'].includes(type)) scheduleHistory();
   else if (type !== 'output') return;
 }
 // Presentation only: never feed these segments back into execution or copying.
@@ -559,6 +562,18 @@ function shellSegments(command) {
   if (quote || escaped || depth || command.includes('<<')) return [command];
   segments.push(command.slice(start).trim());
   return segments.every(Boolean) ? segments : [command];
+}
+function flushReasoning() {
+  // Append the finished reasoning block to the activity log once, in order, then
+  // clear the live preview. Called when a step ends; a no-op when nothing streamed.
+  if (thinking) {
+    const card = text('article', '', 'activity-card');
+    card.append(text('div', 'reasoning', 'card-heading'), text('pre', thinking));
+    $('live-progress').append(card);
+    while ($('live-progress').children.length > 100) $('live-progress').firstElementChild.remove();
+    activityScroll();
+  }
+  clearReasoning();
 }
 function clearReasoning() {
   thinking = ''; $('reasoning-text').textContent = ''; $('reasoning-preview').hidden = true;

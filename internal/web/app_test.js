@@ -195,14 +195,15 @@ function descendants(node) { return [node, ...node.children.flatMap(descendants)
 assert.match(page.get('history').textContent, /echo ok/);
 assert.ok(!descendants(page.get('history')).some(node => ['script','img'].includes(node.tag)), 'hostile text never becomes markup');
 page.run("activity({type:'reasoning',data:'first '}); activity({type:'reasoning',data:'second'})");
-assert.match(page.get('live-progress').textContent, /first second/);
+assert.ok(!page.get('live-progress').textContent.includes('first second'), 'live reasoning stays out of the activity log');
 assert.equal(page.get('reasoning-preview').hidden, false);
 assert.equal(page.get('reasoning-text').textContent, 'first second');
 assert.equal(page.get('reasoning-text').scrollTop, 1000);
 page.run("historyTotal=0; activity({type:'tool_call',data:{Name:'execute',Detail:'echo ok'}}); activity({type:'tool_output',data:'ok\\n'}); activity({type:'tool_result',data:{OK:true,Message:'finished'}})");
 assert.equal(page.get('reasoning-preview').hidden, true);
 assert.equal(page.get('reasoning-text').textContent, '');
-assert.equal(page.get('live-progress').children.length, 4);
+assert.equal(page.get('live-progress').children.length, 4, 'finished reasoning block plus three tool cards');
+assert.match(page.get('live-progress').textContent, /first second/, 'finished reasoning is appended to the activity log');
 assert.match(page.get('live-progress').textContent, /echo ok/);
 page.run('durable=' + JSON.stringify([{Role:'assistant',Kind:'output',Content:JSON.stringify({action:'tool',toolname:'execute',payload:'echo ok'})},{Role:'user',Kind:'tool_result',Content:'[execute result]\nCMD: echo ok\nok'}]) + '; paintConversation()');
 assert.equal(page.get('history').children.length, 1, 'persisted tool result nests under its call');

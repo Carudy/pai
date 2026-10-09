@@ -77,7 +77,9 @@ spaces around the colon normalized; suggestions are not an allowlist.
 
 Snapshots also recover the current reasoning tail (at most 64 KiB); ordinary
 reasoning events carry deltas, not repeated full text. Reasoning is transient
-and cleared when the model moves to another action.
+and cleared when the model moves to another action. In the browser it streams
+only in the dedicated "Thinking…" preview; when the step ends the finished
+block is appended once to the activity log, so the two never show it at once.
 
 CLI and web both respect `[app] streaming` (default `true`). Explicit `false`
 uses blocking provider completion, so reasoning appears only after completion.
