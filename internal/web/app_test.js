@@ -507,6 +507,8 @@ async function verifyRole() {
   assert.equal(p.run('roleCall[0]'), 'role');
   assert.equal(p.run('roleCall[1].role'), 'coder');
   assert.equal(p.run('roleCall[1].name'), 'one');
+  assert.equal(p.run("selected='one'; controls(); $('rename-session').hidden"), false, 'rename is offered for a selected session');
+  assert.equal(p.run("selected=''; controls(); $('rename-session').hidden"), true, 'rename is hidden without a session');
 }
 
 Promise.all([verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

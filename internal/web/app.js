@@ -167,6 +167,7 @@ function controls() {
   // Steer only redirects a running task; while idle it would just be a Send.
   $('steer').disabled = !ready || !filled || !sessionBusy;
   $('cancel').disabled = !ready;
+  $('rename-session').hidden = !ready;
   $('rename-session').disabled = !ready || sessionBusy;
   // Changing role or model requires an idle worker (it retires the runtime).
   const configReady = ready && !modelBlocked;
