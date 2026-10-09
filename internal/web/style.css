@@ -923,6 +923,33 @@ header p {
     color: var(--red);
 }
 
+/* Transient notices, stacked above the composer so a passing reason is seen
+   without being lost in the activity log. */
+.toasts {
+    position: fixed;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 11;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    max-width: 90vw;
+    pointer-events: none;
+}
+
+.toast {
+    max-width: 90vw;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: var(--ink);
+    box-shadow: var(--shadow);
+    animation: toast-in 0.18s ease-out;
+}
+
 #login {
     max-width: 360px;
     margin: 15vh auto;
@@ -941,6 +968,17 @@ header p {
     }
     to {
         transform: rotate(360deg);
+    }
+}
+
+@keyframes toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
     }
 }
 
@@ -1040,6 +1078,9 @@ header p {
         scroll-behavior: auto !important;
     }
     .busy-indicator {
+        animation: none;
+    }
+    .toast {
         animation: none;
     }
 }

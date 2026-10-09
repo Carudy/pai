@@ -31,9 +31,12 @@ function browser() {
       constructor() { connections.push(this); }
       close() { this.closed = true; }
     }
+    const storage = new Map();
     const context = vm.createContext({URL, Date: {now: () => now}, EventSource: MockEventSource,
+      localStorage: {getItem: key => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key)},
       setInterval: (callback, delay) => { assert.equal(delay, 1000); intervals.set(++timerID, callback); return timerID; },
       clearInterval: id => intervals.delete(id), setTimeout: callback => { timeouts.set(++timerID, callback); return timerID; }, clearTimeout: id => timeouts.delete(id), document: {
+    body: new Element('body'),
     getElementById(id) { return elements.get(id) || null; },
     createElement(tag) { return new Element(tag); }
   }});
@@ -227,6 +230,14 @@ page.run("for(let i=0;i<120;i++) activity({type:'notice',data:'event '+i}); acti
 assert.equal(page.get('live-progress').children.length, 100, 'activity is bounded');
 assert.equal(page.get('live-progress').lastElementChild.lastElementChild.textContent.length, 16000);
 assert.ok(page.get('live-progress').lastElementChild.textContent.endsWith('tail'), 'stream chunks coalesce');
+page.run("activity({type:'notice',data:'trusted from now on: /srv'}); toast('b'); toast('c')");
+assert.equal(page.run('toastHost.children.length'), 3, 'toasts are bounded');
+assert.equal(page.run("toastHost.firstElementChild.className"), 'toast');
+assert.equal(page.run("toastHost.firstElementChild.textContent"), 'trusted from now on: /srv', 'a notice is toasted, not only logged');
+page.run("selected=''; localStorage.setItem('pai.session','two'); restoreSession([{name:'one',cwd:'/a'},{name:'two',cwd:'/b'}])");
+assert.equal(page.run('selected'), 'two', 'a reload reopens the remembered session');
+page.run("selected=''; localStorage.setItem('pai.session','ghost'); restoreSession([{name:'one',cwd:'/a'}])");
+assert.equal(page.run('selected'), '', 'a forgotten session is not reopened');
 page.run("selected=''; controls()"); assert.equal(page.get('send').disabled, true);
 page.run("selected='one'; $('message').value='  '; controls()"); assert.equal(page.get('send').disabled, true);
 page.run("$('message').value='next'; snapshot({state:'busy',queued:1}); controls()");

@@ -9,6 +9,11 @@ let selected = '', generation = 0, stream = null, retry = null, refreshTimer = n
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
 let pendingID = null, pendingSession = null;
 let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
+// The browser remembers the open session in localStorage, never a cookie: it is
+// only needed after the page loads, so it need not travel on every request, and
+// it needs no server state. A cleared store just leaves the workspace empty.
+const SESSION_KEY = 'pai.session';
+let toastHost = null;
 // ── Model controls ──────────────────────────────────────────
 function normalizeModel(value) { return value.trim().replace(/\s*:\s*/, ':'); }
 function modelControls() {
@@ -115,6 +120,17 @@ function parsedResponse(content) {
 function clearPending() { $('pending').replaceChildren(); pendingID = null; pendingSession = null; }
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
 function error(e) { $('error').textContent = e.message || String(e); }
+// A transient notice, layered over the workspace so a reason (e.g. why "Always"
+// became session-only, or that a directory is now trusted) is not lost in the
+// activity log. At most three are shown; each fades on its own.
+function toast(message) {
+  if (!document.body) return;
+  if (!toastHost) { toastHost = text('div', '', 'toasts'); document.body.append(toastHost); }
+  const node = text('div', message, 'toast');
+  toastHost.append(node);
+  while (toastHost.children.length > 3) toastHost.firstElementChild.remove();
+  setTimeout(() => node.remove(), 6000);
+}
 function loginNeeded() { $('login').hidden = false; $('app').hidden = true; disconnect(); }
 async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
@@ -141,6 +157,7 @@ async function sessions(reset = false) {
   }
   sessionOffset += (page.sessions || []).length; $('more-sessions').hidden = sessionOffset >= page.total;
   $('sessions-status').textContent = sessionOffset ? '' : 'No saved sessions yet. Create a named session above.';
+  return page.sessions || [];
 }
 
 function controls() {
@@ -446,6 +463,7 @@ function connect() {
 // ── Session actions ─────────────────────────────────────────
 async function select(name, cwd) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
+  try { localStorage.setItem(SESSION_KEY, name); } catch {}
   clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('workspace').textContent = 'Workspace: ' + (cwd || 'server working directory');
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
@@ -457,6 +475,14 @@ async function select(name, cwd) {
   try { await history(true, true); } catch (e) { if (e.status !== 404) error(e); }
   if (version !== generation) return;
   await loadSnapshot(); if (version === generation) connect();
+}
+// Reopen the remembered session on load, if it still exists in the listed set.
+function restoreSession(list) {
+  if (selected) return;
+  let name = '';
+  try { name = localStorage.getItem(SESSION_KEY) || ''; } catch { return; }
+  if (!name || !list.some(meta => meta.name === name)) return;
+  select(name);
 }
 async function action(kind) {
   if (!selected) { error(new Error('Open a named session first')); return; }
@@ -507,8 +533,9 @@ function activity(event) {
     liveSteps.push(currentStep); if (liveSteps.length > 100) liveSteps.shift(); scheduleHistory();
   } else if (type === 'tool_output' && currentStep) currentStep.output = (currentStep.output + String(data)).slice(-liveTextLimit);
   else if (type === 'tool_result' && currentStep) { currentStep.result = data; scheduleHistory(); }
+  else if (type === 'notice') toast(typeof data === 'string' ? data : String(data));
   else if (['done','terminate','ask','user'].includes(type)) { thinking = ''; scheduleHistory(); }
-  else if (!['notice','output'].includes(type)) return;
+  else if (type !== 'output') return;
 }
 // Presentation only: never feed these segments back into execution or copying.
 function shellSegments(command) {
@@ -562,7 +589,7 @@ function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
 }
 // ── Event wiring ────────────────────────────────────────────
-$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; $('login').hidden = true; $('app').hidden = false; await Promise.all([sessions(true), roles(), models()]); if (selected) connect(); } catch (err) { error(err); } };
+$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; $('login').hidden = true; $('app').hidden = false; const list = await sessions(true); await Promise.all([roles(), models()]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
 $('model-form').onsubmit = applyModel;
 $('session-model').oninput = () => { modelDirty = true; modelControls(); };
 $('new-session').onsubmit = createSession;
@@ -585,6 +612,6 @@ $('toggle-activity').onclick = () => {
 };
 
 controls();
-sessions(true).catch(error);
+sessions(true).then(restoreSession).catch(error);
 roles().catch(error);
 models().catch(error);

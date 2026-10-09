@@ -157,7 +157,12 @@ last tool event. Repeated snapshots for the same session/pending ID preserve
 the existing question form, focus, and draft; a new ID or cleared prompt resets
 the card. Drafts are not persisted across page reloads or session switches. Selecting
 another session closes its subscription but never calls Cancel. New named
-sessions start on their first Send, not on selection.
+sessions start on their first Send, not on selection. The workspace remembers the
+open session in `localStorage` (never a cookie: it is only needed after the page
+loads, so it need not travel on every request and needs no server state) and
+reopens it on reload if it still exists. Transient `notice` events (a trust
+downgrade, a newly trusted directory) surface as short-lived toasts above the
+composer in addition to the activity log.
 
 Load `/vendor/marked.min.js`, then `/vendor/purify.min.js`, then `/app.js` using
 local script tags (ordered scripts, not async). No Node or CDN is needed at
