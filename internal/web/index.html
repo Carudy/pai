@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>PAI workspace</title>
+        <link rel="stylesheet" href="/style.css" />
+        <script src="/vendor/marked.min.js" defer></script>
+        <script src="/vendor/purify.min.js" defer></script>
+        <script src="/app.js" defer></script>
+    </head>
+    <body>
+        <section id="login" hidden>
+            <form id="login-form">
+                <h1>PAI</h1>
+                <label
+                    >Access token
+                    <input
+                        id="token"
+                        type="password"
+                        autocomplete="current-password"
+                        required /></label
+                ><button>Sign in</button>
+            </form>
+        </section>
+        <p id="error" role="alert"></p>
+        <div id="app">
+            <aside id="sidebar" aria-label="Session sidebar">
+                <div class="brand">
+                    <h1>✦ PAI</h1>
+                    <span>Personal workspace</span>
+                </div>
+                <form id="new-session">
+                    <label
+                        >New named session<input
+                            id="session-name"
+                            maxlength="256"
+                            placeholder="Session name"
+                            required /></label
+                    ><label for="session-cwd">Working directory (optional)</label>
+                    <input id="session-cwd" placeholder="Server launch working directory" aria-describedby="cwd-hint" />
+                    <p id="cwd-hint">The server checks that this directory exists.</p>
+                    <label for="session-role">Role</label>
+                    <select id="session-role"><option value="">Configured default</option></select>
+                    <button id="create-session" type="submit">Create</button>
+                </form>
+                <p id="sessions-status" role="status">Loading sessions…</p>
+                <h2 id="sessions-heading">Sessions</h2>
+                <nav id="sessions" aria-label="Sessions"></nav>
+                <button id="more-sessions" hidden>More sessions</button>
+            </aside>
+            <main>
+                <header>
+                    <div class="header-actions">
+                        <button
+                            id="toggle-sessions"
+                            type="button"
+                            aria-controls="sidebar"
+                            aria-expanded="false"
+                        >
+                            Sessions</button
+                        ><button
+                            id="toggle-activity"
+                            type="button"
+                            aria-controls="activity"
+                            aria-expanded="false"
+                        >
+                            Activities
+                        </button>
+                    </div>
+                    <div class="session-title-row">
+                        <h2 id="title">Select or create a session</h2>
+                        <span id="session-role-info" class="session-meta" title="Saved role" hidden></span>
+                        <span id="session-model-info" class="session-meta" title="Saved model" hidden></span>
+                    </div>
+                    <p id="workspace">Workspace — select a session</p>
+                    <p id="state" aria-live="polite">Ready when you are</p>
+                    <div class="run-progress-slot">
+                        <div id="run-progress" role="status" hidden>
+                            <span class="busy-indicator" aria-hidden="true">⏳</span>
+                            <span id="run-elapsed">Running…</span>
+                        </div>
+                    </div>
+                </header>
+                <div class="conversation-wrapper">
+                    <section id="reasoning-preview" aria-label="Current reasoning" hidden>
+                        <h3>Thinking…</h3>
+                        <div id="reasoning-text"></div>
+                    </section>
+                <div id="conversation">
+                    <section id="history" aria-label="Conversation">
+                        <div class="empty">
+                            ✦
+                            <h3>Best partner, PAI!</h3>
+                            <p>
+                                Open a named session to start working with PAI.
+                            </p>
+                        </div>
+                    </section>
+                    <button id="more-history" hidden>More history</button>
+                </div>
+                    <section
+                        id="pending"
+                        aria-labelledby="pending-title"
+                    ></section>
+                </div>
+                <div class="composer-dock">
+                    <form id="composer">
+                        <label for="message">Instruction</label
+                        ><textarea
+                            id="message"
+                            rows="3"
+                            placeholder="Tell PAI what to do"
+                            required
+                            aria-describedby="composer-hint"
+                        ></textarea>
+                        <div class="actions">
+                            <span id="composer-hint"
+                                >Open a session to send instructions</span
+                            ><button id="send" type="submit" disabled>
+                                Send</button
+                            ><button id="steer" type="button" disabled>
+                                Steer</button
+                            ><button id="cancel" type="button" disabled>
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </main>
+            <aside id="activity" aria-label="Activities">
+                <header>
+                    <h2>Activities</h2>
+                    <p>Tools, thoughts & progress</p>
+                </header>
+                <div id="events" role="log" aria-label="Activities">
+                    <div id="live-progress"></div>
+                    <div id="live-notices"></div>
+                </div>
+            </aside>
+        </div>
+    </body>
+</html>

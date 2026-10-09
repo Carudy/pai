@@ -120,7 +120,7 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 		defer cancel()
 	}
 
-	output, execErr := tool.ExecuteCommand(ctx, cmd, toolStream(rt))
+	output, execErr := tool.ExecuteCommandAt(ctx, cmd, rt.WorkingDir, toolStream(rt))
 	report(rt, output, execErr, "Command succeeded")
 	return observation("cmd result", cmd, execErr, output, execTruncate(cfg)), nil
 }

@@ -44,7 +44,8 @@ type RolePrompt struct {
 	ProjectContext string
 	ContextSource  string
 
-	head string
+	workingDir string
+	head       string
 }
 
 // Messages renders the per-request message list:
@@ -107,7 +108,7 @@ func composeHead(rp *RolePrompt) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(SelfAware))
 	b.WriteString("\n\nYour Terminal Info:\n")
-	b.WriteString(BuildSystemContext())
+	b.WriteString(BuildSystemContextAt(rp.workingDir))
 	if intro := strings.TrimSpace(rp.Intro); intro != "" {
 		b.WriteString("\n")
 		b.WriteString(intro)
@@ -167,6 +168,21 @@ type rawTool struct {
 // The system output guide is deliberately NOT overridable: a user prompt can
 // change how the role behaves, but never the response format the loop depends on.
 func LoadRolePrompt(name string, custom config.CustomPrompt) (*RolePrompt, error) {
+	return LoadRolePromptAt(name, custom, "")
+}
+
+// LoadRolePromptAt loads workspace instructions and terminal info from workingDir.
+// Empty uses the process cwd; relative directories are made absolute at load time.
+func LoadRolePromptAt(name string, custom config.CustomPrompt, workingDir string) (*RolePrompt, error) {
+	if workingDir == "" {
+		workingDir, _ = os.Getwd()
+	} else {
+		var err error
+		workingDir, err = filepath.Abs(workingDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve working directory: %w", err)
+		}
+	}
 	roleData, source, err := prompts.ReadRole(name)
 	if err != nil {
 		return nil, err
@@ -208,10 +224,11 @@ func LoadRolePrompt(name string, custom config.CustomPrompt) (*RolePrompt, error
 		Description: rr.Description,
 		Intro:       intro,
 		Tools:       specs,
+		workingDir:  workingDir,
 	}
 	if len(rr.ContextFiles) > 0 {
-		if wd, err := os.Getwd(); err == nil {
-			rp.ProjectContext, rp.ContextSource = findContextFile(wd, rr.ContextFiles)
+		if workingDir != "" {
+			rp.ProjectContext, rp.ContextSource = findContextFile(workingDir, rr.ContextFiles)
 		}
 	}
 	rp.head = composeHead(rp)
@@ -254,6 +271,12 @@ func capContext(s string) string {
 }
 
 func BuildSystemContext() string {
+	return BuildSystemContextAt("")
+}
+
+// BuildSystemContextAt reports the supplied workspace without changing process cwd.
+// Empty retains the process cwd behavior of BuildSystemContext.
+func BuildSystemContextAt(workingDir string) string {
 	osDetail := getOSDetail()
 
 	shell := os.Getenv("SHELL")
@@ -271,10 +294,12 @@ func BuildSystemContext() string {
 	now := time.Now()
 	dateTime := fmt.Sprintf("%s %s", now.Format("2006-01-02"), now.Format("15:04:05"))
 
-	wd, _ := os.Getwd()
+	if workingDir == "" {
+		workingDir, _ = os.Getwd()
+	}
 
 	return fmt.Sprintf("OS: %s (%s %s)\nShell: %s User: %s\nDatetime: %s\nWorking Dir: %s\n",
-		osDetail, runtime.GOOS, runtime.GOARCH, shell, userInfo, dateTime, wd)
+		osDetail, runtime.GOOS, runtime.GOARCH, shell, userInfo, dateTime, workingDir)
 }
 
 func getOSDetail() string {

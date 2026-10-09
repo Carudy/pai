@@ -54,7 +54,7 @@ type tomlConfig struct {
 	App       struct {
 		DefaultModel        string                   `toml:"default_model"`
 		DefaultRole         string                   `toml:"default_role"`
-		Streaming           bool                     `toml:"streaming"`
+		Streaming           *bool                    `toml:"streaming"`
 		ReasoningEffort     provider.ReasoningEffort `toml:"reasoning"`
 		Interactive         bool                     `toml:"interactive"`
 		TruncateExecLimit   int                      `toml:"truncate_exec_limit"`
@@ -180,6 +180,7 @@ func defaultConfig() *UserConfig {
 	return &UserConfig{
 		DefaultModel:     "deepseek:deepseek-v4-flash",
 		DefaultRole:      "devops",
+		Streaming:        true,
 		ProvidersConfigs: make(map[string]ProviderConfig),
 		CustomPrompt:     CustomPrompt{},
 		Context: ContextConfig{
@@ -206,7 +207,9 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	if raw.App.DefaultRole != "" {
 		cfg.DefaultRole = raw.App.DefaultRole
 	}
-	cfg.Streaming = raw.App.Streaming
+	if raw.App.Streaming != nil {
+		cfg.Streaming = *raw.App.Streaming
+	}
 	cfg.ReasoningEffort = raw.App.ReasoningEffort
 	cfg.Interactive = raw.App.Interactive
 	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey

@@ -5,7 +5,12 @@
 //	go build ./cmd/pai                  # default: pure-Go SQLite
 //	go build -tags filestore ./cmd/pai  # zero-dependency JSONL files (lighter)
 //
-// Callers never branch on the backend.
+// Callers never branch on the backend. Open takes exclusive, nonblocking OS
+// ownership of the entire data directory, shared by both backends. Even readers
+// must wait until the owning Store is closed. This prevents unsafe JSONL writes
+// and duplicate session runtimes across processes. Process exit (including a
+// crash) releases ownership; the persistent sessions.lock file is not a stale
+// lock and must not be removed while a store is open.
 package session
 
 import (

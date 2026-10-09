@@ -23,6 +23,13 @@ import (
 	"github.com/Carudy/pai/internal/tool"
 )
 
+func (rt *Runtime) resolvePath(path string) string {
+	if rt.WorkingDir != "" && !filepath.IsAbs(path) {
+		return filepath.Join(rt.WorkingDir, path)
+	}
+	return path
+}
+
 // defaultReadLimit bounds a single read when the model gives no limit. It is
 // generous enough to take in a whole source file, while still stopping a
 // runaway "read the 500k-line log" before it reaches the model.
@@ -60,6 +67,7 @@ func runRead(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 	if strings.TrimSpace(p.Path) == "" {
 		return "", fmt.Errorf("read requires a non-empty path")
 	}
+	p.Path = rt.resolvePath(p.Path)
 	if p.Offset < 1 {
 		p.Offset = 1
 	}
@@ -69,7 +77,7 @@ func runRead(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 
 	// Announce the attempt before opening, so a failure is visible to the user and
 	// not just an observation the model sees.
-	trusted := tool.IsTrustedPath(p.Path, cfg.TrustedPaths)
+	trusted := tool.IsTrustedPathAt(p.Path, cfg.TrustedPaths, rt.WorkingDir)
 	rt.Observer.ToolCall(core.ToolCall{
 		Name:    "read",
 		Target:  p.Path,
@@ -171,6 +179,7 @@ func runEdit(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 	if strings.TrimSpace(p.Path) == "" {
 		return "", fmt.Errorf("edit requires a non-empty path")
 	}
+	p.Path = rt.resolvePath(p.Path)
 	// fail reports a refused edit to the user (not just to the model) — otherwise
 	// a rejected call looks like the agent silently did nothing.
 	fail := func(msg string) (string, error) {
@@ -207,7 +216,7 @@ func runEdit(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 	}
 
 	diff := diffEdit(content, p.OldString, p.NewString, n)
-	trusted := tool.IsTrustedPath(p.Path, cfg.TrustedPaths)
+	trusted := tool.IsTrustedPathAt(p.Path, cfg.TrustedPaths, rt.WorkingDir)
 	rt.Observer.ToolCall(core.ToolCall{
 		Name:    "edit",
 		Target:  p.Path,
@@ -255,6 +264,7 @@ func runWrite(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason s
 	if strings.TrimSpace(p.Path) == "" {
 		return "", fmt.Errorf("write requires a non-empty path")
 	}
+	p.Path = rt.resolvePath(p.Path)
 	// fail reports a refused write to the user (not just to the model).
 	fail := func(msg string) (string, error) {
 		rt.Observer.ToolCall(core.ToolCall{Name: "write", Target: p.Path, Reason: reason})
@@ -272,7 +282,7 @@ func runWrite(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason s
 	}
 
 	n := lineCount(p.Content)
-	trusted := tool.IsTrustedPath(p.Path, cfg.TrustedPaths)
+	trusted := tool.IsTrustedPathAt(p.Path, cfg.TrustedPaths, rt.WorkingDir)
 	rt.Observer.ToolCall(core.ToolCall{
 		Name:    "write",
 		Target:  p.Path,

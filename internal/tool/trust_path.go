@@ -16,20 +16,33 @@ import (
 //
 // An empty roots list trusts nothing — the safe default.
 func IsTrustedPath(path string, roots []string) bool {
+	return IsTrustedPathAt(path, roots, "")
+}
+
+// IsTrustedPathAt resolves relative targets and roots against the same workspace.
+// Home expansion and symlink checks retain IsTrustedPath's semantics.
+func IsTrustedPathAt(path string, roots []string, workingDir string) bool {
 	if len(roots) == 0 || strings.TrimSpace(path) == "" {
 		return false
 	}
-	target := resolveExisting(path)
+	target := resolveExisting(pathAt(path, workingDir))
 	for _, r := range roots {
 		r = strings.TrimSpace(r)
 		if r == "" {
 			continue
 		}
-		if within(resolveExisting(expandHome(r)), target) {
+		if within(resolveExisting(pathAt(expandHome(r), workingDir)), target) {
 			return true
 		}
 	}
 	return false
+}
+
+func pathAt(path, workingDir string) string {
+	if workingDir != "" && !filepath.IsAbs(path) {
+		return filepath.Join(workingDir, path)
+	}
+	return path
 }
 
 // expandHome turns a leading "~" or "~/" into the user's home directory.

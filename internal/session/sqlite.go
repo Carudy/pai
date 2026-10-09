@@ -6,29 +6,18 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver: keeps `go install` cgo-free
 
 	"github.com/Carudy/pai/internal/core"
-	"github.com/Carudy/pai/internal/paths"
 )
 
 // Backend name, shown by `pai session` for transparency.
 func Backend() string { return "sqlite" }
 
-// Open returns the pure-Go SQLite store: the default backend.
-func Open() (Store, error) {
-	dir := paths.DataDir()
-	if dir == "" {
-		return nil, fmt.Errorf("cannot determine the data directory")
-	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, fmt.Errorf("create data dir: %w", err)
-	}
-
+func openBackend(dir string) (Store, error) {
 	dsn := "file:" + filepath.Join(dir, "sessions.db") +
 		"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
 	db, err := sql.Open("sqlite", dsn)

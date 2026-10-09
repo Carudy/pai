@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Carudy/pai/internal/core"
-	"github.com/Carudy/pai/internal/paths"
 )
 
 // Backend name, shown by `pai session` for transparency.
@@ -22,13 +21,7 @@ func Backend() string { return "file" }
 
 const fileExt = ".jsonl"
 
-// Open returns the dependency-free JSONL file store. Build with -tags filestore
-// to select it; SQLite is the default backend.
-func Open() (Store, error) {
-	dir := paths.DataDir()
-	if dir == "" {
-		return nil, fmt.Errorf("cannot determine the data directory")
-	}
+func openBackend(dir string) (Store, error) {
 	dir = filepath.Join(dir, "sessions")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create sessions dir: %w", err)

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -26,6 +27,9 @@ import (
 // It is deliberately separate from config.UserConfig (configuration only):
 // everything here is a port or per-run state, supplied by the caller (cli).
 type Runtime struct {
+	// WorkingDir scopes local tools and project instructions to this run. Set it
+	// before Run and do not mutate it while running. Empty preserves process cwd.
+	WorkingDir  string
 	Provider    provider.Provider
 	Observer    core.Observer
 	Prompter    core.Prompter
@@ -168,7 +172,14 @@ func Run(ctx context.Context, cfg *config.UserConfig, rt *Runtime, history []pro
 			cfg.DefaultRole, strings.Join(names, ", "), prompts.UserRolesDir())
 	}
 
-	rp, err := chat.LoadRolePrompt(cfg.DefaultRole, cfg.CustomPrompt)
+	if rt.WorkingDir != "" {
+		wd, err := filepath.Abs(rt.WorkingDir)
+		if err != nil {
+			return fmt.Errorf("resolve working directory: %w", err)
+		}
+		rt.WorkingDir = wd
+	}
+	rp, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.CustomPrompt, rt.WorkingDir)
 	if err != nil {
 		return fmt.Errorf("load role %q: %w", cfg.DefaultRole, err)
 	}

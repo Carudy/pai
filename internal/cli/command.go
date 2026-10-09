@@ -24,6 +24,13 @@ type command struct {
 func commands() []command {
 	return []command{
 		{
+			name:    "serve",
+			summary: "Serve the web UI for named sessions in the current workspace",
+			usage:   "pai serve [flags]",
+			help:    serveHelp,
+			run:     runServe,
+		},
+		{
 			name:    "chat",
 			summary: "Talk to a role (the default action when no command is given)",
 			usage:   "pai chat [flags] [input]",

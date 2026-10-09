@@ -40,7 +40,9 @@ the only package that knows about all of them.
 | `role` | The **single agent loop** and the tool-handler registry. Runs a role to completion. | `Runtime`, `Run` |
 | `session` | Session persistence behind one `Store` interface; SQLite by default, JSONL with `-tags filestore`. | `Store`, `Meta`, `Session`, `Recorder` |
 | `tui` | Terminal adapters implementing `core` ports. Knows about styling; core does not. | `LineObserver`, `Prompter`, `Logger` |
-| `cli` | Composition root: subcommand dispatch, flag parsing, wiring, signal handling. Only package that imports `tui`/`session`. | `Run`, `CliFlags` |
+| `runner` | Transport-independent, bounded concurrent runtime hosting, input routing, prompts, and event subscriptions. Storage is supplied through a backend port. | `Manager`, `Backend`, `Snapshot` |
+| `web` | HTTP/SSE adapter and embedded dependency-free browser UI, with cookie authentication and origin validation. | `New`, `Options` |
+| `cli` | Composition root: subcommand dispatch, flag parsing, wiring, signal handling; serves per-session persisted workspaces without changing process cwd. Only package that imports `tui`/`session`. | `Run`, `CliFlags` |
 
 ## Design decisions worth preserving
 
@@ -67,7 +69,9 @@ the only package that knows about all of them.
 - No cycles; the graph above (`X -> Y` means X imports Y) is:
 
   ```
-  cli     -> config core paths prompts provider role session tui
+  cli     -> config core paths prompts provider role session tui runner web
+  web     -> core runner
+  runner  -> config core provider role
   role    -> chat config core prompts provider tool
   chat    -> config core prompts provider
   session -> core paths

@@ -45,6 +45,78 @@ pai -i
 pai "what's the latest Kubernetes LTS version and what CVEs affect it"
 ```
 
+## Browser / server mode
+
+```bash
+# Serve the current directory (localhost only by default).
+pai serve --port 9384 --max-active-sessions 2
+```
+
+Optional `pai serve --activity-log` prints concise stdout activity, for example
+`[my-session]: tool_exec execute /bin/sh ls -la`, plus lifecycle and prompt labels.
+It is off by default and works without any browser connected. `tool_exec` announces
+a tool call, which may still require approval; it does not guarantee execution.
+Logs omit reasoning, answers, configuration, diffs, and raw tool output. **Commands
+and targets may contain sensitive data**, including credentials: enable this only
+when appropriate for your stdout destination. Events use a bounded 128-event queue;
+slow output drops new events rather than blocking agents. Shutdown drains queued
+logs for up to 250 ms; a blocked writer may lose the remaining logs.
+
+Open `http://127.0.0.1:9384`. The embedded frontend uses no CDN, JavaScript
+framework, or Node build step. Its sidebar lists saved sessions; create a named
+session, select one, and use **Send**, **Steer**, or **Cancel**. Questions and
+untrusted tools have explicit reply/approval cards, including change previews.
+Multiple tabs may observe the same session, but there is only one runtime per
+session. Closing a tab does **not** cancel tasks; reconnect to recover history
+and pending approvals. Send queues a follow-up, Steer delivers at a safe step
+boundary, and Cancel interrupts current work without discarding queued tasks.
+Cancellation cannot undo completed side effects.
+
+For a VPS, prefer an SSH tunnel or VPN. Non-loopback binds require a token of
+at least 32 characters, supplied through `--token-file` or `PAI_SERVE_TOKEN`.
+Use a private token file rather than putting credentials in URLs or arguments.
+For an HTTPS reverse proxy:
+
+```bash
+pai serve --token-file /path/to/private-token \
+  --public-origin https://pai.example.com
+```
+
+The proxy should preserve `Host` and support SSE without response buffering.
+`--public-origin` explicitly configures browser origin validation and Secure
+cookies; forwarded headers are not trusted. Do not expose plain HTTP carrying
+a token to an untrusted network. The login authenticates access to tools that
+can execute commands and modify files; this is a single-user service, not a
+multi-tenant sandbox.
+
+The concurrency limit bounds live runtimes; idle runtimes can be evicted to
+make room. Full busy capacity rejects new work rather than growing an unbounded
+queue. Sessions execute in their persisted working directory, defaulting to the
+server's launch directory for new sessions. Use separate worktrees when concurrent
+tasks could modify the same files. Browser mode does not support `/new` or
+`/rename`; create/select sessions in the sidebar instead.
+
+API clients can create a saved, empty session before sending any message:
+`POST /api/create` with JSON `{"name":"work","working_dir":"/path/to/project"}`
+returns HTTP 201 with direct metadata fields `name`, `role`, `model`, `cwd`, and
+`updated_at`. Creation does not start a runtime or construct a provider.
+`POST /api/send` accepts `{"name":"work","text":"...","working_dir":"..."}`;
+omit `working_dir` to use the saved directory. A first send can also create a
+session. Directories must already exist, are normalized to absolute paths, and
+are checked again when starting a runtime. A supplied directory must match an
+existing session's saved workspace. No request changes the process cwd; these
+workspaces are not security sandboxes. Mutating API requests require JSON and a
+same-origin `Origin` header, plus the login cookie when authentication is enabled.
+
+While serving, PAI exclusively owns the session store across processes, for
+both SQLite and JSONL. Other PAI processes cannot open that store until the
+server stops. Do not delete `sessions.lock` while PAI is running. Tasks survive
+browser disconnections, **not server restarts**; use a service manager such as
+systemd for hosting. Shutdown cancels active work and releases store ownership.
+
+See `pai serve --help` for bind address, port, authentication, and concurrency
+options.
+
 ## 🧭 Commands
 
 With no command, `pai` chats, so `pai <input>` is shorthand for `pai chat <input>`.

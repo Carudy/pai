@@ -246,6 +246,12 @@ func resolveShell() (string, string) {
 // If streamW is non-nil, command output (stdout + stderr) is written to it in
 // real time while still being captured for the returned ExecResult.
 func ExecuteCommand(ctx context.Context, command string, streamW io.Writer) (ExecResult, error) {
+	return ExecuteCommandAt(ctx, command, "", streamW)
+}
+
+// ExecuteCommandAt executes in workingDir using cmd.Dir, never changing process cwd.
+// Empty inherits the process cwd, as ExecuteCommand does.
+func ExecuteCommandAt(ctx context.Context, command, workingDir string, streamW io.Writer) (ExecResult, error) {
 	command = trimCmd(command)
 
 	if command == "" {
@@ -259,6 +265,7 @@ func ExecuteCommand(ctx context.Context, command string, streamW io.Writer) (Exe
 	}
 
 	cmd := exec.CommandContext(ctx, shell, shellArg, command)
+	cmd.Dir = workingDir
 
 	// Run the command in its own process group so cancellation kills all of it.
 	// Killing only the direct child (the shell) leaves its descendants — build
