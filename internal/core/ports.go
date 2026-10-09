@@ -79,6 +79,11 @@ type ToolCall struct {
 	// for every other tool.
 	Diff string
 
+	// CommandSegments is a chained command's split segments (verbatim, per
+	// tool.SplitSegments), so a non-Go UI can render the same breakdown without
+	// re-implementing the parser. UntrustedSegments indexes into it.
+	CommandSegments []string
+
 	// UntrustedSegments lists the 0-based command-chain segments (per
 	// tool.SplitSegments) that are not covered by the trusted list, so a UI can
 	// mark which parts need approval. Empty when the command is fully trusted.
@@ -147,6 +152,13 @@ const (
 // without every adapter having to.
 type CommandConfirmer interface {
 	ConfirmCommand(title string, untrusted []string) (TrustChoice, error)
+}
+
+// PathConfirmer is the file-tool counterpart: a confirmation that offers to
+// trust the directory (dir) containing the file being changed. Like
+// CommandConfirmer it is optional, and prompters without it get a plain Confirm.
+type PathConfirmer interface {
+	ConfirmPath(title, dir string) (TrustChoice, error)
 }
 
 // Steerer is an optional Prompter capability: a non-blocking poll for a message

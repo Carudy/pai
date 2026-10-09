@@ -400,6 +400,11 @@ everything; `~` expands, and a relative path resolves against the working
 directory. Prefer an absolute path — `["."]` trusts wherever you happen to run
 pai, which is rarely what you want.
 
+When a change is outside those paths, the prompt offers the same trust choices as
+a command (in the terminal `s`/`a`, in the browser **Trust session**/**Always**):
+trust the file's directory for this run, or from now on (added to
+`trusted_paths`). Trusting the filesystem root for every session is refused.
+
 This covers the file tools only. Shell commands are still governed by
 `trusted_cmds`, so an untrusted `sed -i`/`tee` still prompts even inside a
 trusted path.

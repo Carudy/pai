@@ -50,6 +50,10 @@ type Runtime struct {
 	// ephemeral and re-confirmed after a restart.
 	TrustedCmds []string
 
+	// TrustedPaths are directories trusted for this run only (the file tools' "trust
+	// this session" choice). They extend cfg.TrustedPaths.
+	TrustedPaths []string
+
 	// transcript is every turn this run has recorded, kept even when nothing is
 	// persisted so that naming the conversation later can backfill it.
 	transcript []core.Turn

@@ -216,7 +216,7 @@ func runEdit(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 	}
 
 	diff := diffEdit(content, p.OldString, p.NewString, n)
-	trusted := tool.IsTrustedPathAt(p.Path, cfg.TrustedPaths, rt.WorkingDir)
+	trusted := tool.IsTrustedPathAt(p.Path, rt.trustedPaths(cfg), rt.WorkingDir)
 	rt.Observer.ToolCall(core.ToolCall{
 		Name:    "edit",
 		Target:  p.Path,
@@ -229,14 +229,16 @@ func runEdit(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason st
 	// A trusted path skips the prompt but not the diff above, so the change is
 	// still visible; only the approval step is saved.
 	if !trusted {
-		ok, err := rt.Prompter.Confirm(fmt.Sprintf("Apply this edit to %s?", p.Path))
+		dir := filepath.Dir(p.Path)
+		choice, err := confirmPath(rt, fmt.Sprintf("Apply this edit to %s?", p.Path), dir)
 		if err != nil {
 			return "", fmt.Errorf("user interaction error: %w", err)
 		}
-		if !ok {
+		if choice == core.TrustDeny {
 			rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
 			return fmt.Sprintf("[edit skipped]\nFILE: %s\nUSER DECLINED: the file was not changed.", p.Path), nil
 		}
+		applyPathTrust(rt, choice, dir)
 	}
 
 	replacements := 1
@@ -282,7 +284,7 @@ func runWrite(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason s
 	}
 
 	n := lineCount(p.Content)
-	trusted := tool.IsTrustedPathAt(p.Path, cfg.TrustedPaths, rt.WorkingDir)
+	trusted := tool.IsTrustedPathAt(p.Path, rt.trustedPaths(cfg), rt.WorkingDir)
 	rt.Observer.ToolCall(core.ToolCall{
 		Name:    "write",
 		Target:  p.Path,
@@ -293,14 +295,16 @@ func runWrite(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason s
 	})
 
 	if !trusted {
-		ok, err := rt.Prompter.Confirm(fmt.Sprintf("Create %s?", p.Path))
+		dir := filepath.Dir(p.Path)
+		choice, err := confirmPath(rt, fmt.Sprintf("Create %s?", p.Path), dir)
 		if err != nil {
 			return "", fmt.Errorf("user interaction error: %w", err)
 		}
-		if !ok {
+		if choice == core.TrustDeny {
 			rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
 			return fmt.Sprintf("[write skipped]\nFILE: %s\nUSER DECLINED: no file was created.", p.Path), nil
 		}
+		applyPathTrust(rt, choice, dir)
 	}
 
 	if err := writeFileAtomic(p.Path, []byte(p.Content), 0o644); err != nil {

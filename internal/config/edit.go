@@ -38,6 +38,30 @@ func AddTrustedCmds(names ...string) error {
 	return SetScalar(path, "tool", "trusted_cmds", arrayLiteral(merged))
 }
 
+// AddTrustedPath appends a directory to [tool] trusted_paths, creating the array
+// if it is absent, and writes nothing when it is already present. It backs the
+// file tools' "trust this directory" choice.
+func AddTrustedPath(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	path := Path()
+	if path == "" {
+		return fmt.Errorf("cannot determine the config path")
+	}
+	var raw tomlConfig
+	if err := loadTOML(path, &raw); err != nil {
+		return err
+	}
+	for _, p := range raw.Tool.TrustedPaths {
+		if p == dir {
+			return nil
+		}
+	}
+	merged := append(append([]string{}, raw.Tool.TrustedPaths...), dir)
+	return SetScalar(path, "tool", "trusted_paths", arrayLiteral(merged))
+}
+
 // SetScalar sets `<key> = <value>` inside `[section]` of the TOML file at path,
 // preserving the rest of the file (comments included) by editing only the
 // affected line, inserting the key if absent, or appending the section if it

@@ -7,9 +7,10 @@ See the [module map](../organization.md) for the ports-and-adapters architecture
 
 - `Observer` receives agent, tool, reasoning, and usage events.
 - `Prompter` asks questions and requests confirmation; optional `Steerer`
-  supplies instructions at safe points while work is in progress, and optional
-  `CommandConfirmer` lets a command confirmation also trust the flagged
-  command names (for the run, or persisted).
+  supplies instructions at safe points while work is in progress, optional
+  `CommandConfirmer` lets a command confirmation also trust the flagged command
+  names (for the run, or persisted), and optional `PathConfirmer` does the same
+  for a changed file's directory.
 - `Logger` carries diagnostics, and `Recorder` appends conversation turns.
 - `Sessions` exposes storage actions needed by in-session commands.
 - `Turn`, `ToolCall`, `ToolResult`, and `Usage` are shared values;

@@ -365,7 +365,17 @@ function snapshot(s) {
     $('pending').append(text('div', '🔧 ' + (tool.Name || 'Tool') + (tool.Target ? ' · ' + tool.Target : ''), 'confirmation-heading'));
     if (tool.Detail) {
       const shell = ['execute','remote'].includes(tool.Name);
-      $('pending').append(text('pre', shell ? shellSegments(tool.Detail).join('\n') : tool.Detail, 'command-detail'));
+      const segments = Array.isArray(tool.CommandSegments) && tool.CommandSegments.length ? tool.CommandSegments : null;
+      if (segments) {
+        // The server split the chain once (Go's tool.SplitSegments) and flagged
+        // the untrusted indices, so mark exactly those.
+        const pre = text('pre', '', 'command-detail');
+        const bad = new Set(Array.isArray(tool.UntrustedSegments) ? tool.UntrustedSegments : []);
+        segments.forEach((segment, i) => pre.append(text('span', segment + (i < segments.length - 1 ? '\n' : ''), bad.has(i) ? 'cmd-untrusted' : '')));
+        $('pending').append(pre);
+      } else {
+        $('pending').append(text('pre', shell ? shellSegments(tool.Detail).join('\n') : tool.Detail, 'command-detail'));
+      }
       if (shell) {
         const original = text('details', '');
         const command = document.createElement('textarea'); command.value = tool.Detail; command.readOnly = true;
@@ -387,7 +397,7 @@ function snapshot(s) {
       // A chained command needs approval for specific programs: offer to trust
       // them for this run or for good, not just yes/no.
       $('pending').append(text('p', '⚠ not trusted: ' + untrusted.join(', '), 'untrusted-names'));
-      const once = text('button', 'Run once'), session = text('button', 'Trust session'), always = text('button', 'Always'), no = text('button', 'Decline');
+      const once = text('button', 'Once'), session = text('button', 'Trust session'), always = text('button', 'Always'), no = text('button', 'Decline');
       once.className = 'primary'; session.className = 'secondary'; always.className = 'secondary'; no.className = 'caution';
       once.onclick = () => reply('', 'once'); session.onclick = () => reply('', 'session');
       always.onclick = () => reply('', 'always'); no.onclick = () => reply('', 'deny');

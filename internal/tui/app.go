@@ -187,6 +187,18 @@ func (p *appPrompter) ConfirmCommand(title string, untrusted []string) (core.Tru
 	return res.choice, nil
 }
 
+// ConfirmPath implements core.PathConfirmer: a file-change confirmation that can
+// also trust the containing directory for this run or for future runs. It reuses
+// the command modal, showing the directory as the thing to trust.
+func (p *appPrompter) ConfirmPath(title, dir string) (core.TrustChoice, error) {
+	req := promptReq{kind: promptConfirmCommand, title: title, untrusted: []string{dir}, reply: make(chan promptResult, 1)}
+	res, err := p.ask(req)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	return res.choice, nil
+}
+
 func (p *appPrompter) ask(req promptReq) (promptResult, error) {
 	p.app.program.Send(promptMsg{req})
 	select {

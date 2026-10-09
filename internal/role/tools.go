@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/Carudy/pai/internal/chat"
@@ -31,6 +32,25 @@ func (rt *Runtime) trustedList(cfg *config.UserConfig) []string {
 	return append(append([]string{}, cfg.TrustedCmds...), rt.TrustedCmds...)
 }
 
+// trustedPaths merges the run's session-trusted directories with the config list.
+func (rt *Runtime) trustedPaths(cfg *config.UserConfig) []string {
+	if len(rt.TrustedPaths) == 0 {
+		return cfg.TrustedPaths
+	}
+	return append(append([]string{}, cfg.TrustedPaths...), rt.TrustedPaths...)
+}
+
+// segmentTexts returns a chained command's segments verbatim, for display by a UI
+// that cannot run tool.SplitSegments itself.
+func segmentTexts(cmd string) []string {
+	segs := tool.SplitSegments(cmd)
+	out := make([]string, len(segs))
+	for i, s := range segs {
+		out[i] = s.Src
+	}
+	return out
+}
+
 // confirmCommand asks about an untrusted command, offering the trust choices when
 // the prompter supports them and a plain yes/no otherwise.
 func confirmCommand(rt *Runtime, title string, untrusted []string) (core.TrustChoice, error) {
@@ -53,6 +73,40 @@ var unsafeTrustNames = map[string]bool{
 	"sudo": true, "doas": true, "su": true, "env": true, "xargs": true,
 	"sh": true, "bash": true, "zsh": true, "fish": true, "eval": true,
 	"exec": true, "nohup": true, "nice": true, "timeout": true, "stdbuf": true, "command": true,
+}
+
+// confirmPath asks about a file change outside the trusted paths, offering the
+// trust choices when the prompter supports them and a plain yes/no otherwise.
+func confirmPath(rt *Runtime, title, dir string) (core.TrustChoice, error) {
+	if pc, ok := rt.Prompter.(core.PathConfirmer); ok {
+		return pc.ConfirmPath(title, dir)
+	}
+	ok, err := rt.Prompter.Confirm(title)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	if ok {
+		return core.TrustOnce, nil
+	}
+	return core.TrustDeny, nil
+}
+
+// applyPathTrust records a directory trust choice. Trusting the filesystem root
+// for every future run is refused (session only), and the outcome is reported.
+func applyPathTrust(rt *Runtime, choice core.TrustChoice, dir string) {
+	if (choice != core.TrustSession && choice != core.TrustPersist) || dir == "" {
+		return
+	}
+	if choice == core.TrustPersist {
+		if dir == string(filepath.Separator) {
+			rt.Observer.Notice("refusing to trust the filesystem root for every session; trusted for this one")
+		} else if err := config.AddTrustedPath(dir); err != nil {
+			rt.Observer.Notice("could not save trusted path: " + err.Error())
+		} else {
+			rt.Observer.Notice("trusted from now on: " + dir)
+		}
+	}
+	rt.TrustedPaths = append(rt.TrustedPaths, dir)
 }
 
 // applyTrust records a trust choice for the flagged command names. Persisting is
@@ -160,6 +214,7 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 		Detail:            cmd,
 		Reason:            reason,
 		Trusted:           isTrusted,
+		CommandSegments:   segmentTexts(cmd),
 		UntrustedSegments: tool.UntrustedSegments(cmd, trusted),
 	})
 
@@ -212,6 +267,7 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 		Detail:            rp.Cmd,
 		Reason:            reason,
 		Trusted:           isTrusted,
+		CommandSegments:   segmentTexts(rp.Cmd),
 		UntrustedSegments: tool.UntrustedSegments(rp.Cmd, trusted),
 	})
 

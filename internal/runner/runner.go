@@ -92,12 +92,21 @@ func clonePrompt(p *Prompt) *Prompt {
 		return nil
 	}
 	copy := *p
-	if p.Tool != nil {
-		tool := *p.Tool
-		copy.Tool = &tool
-	}
+	copy.Tool = cloneToolCall(p.Tool)
 	copy.Untrusted = append([]string(nil), p.Untrusted...)
 	return &copy
+}
+
+// cloneToolCall deep-copies a ToolCall's slices, so every subscriber or snapshot
+// gets an independent value (mutating one never leaks into another).
+func cloneToolCall(c *core.ToolCall) *core.ToolCall {
+	if c == nil {
+		return nil
+	}
+	dup := *c
+	dup.CommandSegments = append([]string(nil), c.CommandSegments...)
+	dup.UntrustedSegments = append([]int(nil), c.UntrustedSegments...)
+	return &dup
 }
 
 type Snapshot struct {
@@ -474,8 +483,7 @@ func (w *worker) snapshotLocked() Snapshot {
 	s.Reasoning = w.reasoning
 	s.Usage, s.TotalUsage, s.UsageCalls = w.usage, w.totalUsage, w.usageCalls
 	if w.activeTool != nil {
-		tool := *w.activeTool
-		s.ActiveTool = &tool
+		s.ActiveTool = cloneToolCall(w.activeTool)
 	}
 	s.Pending = clonePrompt(w.pending)
 	if w.pending != nil {
@@ -723,9 +731,8 @@ func (w *worker) prompt(kind, title string, untrusted []string) (answer, error) 
 	}
 	w.m.sequence++
 	w.pending = &Prompt{ID: fmt.Sprint(w.m.sequence), Kind: kind, Title: title}
-	if kind == "confirm" && tool != nil {
-		copy := *tool
-		w.pending.Tool = &copy
+	if kind == "confirm" {
+		w.pending.Tool = cloneToolCall(tool)
 	}
 	if len(untrusted) > 0 {
 		w.pending.Untrusted = append([]string(nil), untrusted...)
@@ -760,6 +767,16 @@ func (w *worker) Confirm(title string) (bool, error) {
 // also offers to trust the flagged command names for this run or future runs.
 func (w *worker) ConfirmCommand(title string, untrusted []string) (core.TrustChoice, error) {
 	a, err := w.prompt("confirm", title, untrusted)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	return a.choice, nil
+}
+
+// ConfirmPath implements core.PathConfirmer: a file confirmation that also offers
+// to trust the containing directory.
+func (w *worker) ConfirmPath(title, dir string) (core.TrustChoice, error) {
+	a, err := w.prompt("confirm", title, []string{dir})
 	if err != nil {
 		return core.TrustDeny, err
 	}
@@ -835,7 +852,7 @@ func (w *worker) Usage(u core.Usage) {
 func (w *worker) ToolCall(c core.ToolCall) {
 	w.m.mu.Lock()
 	defer w.m.mu.Unlock()
-	w.latestTool = &c
+	w.latestTool = cloneToolCall(&c)
 	active := c
 	w.activeTool = &active
 	w.phase = "tool"

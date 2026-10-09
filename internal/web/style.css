@@ -787,6 +787,12 @@ header p {
     margin: 8px 0 0;
 }
 
+/* Untrusted segments inside a command preview, matching the terminal's marker. */
+.cmd-untrusted {
+    color: var(--red);
+    font-weight: 700;
+}
+
 .primary {
     background: var(--accent);
     color: white;
