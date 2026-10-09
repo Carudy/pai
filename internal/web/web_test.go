@@ -323,6 +323,28 @@ func TestAssetsGzip(t *testing.T) {
 	}
 }
 
+// The sessions list carries the server's launch directory so the UI can prefill
+// a new session's working directory.
+func TestSessionsExposeDefaultCwd(t *testing.T) {
+	m := runner.New(context.Background(), backend{}, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{ServerCwd: "/srv/work"})
+
+	w := request(h, "GET", "/api/sessions", "", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatal(w.Code)
+	}
+	var body struct {
+		DefaultCwd string `json:"default_cwd"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.DefaultCwd != "/srv/work" {
+		t.Errorf("default_cwd = %q, want /srv/work", body.DefaultCwd)
+	}
+}
+
 func TestPageLoadsSessionUIAssets(t *testing.T) {
 	h, _ := setup(t, "")
 	w := request(h, "GET", "/", "", nil, "")

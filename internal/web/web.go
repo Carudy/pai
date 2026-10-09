@@ -28,6 +28,10 @@ type Options struct {
 	// PublicOrigin is the canonical browser origin (scheme://host[:port]) when
 	// a proxy changes the request's host or terminates TLS. The CLI validates it.
 	PublicOrigin string
+	// ServerCwd is the server's launch directory. New sessions default to it and
+	// the UI prefills its working-directory field with it. It is a convenience
+	// hint, not a sandbox.
+	ServerCwd string
 }
 
 //go:embed index.html style.css app.js vendor/*.js
@@ -41,6 +45,7 @@ type handler struct {
 	manager      *runner.Manager
 	token        string
 	publicOrigin string
+	serverCwd    string
 	mu           sync.Mutex
 	sessions     map[[32]byte]time.Time
 }
@@ -48,7 +53,7 @@ type handler struct {
 // New returns a self-contained handler. It neither owns nor closes m. Configure
 // listener security and server header/idle timeouts at the composition root.
 func New(m *runner.Manager, options Options) http.Handler {
-	return &handler{manager: m, token: options.Token, publicOrigin: options.PublicOrigin, sessions: make(map[[32]byte]time.Time)}
+	return &handler{manager: m, token: options.Token, publicOrigin: options.PublicOrigin, serverCwd: options.ServerCwd, sessions: make(map[[32]byte]time.Time)}
 }
 
 // acceptsGzip reports whether the client advertised gzip. Only static assets are
@@ -234,7 +239,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if end > total {
 			end = total
 		}
-		respond(w, 200, map[string]any{"sessions": list[offset:end], "total": total})
+		respond(w, 200, map[string]any{"sessions": list[offset:end], "total": total, "default_cwd": h.serverCwd})
 	case "/api/history":
 		if !method(w, r, http.MethodGet) {
 			return

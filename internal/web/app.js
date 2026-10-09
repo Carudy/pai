@@ -5,7 +5,7 @@
 // session actions → event wiring.
 'use strict';
 const $ = id => document.getElementById(id);
-let selected = '', generation = 0, stream = null, retry = null, refreshTimer = null;
+let selected = '', generation = 0, stream = null, retry = null, refreshTimer = null, sessionBusy = false;
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
 let pendingID = null, pendingSession = null;
 let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
@@ -130,6 +130,10 @@ async function sessions(reset = false) {
   let page;
   try { page = await api('sessions?offset=' + sessionOffset + '&limit=100'); }
   catch (e) { $('sessions-status').textContent = 'Could not load sessions. Please retry or reload.'; throw e; }
+  // Prefill the working-directory field with the server's launch dir when empty.
+  if (typeof page.default_cwd === 'string' && page.default_cwd && !$('session-cwd').value) {
+    $('session-cwd').value = page.default_cwd;
+  }
   for (const meta of page.sessions || []) {
     const button = text('button', meta.name); button.classList.toggle('selected', meta.name === selected);
     button.setAttribute('aria-current', meta.name === selected ? 'page' : 'false');
@@ -141,9 +145,15 @@ async function sessions(reset = false) {
 
 function controls() {
   const ready = !!selected, filled = !!$('message').value.trim();
-  $('send').disabled = $('steer').disabled = !ready || !filled;
+  $('send').disabled = !ready || !filled;
+  // Steer only redirects a running task; while idle it would just be a Send.
+  $('steer').disabled = !ready || !filled || !sessionBusy;
   $('cancel').disabled = !ready;
-  $('composer-hint').textContent = !ready ? 'Open a session to send instructions' : 'Enter to send · Shift+Enter for newline · While busy: Sends queue, Steer redirects, Cancel stops';
+  $('composer-hint').textContent = !ready
+    ? 'Open a session to send instructions'
+    : sessionBusy
+      ? 'Enter to send · Shift+Enter for newline · While busy: Sends queue, Steer redirects, Cancel stops'
+      : 'Enter to send · Shift+Enter for newline';
 }
 // ── Rendering ───────────────────────────────────────────────
 function diff(value) {
@@ -325,9 +335,11 @@ function usageSnapshot(s) {
 function snapshot(s) {
   usageSnapshot(s);
   modelBlocked = ['busy','starting'].includes(s.state) || s.phase === 'starting' || !!s.pending;
+  sessionBusy = ['busy','starting'].includes(s.state);
   liveModel = typeof s.model === 'string' ? s.model.trim() : '';
   if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
   modelControls();
+  controls();
   runSnapshot(s);
   if (s.state !== 'busy' || s.pending) clearReasoning();
     else if (s.reasoning !== undefined) {
@@ -382,7 +394,7 @@ function snapshot(s) {
 async function loadSnapshot() {
   const version = generation;
   try { const s = await api(query('snapshot', 0)); if (version === generation) snapshot(s); }
-  catch (e) { if (version !== generation) return; if (e.status === 404) { stopRunProgress(); usageSnapshot({}); $('state').textContent = 'Stored session · no live runtime'; clearPending(); liveModel = ''; modelBlocked = false; modelControls(); await history(true); } else error(e); }
+  catch (e) { if (version !== generation) return; if (e.status === 404) { stopRunProgress(); usageSnapshot({}); $('state').textContent = 'Stored session · no live runtime'; clearPending(); liveModel = ''; modelBlocked = false; sessionBusy = false; modelControls(); controls(); await history(true); } else error(e); }
 }
 function disconnect() { stopRunProgress(); clearReasoning(); if (stream) stream.close(); stream = null; clearTimeout(retry); clearTimeout(refreshTimer); }
 function connect() {
@@ -411,7 +423,7 @@ function connect() {
 }
 // ── Session actions ─────────────────────────────────────────
 async function select(name, cwd) {
-  disconnect(); generation++; const version = generation; selected = name; historyOffset = 0;
+  disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
   clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('workspace').textContent = 'Workspace: ' + (cwd || 'server working directory');
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;

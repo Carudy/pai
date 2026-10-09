@@ -112,9 +112,12 @@ rejected; there is no URL authentication.
   use it. Retiring the old runtime closes SSE, so snapshot/events 404 is normal
   until the next send. The browser reloads saved metadata and preserves unsaved
   model drafts across history refreshes, but resets them on selection or Apply.
-- `GET /api/sessions?offset=0&limit=100`: `{ "sessions": [runner.Meta], "total": N }`.
-  Pagination slices the backend list in its original order; List still fetches
-  the full backend list because runner does not expose storage pagination.
+- `GET /api/sessions?offset=0&limit=100`: `{ "sessions": [runner.Meta], "total": N,
+  "default_cwd": "/path" }`. Pagination slices the backend list in its original
+  order; List still fetches the full backend list because runner does not expose
+  storage pagination. `default_cwd` is the server's launch directory — the
+  default for new sessions, which the UI prefills into its working-directory
+  field.
 - `GET /api/history?name=...&offset=0&limit=100`: `runner.History` (native core
   turn keys `Role`, `Kind`, `Content`, `At`; metadata uses runner's JSON tags).
 - `GET /api/snapshot?name=...`: `runner.Snapshot`; 404 for no live worker.
