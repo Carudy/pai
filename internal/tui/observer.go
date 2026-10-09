@@ -73,10 +73,10 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 	switch c.Name {
 	case "execute":
 		o.pair("TagAgent", "[CMD 💬]", "Help", c.Reason)
-		o.command("TagExec", fmt.Sprintf("[CMD 💻 %s]", c.Target), c.Detail)
+		o.command("TagExec", fmt.Sprintf("[CMD 💻 %s]", c.Target), c.Detail, c.UntrustedSegments)
 	case "remote":
 		o.pair("TagAgent", "[RMT 💬]", "Help", c.Reason)
-		o.command("TagExec", fmt.Sprintf("[RMT 💻 @%s]", c.Target), c.Detail)
+		o.command("TagExec", fmt.Sprintf("[RMT 💻 @%s]", c.Target), c.Detail, c.UntrustedSegments)
 	case "websearch":
 		o.pair("TagAgent", "[WEB 🔍]", "Help", c.Reason)
 		o.pair("TagExec", "[WEB]", "Info", c.Detail)
@@ -113,26 +113,44 @@ const maxDisplaySegments = 12
 // command prints a tool's command. A chained command ("aa && bb | cc") is broken
 // at its operators and numbered: one long wrapped line is hard to read, and the
 // operators decide what still runs if an earlier command fails. Each command is
-// printed verbatim and syntax-highlighted.
+// printed verbatim and syntax-highlighted; segments not covered by the trusted
+// list are marked, so a chain that needs approval shows exactly which parts do.
 //
 // The split comes from tool.SplitSegments, the same parser the trust check uses,
 // so the count shown here can never disagree with what trust saw.
-func (o *LineObserver) command(tag, label, cmd string) {
+func (o *LineObserver) command(tag, label, cmd string, untrusted []int) {
 	segs := tool.SplitSegments(cmd)
+	bad := make(map[int]bool, len(untrusted))
+	for _, i := range untrusted {
+		bad[i] = true
+	}
+
 	if len(segs) <= 1 {
-		fmt.Fprintf(o.W, "%s %s\n", RenderStr(tag, label), highlightCommand(cmd))
+		fmt.Fprintf(o.W, "%s %s\n", RenderStr(tag, label), o.segment(cmd, bad[0]))
 		return
 	}
 
-	fmt.Fprintf(o.W, "%s %s\n", RenderStr(tag, label),
-		RenderStr("Info", fmt.Sprintf("%d commands:", len(segs))))
+	head := RenderStr("Info", fmt.Sprintf("%d commands:", len(segs)))
+	if len(untrusted) > 0 {
+		head = RenderStr("Warn", fmt.Sprintf("%d commands (%d need approval):", len(segs), len(untrusted)))
+	}
+	fmt.Fprintf(o.W, "%s %s\n", RenderStr(tag, label), head)
 	for i, seg := range segs {
 		if i == maxDisplaySegments {
 			fmt.Fprintf(o.W, "%s\n", RenderStr("Help", fmt.Sprintf("        … +%d more commands", len(segs)-i)))
 			break
 		}
-		fmt.Fprintf(o.W, "%s %s\n", RenderStr("Help", fmt.Sprintf("  %2d", i+1)), highlightCommand(seg.Src))
+		fmt.Fprintf(o.W, "%s %s\n", RenderStr("Help", fmt.Sprintf("  %2d", i+1)), o.segment(seg.Src, bad[i]))
 	}
+}
+
+// segment renders one command, marking it when it is not covered by the trusted
+// list.
+func (o *LineObserver) segment(text string, untrusted bool) string {
+	if untrusted {
+		return RenderStr("CmdUntrusted", "⚠ "+text)
+	}
+	return highlightCommand(text)
 }
 
 // diff prints an edit preview, colouring added, removed and context lines so a

@@ -40,6 +40,9 @@ var Styles = map[string]lipgloss.Style{
 	"CmdFlag":     lipgloss.NewStyle().Foreground(lipgloss.Color("75")),
 	"CmdVar":      lipgloss.NewStyle().Foreground(lipgloss.Color("180")),
 	"CmdComment":  lipgloss.NewStyle().Foreground(lipgloss.Color("243")).Italic(true),
+	// Untrusted segments in a confirmation list scream red so the parts the user
+	// is actually approving stand out from the pre-trusted ones.
+	"CmdUntrusted": lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5F5F")).Bold(true),
 
 	// ── Edit diff ────────────────────────────────────────────────────
 	// Added/removed lines use the conventional green/red; the hunk header is a

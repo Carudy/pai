@@ -22,6 +22,67 @@ func confirmTitle(verb, cmd string) string {
 	return verb
 }
 
+// trustedList merges the run's session-trusted names with the config list,
+// without mutating cfg.TrustedCmds.
+func (rt *Runtime) trustedList(cfg *config.UserConfig) []string {
+	if len(rt.TrustedCmds) == 0 {
+		return cfg.TrustedCmds
+	}
+	return append(append([]string{}, cfg.TrustedCmds...), rt.TrustedCmds...)
+}
+
+// confirmCommand asks about an untrusted command, offering the trust choices when
+// the prompter supports them and a plain yes/no otherwise.
+func confirmCommand(rt *Runtime, title string, untrusted []string) (core.TrustChoice, error) {
+	if cc, ok := rt.Prompter.(core.CommandConfirmer); ok {
+		return cc.ConfirmCommand(title, untrusted)
+	}
+	ok, err := rt.Prompter.Confirm(title)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	if ok {
+		return core.TrustOnce, nil
+	}
+	return core.TrustDeny, nil
+}
+
+// unsafeTrustNames are interpreters and wrappers: trusting one of them would let
+// anything run, so "trust from now on" is downgraded to session scope for them.
+var unsafeTrustNames = map[string]bool{
+	"sudo": true, "doas": true, "su": true, "env": true, "xargs": true,
+	"sh": true, "bash": true, "zsh": true, "fish": true, "eval": true,
+	"exec": true, "nohup": true, "nice": true, "timeout": true, "stdbuf": true, "command": true,
+}
+
+// applyTrust records a trust choice for the flagged command names. Persisting is
+// downgraded to session scope when a name is an interpreter, and every outcome
+// is reported, so "always" is never silently overbroad.
+func applyTrust(rt *Runtime, choice core.TrustChoice, names []string) {
+	if (choice != core.TrustSession && choice != core.TrustPersist) || len(names) == 0 {
+		return
+	}
+	if choice == core.TrustPersist {
+		var unsafe []string
+		for _, n := range names {
+			if unsafeTrustNames[n] {
+				unsafe = append(unsafe, n)
+			}
+		}
+		switch {
+		case len(unsafe) > 0:
+			rt.Observer.Notice(fmt.Sprintf("%s can run anything; trusted for this session only", strings.Join(unsafe, ", ")))
+		default:
+			if err := config.AddTrustedCmds(names...); err != nil {
+				rt.Observer.Notice("could not save trusted commands: " + err.Error())
+			} else {
+				rt.Observer.Notice("trusted from now on: " + strings.Join(names, ", "))
+			}
+		}
+	}
+	rt.TrustedCmds = append(rt.TrustedCmds, names...)
+}
+
 // toolHandler executes a single tool. It reports progress through the Runtime's
 // Observer and returns the observation text to append to the conversation
 // history (including its bracketed label), so the model can read the result on
@@ -91,25 +152,29 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 		return "", fmt.Errorf("execute payload: %w", err)
 	}
 
-	trusted := tool.IsTrusted(cmd, cfg.TrustedCmds)
+	trusted := rt.trustedList(cfg)
+	isTrusted := tool.IsTrusted(cmd, trusted)
 	rt.Observer.ToolCall(core.ToolCall{
-		Name:    "execute",
-		Target:  tool.Shell(),
-		Detail:  cmd,
-		Reason:  reason,
-		Trusted: trusted,
+		Name:              "execute",
+		Target:            tool.Shell(),
+		Detail:            cmd,
+		Reason:            reason,
+		Trusted:           isTrusted,
+		UntrustedSegments: tool.UntrustedSegments(cmd, trusted),
 	})
 
-	if !trusted {
-		ok, err := rt.Prompter.Confirm(confirmTitle("Execute this command?", cmd))
+	if !isTrusted {
+		names := tool.UntrustedNames(cmd, trusted)
+		choice, err := confirmCommand(rt, confirmTitle("Execute this command?", cmd), names)
 		if err != nil {
 			return "", fmt.Errorf("user interaction error: %w", err)
 		}
-		if !ok {
+		if choice == core.TrustDeny {
 			output := cancelled()
 			report(rt, output, nil, "Command succeeded")
 			return observation("cmd result", cmd, nil, output, execTruncate(cfg)), nil
 		}
+		applyTrust(rt, choice, names)
 	}
 
 	// Bound one command when configured. Zero (the default) leaves it unbounded;
@@ -139,25 +204,29 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 		rt.Remote = rm
 	}
 
-	trusted := tool.IsTrusted(rp.Cmd, cfg.TrustedCmds)
+	trusted := rt.trustedList(cfg)
+	isTrusted := tool.IsTrusted(rp.Cmd, trusted)
 	rt.Observer.ToolCall(core.ToolCall{
-		Name:    "remote",
-		Target:  rp.Host,
-		Detail:  rp.Cmd,
-		Reason:  reason,
-		Trusted: trusted,
+		Name:              "remote",
+		Target:            rp.Host,
+		Detail:            rp.Cmd,
+		Reason:            reason,
+		Trusted:           isTrusted,
+		UntrustedSegments: tool.UntrustedSegments(rp.Cmd, trusted),
 	})
 
-	if !trusted {
-		ok, err := rt.Prompter.Confirm(confirmTitle(fmt.Sprintf("Run on %s?", rp.Host), rp.Cmd))
+	if !isTrusted {
+		names := tool.UntrustedNames(rp.Cmd, trusted)
+		choice, err := confirmCommand(rt, confirmTitle(fmt.Sprintf("Run on %s?", rp.Host), rp.Cmd), names)
 		if err != nil {
 			return "", fmt.Errorf("user interaction error: %w", err)
 		}
-		if !ok {
+		if choice == core.TrustDeny {
 			output := cancelled()
 			report(rt, output, nil, "Remote command succeeded")
 			return observation("remote result", rp.Cmd, nil, output, execTruncate(cfg)), nil
 		}
+		applyTrust(rt, choice, names)
 	}
 
 	// Same budget as a local command; applied after confirmation so the user's

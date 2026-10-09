@@ -104,6 +104,37 @@ func matchTrusted(first string, trusted []string) bool {
 	return false
 }
 
+// UntrustedSegments returns the indices of SplitSegments(cmd) whose command is
+// not covered by trusted. The indices match SplitSegments order, so a UI that
+// splits the same way can mark the right lines. An empty trusted list marks every
+// segment.
+func UntrustedSegments(cmd string, trusted []string) []int {
+	var out []int
+	for i, seg := range SplitSegments(cmd) {
+		if w := firstWord(seg.Text); w != "" && !matchTrusted(w, trusted) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// UntrustedNames returns the distinct command names (first words) among the
+// chain's untrusted segments, in order and deduplicated. These are the names an
+// "add to trusted" prompt would offer to trust.
+func UntrustedNames(cmd string, trusted []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, seg := range SplitSegments(cmd) {
+		w := firstWord(seg.Text)
+		if w == "" || seen[w] || matchTrusted(w, trusted) {
+			continue
+		}
+		seen[w] = true
+		out = append(out, w)
+	}
+	return out
+}
+
 // Segment is one command in a shell chain.
 type Segment struct {
 	// Text is the command with the operator and surrounding space removed — what a

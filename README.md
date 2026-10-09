@@ -368,6 +368,24 @@ Commands matching the `trusted_cmds` list skip confirmation:
 trusted_cmds = ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
 ```
 
+A chain (`aa && bb`) is confirmed as a whole, but the printed list marks only the
+parts that are *not* trusted (`⚠`), and the header counts them (`3 commands (2
+need approval):`). The prompt offers more than yes/no:
+
+| Key | Does |
+|---|---|
+| `y` | run this once |
+| `n` | skip |
+| `s` | run, and trust the flagged commands for this run |
+| `a` | run, and trust them from now on (written to `trusted_cmds`) |
+| `Ctrl+C` | abort |
+
+Trust is by command **name** (the first word), so `a` on `sudo rm -rf /x` would
+trust `sudo`. To blunt that, `a` is silently downgraded to "this session" for
+interpreters and wrappers (`sudo`, `sh`, `bash`, `env`, `xargs`, …). Session
+trust is in-memory: it lasts for the run and is not persisted, so a restart
+re-confirms.
+
 #### Trusted Paths (file tools)
 By default every `edit` and `write` asks for approval. List the directories you
 work in and changes under them apply straight away — the diff is still shown, so

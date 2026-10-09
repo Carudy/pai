@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -609,7 +610,7 @@ func TestConfirmationSnapshotRetainsTool(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
 			t.Fatal(err)
 		}
-		if event.Snapshot.Pending == nil || event.Snapshot.Pending.Tool == nil || *event.Snapshot.Pending.Tool != *s.Pending.Tool {
+		if event.Snapshot.Pending == nil || event.Snapshot.Pending.Tool == nil || !reflect.DeepEqual(*event.Snapshot.Pending.Tool, *s.Pending.Tool) {
 			t.Fatal("SSE reconnect lost tool")
 		}
 	}

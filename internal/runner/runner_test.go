@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -387,21 +388,21 @@ func TestApprovalReconnectToolCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := <-first
-	if initial.Snapshot.Phase != "tool" || initial.Snapshot.ActiveTool == nil || *initial.Snapshot.ActiveTool != tool {
+	if initial.Snapshot.Phase != "tool" || initial.Snapshot.ActiveTool == nil || !reflect.DeepEqual(*initial.Snapshot.ActiveTool, tool) {
 		t.Fatal(initial)
 	}
 	done := make(chan error, 1)
 	go func() { _, err := w.Confirm("Apply edit?"); done <- err }()
 	s := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
-	if s.Phase != "waiting_approval" || s.ActiveTool == nil || *s.ActiveTool != tool {
+	if s.Phase != "waiting_approval" || s.ActiveTool == nil || !reflect.DeepEqual(*s.ActiveTool, tool) {
 		t.Fatal(s)
 	}
-	if s.Pending.Tool == nil || *s.Pending.Tool != tool {
+	if s.Pending.Tool == nil || !reflect.DeepEqual(*s.Pending.Tool, tool) {
 		t.Fatalf("missing approval details: %+v", s.Pending)
 	}
 	promptEvent := <-first
 	p := promptEvent.Data.(Prompt)
-	if p.Tool == nil || *p.Tool != tool {
+	if p.Tool == nil || !reflect.DeepEqual(*p.Tool, tool) {
 		t.Fatalf("prompt data: %+v", p)
 	}
 	// Mutate all publicly exposed copies before reconnecting.
@@ -415,12 +416,12 @@ func TestApprovalReconnectToolCopy(t *testing.T) {
 	}
 	defer unsubscribe()
 	e := <-reconnected
-	if e.Snapshot.Pending.Tool == nil || *e.Snapshot.Pending.Tool != tool {
+	if e.Snapshot.Pending.Tool == nil || !reflect.DeepEqual(*e.Snapshot.Pending.Tool, tool) {
 		t.Fatalf("reconnect lost exact detail/diff: %+v", e.Snapshot.Pending)
 	}
 	e.Snapshot.Pending.Tool.Diff = "reconnect mutation"
 	fresh, _ := m.Snapshot("one")
-	if *fresh.Pending.Tool != tool {
+	if !reflect.DeepEqual(*fresh.Pending.Tool, tool) {
 		t.Fatal("snapshot aliases reconnect event")
 	}
 	if err := m.Reply("one", fresh.Pending.ID, "", true); err != nil {
@@ -430,7 +431,7 @@ func TestApprovalReconnectToolCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	resumed, _ := m.Snapshot("one")
-	if resumed.Phase != "tool" || resumed.ActiveTool == nil || *resumed.ActiveTool != tool {
+	if resumed.Phase != "tool" || resumed.ActiveTool == nil || !reflect.DeepEqual(*resumed.ActiveTool, tool) {
 		t.Fatal(resumed)
 	}
 
@@ -482,7 +483,7 @@ func TestRuntimePhasesAndActiveTool(t *testing.T) {
 		if err != nil || s.Phase != phase || (s.ActiveTool == nil) != (tool == nil) {
 			t.Fatalf("snapshot: %+v %v", s, err)
 		}
-		if tool != nil && *s.ActiveTool != *tool {
+		if tool != nil && !reflect.DeepEqual(*s.ActiveTool, *tool) {
 			t.Fatalf("tool: %+v", s.ActiveTool)
 		}
 	}
@@ -503,7 +504,7 @@ func TestRuntimePhasesAndActiveTool(t *testing.T) {
 	}
 	defer unsubscribe()
 	e := <-ch
-	if e.Snapshot.Phase != "tool" || *e.Snapshot.ActiveTool != tool {
+	if e.Snapshot.Phase != "tool" || !reflect.DeepEqual(*e.Snapshot.ActiveTool, tool) {
 		t.Fatal(e)
 	}
 	e.Snapshot.ActiveTool.Detail = "mutation"
@@ -570,7 +571,7 @@ func TestActivitiesBoundAndPayloadIsolation(t *testing.T) {
 	tool := core.ToolCall{Name: "execute", Target: "sh", Detail: "echo hello"}
 	w.ToolCall(tool)
 	a := <-ch
-	if a.Name != "one" || a.Event.Type != "tool_call" || a.Event.Data.(core.ToolCall) != tool {
+	if a.Name != "one" || a.Event.Type != "tool_call" || !reflect.DeepEqual(a.Event.Data.(core.ToolCall), tool) {
 		t.Fatalf("tool event: %+v", a)
 	}
 	<-other

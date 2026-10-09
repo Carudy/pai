@@ -44,6 +44,12 @@ type Runtime struct {
 	// SessionName is the conversation's initial storage name ("" = ephemeral).
 	SessionName string
 
+	// TrustedCmds are command names trusted for this run only, added when the user
+	// answers a confirmation with "trust this session". They extend (never replace)
+	// cfg.TrustedCmds. Held here, not in config: session trust is deliberately
+	// ephemeral and re-confirmed after a restart.
+	TrustedCmds []string
+
 	// transcript is every turn this run has recorded, kept even when nothing is
 	// persisted so that naming the conversation later can backfill it.
 	transcript []core.Turn

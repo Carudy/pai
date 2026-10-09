@@ -78,6 +78,11 @@ type ToolCall struct {
 	// to change, rendered before the confirmation so the user reviews it. Empty
 	// for every other tool.
 	Diff string
+
+	// UntrustedSegments lists the 0-based command-chain segments (per
+	// tool.SplitSegments) that are not covered by the trusted list, so a UI can
+	// mark which parts need approval. Empty when the command is fully trusted.
+	UntrustedSegments []int
 }
 
 // ToolResult is the outcome reported after a tool call.
@@ -119,6 +124,29 @@ type Observer interface {
 type Prompter interface {
 	Ask(title string) (string, error)
 	Confirm(title string) (bool, error)
+}
+
+// TrustChoice answers a command confirmation that can also extend trust.
+type TrustChoice int
+
+const (
+	// TrustDeny does not run the command.
+	TrustDeny TrustChoice = iota
+	// TrustOnce runs it this time only.
+	TrustOnce
+	// TrustSession runs it and trusts the flagged command names for this run.
+	TrustSession
+	// TrustPersist runs it and trusts them for future runs too.
+	TrustPersist
+)
+
+// CommandConfirmer is an optional Prompter capability: a command confirmation
+// that also offers to trust the flagged command names. untrusted holds those
+// names (the already-untrusted first words of the command's segments). A
+// prompter without it gets a plain Confirm instead, so the UI can offer this
+// without every adapter having to.
+type CommandConfirmer interface {
+	ConfirmCommand(title string, untrusted []string) (TrustChoice, error)
 }
 
 // Steerer is an optional Prompter capability: a non-blocking poll for a message

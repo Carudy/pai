@@ -176,6 +176,17 @@ func (p *appPrompter) Confirm(title string) (bool, error) {
 	return res.ok, err
 }
 
+// ConfirmCommand implements core.CommandConfirmer: a command confirmation that can
+// also trust the flagged names for this run or for future runs.
+func (p *appPrompter) ConfirmCommand(title string, untrusted []string) (core.TrustChoice, error) {
+	req := promptReq{kind: promptConfirmCommand, title: title, untrusted: untrusted, reply: make(chan promptResult, 1)}
+	res, err := p.ask(req)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	return res.choice, nil
+}
+
 func (p *appPrompter) ask(req promptReq) (promptResult, error) {
 	p.app.program.Send(promptMsg{req})
 	select {
@@ -194,18 +205,21 @@ type promptKind int
 const (
 	promptAsk promptKind = iota
 	promptConfirm
+	promptConfirmCommand
 )
 
 type promptResult struct {
-	text string
-	ok   bool
-	err  error
+	text   string
+	ok     bool
+	choice core.TrustChoice
+	err    error
 }
 
 type promptReq struct {
-	kind  promptKind
-	title string
-	reply chan promptResult
+	kind      promptKind
+	title     string
+	untrusted []string
+	reply     chan promptResult
 }
 
 type promptMsg struct{ req promptReq }
@@ -301,7 +315,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		if m.pending != nil && m.pending.kind == promptConfirm {
+		if m.pending != nil && (m.pending.kind == promptConfirm || m.pending.kind == promptConfirmCommand) {
 			return m.confirmKey(msg), nil
 		}
 		switch msg.Type {
@@ -333,7 +347,7 @@ func (m *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *appModel) begin(req promptReq) {
 	m.pending = &req
 	m.input.SetValue("")
-	if req.kind == promptConfirm {
+	if req.kind == promptConfirm || req.kind == promptConfirmCommand {
 		// A confirmation is modal and must never consume typed-ahead text.
 		m.input.Blur()
 		return
@@ -349,14 +363,20 @@ func (m *appModel) begin(req promptReq) {
 	m.input.Focus()
 }
 
-// confirmKey maps a modal confirmation keypress onto an answer.
+// confirmKey maps a modal confirmation keypress onto an answer. A plain confirm
+// answers yes/no; a command confirm also maps s/a onto the trust choices.
 func (m *appModel) confirmKey(k tea.KeyMsg) tea.Model {
-	switch k.String() {
-	case "y", "Y", "enter":
-		m.answer(promptResult{ok: true})
-	case "n", "N", "esc":
-		m.answer(promptResult{ok: false})
-	case "ctrl+c":
+	command := m.pending != nil && m.pending.kind == promptConfirmCommand
+	switch key := k.String(); {
+	case key == "y" || key == "Y" || key == "enter":
+		m.answer(promptResult{ok: true, choice: core.TrustOnce})
+	case command && (key == "s" || key == "S"):
+		m.answer(promptResult{ok: true, choice: core.TrustSession})
+	case command && (key == "a" || key == "A"):
+		m.answer(promptResult{ok: true, choice: core.TrustPersist})
+	case key == "n" || key == "N" || key == "esc":
+		m.answer(promptResult{ok: false, choice: core.TrustDeny})
+	case key == "ctrl+c":
 		m.answer(promptResult{err: core.ErrAborted})
 	}
 	return m
@@ -427,6 +447,14 @@ func (m *appModel) answer(res promptResult) {
 func (m *appModel) View() string {
 	// The session label rides the live region so it stays visible in every state.
 	label := RenderStr("Session", "["+SessionLabel(m.session)+"]") + " "
+
+	if m.pending != nil && m.pending.kind == promptConfirmCommand {
+		out := label + "\n" + RenderStr("Confirm", "  ⚠︎  "+m.pending.title)
+		if len(m.pending.untrusted) > 0 {
+			out += "\n" + RenderStr("Warn", "  not trusted: "+strings.Join(m.pending.untrusted, ", "))
+		}
+		return out + "\n" + RenderStr("Hint", "  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort")
+	}
 
 	if m.pending != nil && m.pending.kind == promptConfirm {
 		// Modal: the keys that resolve it are spelled out, since stray keys are

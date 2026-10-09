@@ -8,6 +8,36 @@ import (
 	"strings"
 )
 
+// AddTrustedCmds appends command names to [tool] trusted_cmds, creating the
+// array if it is absent, and writes nothing when every name is already present.
+// It backs the terminal's "always trust" option; duplicate names are ignored.
+func AddTrustedCmds(names ...string) error {
+	path := Path()
+	if path == "" {
+		return fmt.Errorf("cannot determine the config path")
+	}
+	var raw tomlConfig
+	if err := loadTOML(path, &raw); err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(raw.Tool.TrustedCmds))
+	merged := append([]string{}, raw.Tool.TrustedCmds...)
+	for _, n := range raw.Tool.TrustedCmds {
+		seen[n] = true
+	}
+	for _, n := range names {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		merged = append(merged, n)
+	}
+	if len(merged) == len(raw.Tool.TrustedCmds) {
+		return nil
+	}
+	return SetScalar(path, "tool", "trusted_cmds", arrayLiteral(merged))
+}
+
 // SetScalar sets `<key> = <value>` inside `[section]` of the TOML file at path,
 // preserving the rest of the file (comments included) by editing only the
 // affected line, inserting the key if absent, or appending the section if it
