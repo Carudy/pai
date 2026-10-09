@@ -38,7 +38,7 @@
                             placeholder="Session name"
                             required /></label
                     ><label for="session-cwd">Working directory (optional)</label>
-                    <input id="session-cwd" placeholder="Server launch working directory" aria-describedby="cwd-hint" />
+                    <input id="session-cwd" placeholder="PAI serving DIR" aria-describedby="cwd-hint" />
                     <p id="cwd-hint">The server checks that this directory exists.</p>
                     <label for="session-role">Role</label>
                     <select id="session-role"><option value="">Configured default</option></select>
@@ -79,7 +79,7 @@
                         <button id="apply-model" type="submit" disabled>Apply</button>
                     </form>
                     </div>
-                    <p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>
+                    <!--<p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>-->
                     <p id="workspace">Workspace — select a session</p>
                     <div class="status-row">
                     <p id="state" aria-live="polite">Ready when you are</p>
