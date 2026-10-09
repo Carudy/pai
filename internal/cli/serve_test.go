@@ -205,6 +205,67 @@ func TestServeToken(t *testing.T) {
 	}
 }
 
+func TestServeModelSwitch(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	if err := os.MkdirAll(filepath.Join(cfgDir, "pai"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfgDir, "pai", "config.toml"), []byte("[app]\ndefault_model = 'deepseek:first'\n[providers.deepseek]\napi_key = ''\n[providers.custom]\nbase_url = 'https://example.invalid/v1/chat/completions'\napi_key = ''\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { store.Close() }()
+	b := &serveBackend{store: store, cwd: t.TempDir()}
+	if _, err := b.Create("one", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append("one", core.Turn{Role: "user", Content: "keep me"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range []string{"", "deepseek:", "deepseek", "missing:model", "deepseek:bad model"} {
+		if err := b.SetModel("one", model); err == nil {
+			t.Fatalf("accepted %q", model)
+		}
+	}
+	if err := b.SetModel("missing", "deepseek:custom"); !errors.Is(err, runner.ErrNotFound) {
+		t.Fatal(err)
+	}
+	if err := b.SetModel("one", " custom : free-text-model "); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := store.Get("one"); err != nil || saved.Meta.Model != "custom:free-text-model" {
+		t.Fatalf("custom provider model: %+v %v", saved, err)
+	}
+	if err := b.SetModel("one", " deepseek : custom "); err != nil {
+		t.Fatal(err)
+	}
+	models, def, err := b.Models()
+	if err != nil || def != "deepseek:first" || strings.Join(models, ",") != "deepseek:custom,deepseek:first" {
+		t.Fatalf("models: %v %q %v", models, def, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.store = store
+	cfg, _, _, history, cleanup, err := b.Prepare("one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if cfg.DefaultModel != "deepseek:custom" || len(history) != 1 || history[0].Content != "keep me" {
+		t.Fatalf("resume: %+v %v", cfg, history)
+	}
+}
+
 func TestServeBackend(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	cfgDir := t.TempDir()

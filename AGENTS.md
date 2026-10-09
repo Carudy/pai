@@ -44,13 +44,47 @@ make deps         # pre-fill the module cache
 make install      # go install ./cmd/pai
 ```
 
-Always validate on **both** tag sets: `go build ./... && go build -tags filestore ./...`
-(plus `vet`/`test`). A change that compiles under one backend may not under the other.
+## Validation scope — fast feedback first
+
+Choose checks based on what changed; do not run the full build/vet/test/race
+matrix after every small edit. Prefer one validation owner when using agents:
+subagents run scoped checks, and the parent runs integration checks once after
+merging their work rather than repeating identical suites.
+
+| Change | Normal development check |
+|---|---|
+| README/docs/comments only | Inspect links/content and `git diff --check`; no build/test required |
+| CSS/layout/copy only | Relevant web asset/HTML regression tests (`go test ./internal/web -run 'TestPage|TestHTML'`) and a browser check if available; no full Go build, vet, or race suite |
+| Browser JavaScript | `node internal/web/app_test.js` when Node is available, plus relevant `internal/web` tests; report unavailable JS/browser validation explicitly |
+| Isolated Go implementation | `gofmt` changed Go files and targeted package tests, initially with `-run` for the changed behavior; broaden to that package as needed |
+| Shared interfaces, runtime lifecycle, or cross-package wiring | Tests for affected packages and direct consumers; build both tag sets once at the integration checkpoint |
+| Storage/build tags/platform code | Test affected packages on **both** default and `filestore` tags; cross-compile affected targets when platform behavior changed |
+| Concurrency/cancellation/events | Add targeted `go test -race` for affected packages, not the entire repository |
+
+For backend-independent edits, one tag set is enough for the first scoped
+check. Run the **full dual-backend matrix once before finalizing a substantial
+feature, release, or broad refactor** (or when the user requests it):
+
+```bash
+go build ./... && go build -tags filestore ./...
+make vet
+make test
+```
+
+A change that compiles under one backend may not under the other; retain
+both-backend coverage at these checkpoints. Do not repeat an unchanged check
+merely because another small presentation edit followed it. Go tests compile
+the packages they exercise, so a separate build adds little for isolated tests.
+Always state exactly what was checked and what remains unverified.
 
 ## How to test
 
-Unit tests are thin — prefer a live smoke test, which is what actually catches
-prompt/protocol bugs.
+Use deterministic unit/integration tests for ordinary development. A live smoke
+test is useful for prompt/protocol changes, but is not required for small fixes,
+UI styling, or documentation. Run it only when an isolated test environment and
+approved test credentials are available; never silently use real API keys or
+sessions. Browser checks complement asset tests because Go tests alone do not
+prove visual layout or JavaScript behavior.
 
 **Live smoke test** (never let it touch your real config):
 

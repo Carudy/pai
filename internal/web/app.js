@@ -3,6 +3,41 @@ const $ = id => document.getElementById(id);
 let selected = '', generation = 0, stream = null, retry = null, refreshTimer = null;
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
 let pendingID = null, pendingSession = null;
+let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
+function normalizeModel(value) { return value.trim().replace(/\s*:\s*/, ':'); }
+function modelControls() {
+  const disabled = !selected || modelBlocked || modelApplying;
+  $('session-model').disabled = disabled;
+  $('apply-model').disabled = disabled || !$('session-model').value.trim() || normalizeModel($('session-model').value) === (liveModel || savedModel || defaultModel);
+}
+function modelMetadata(model) {
+  savedModel = typeof model === 'string' ? model.trim() : '';
+  if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
+  modelControls();
+}
+async function models() {
+  const data = await api('models');
+  defaultModel = data.default_model || '';
+  $('model-options').replaceChildren(...data.models.map(model => { const option = text('option', model); option.value = model; return option; }));
+  if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
+  modelControls();
+}
+async function applyModel(e) {
+  e.preventDefault(); if ($('apply-model').disabled) return;
+  const name = selected, model = normalizeModel($('session-model').value);
+    let version = generation;
+  modelApplying = true; modelControls(); $('error').textContent = '';
+  try {
+    await api('model', {name, model});
+    if (version !== generation) return;
+    // Retirement closes SSE; invalidate its callbacks and any pre-switch history.
+    disconnect(); version = ++generation; historyRequest++;
+    liveModel = ''; modelDirty = false; modelMetadata(model);
+    await history(true); if (version !== generation) return;
+        await loadSnapshot(); if (version === generation) connect();
+  } catch (err) { if (name === selected && version === generation) { error(err); await loadSnapshot(); } }
+  finally { modelApplying = false; modelControls(); }
+}
 let durable = [], liveSteps = [], currentStep = null, thinking = '';
 let liveCard = null, liveType = '', liveText = '';
 const liveTextLimit = 16000;
@@ -222,6 +257,7 @@ function paintConversation() {
 
 }
 function sessionMetadata(meta = {}) {
+  modelMetadata(meta.model);
   for (const field of ['role', 'model']) {
     const node = $('session-' + field + '-info');
     const value = typeof meta[field] === 'string' ? meta[field].trim() : '';
@@ -266,7 +302,21 @@ async function refreshHistory() {
   catch (e) { error(e); } finally { refreshing = false; }
 }
 function scheduleHistory() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshHistory, 150); }
+function usageSnapshot(s) {
+  const node = $('token-usage');
+  node.hidden = !(s.usage_calls > 0);
+  node.textContent = ''; node.title = '';
+  if (node.hidden) return;
+  const total = s.total_usage, latest = s.usage;
+  node.textContent = `Tokens · sent ${total.Prompt} · received ${total.Completion} · total ${total.Total} (this run)`;
+  node.title = `Latest request: sent ${latest.Prompt} · received ${latest.Completion} · total ${latest.Total}. This run covers this worker runtime only; resuming a retired runtime starts fresh.`;
+}
 function snapshot(s) {
+  usageSnapshot(s);
+  modelBlocked = ['busy','starting'].includes(s.state) || s.phase === 'starting' || !!s.pending;
+  liveModel = typeof s.model === 'string' ? s.model.trim() : '';
+  if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
+  modelControls();
   runSnapshot(s);
   if (s.state !== 'busy' || s.pending) clearReasoning();
     else if (s.reasoning !== undefined) {
@@ -321,7 +371,7 @@ function snapshot(s) {
 async function loadSnapshot() {
   const version = generation;
   try { const s = await api(query('snapshot', 0)); if (version === generation) snapshot(s); }
-  catch (e) { if (version !== generation) return; if (e.status === 404) { stopRunProgress(); $('state').textContent = 'Stored session · no live runtime'; clearPending(); } else error(e); }
+  catch (e) { if (version !== generation) return; if (e.status === 404) { stopRunProgress(); usageSnapshot({}); $('state').textContent = 'Stored session · no live runtime'; clearPending(); liveModel = ''; modelBlocked = false; modelControls(); await history(true); } else error(e); }
 }
 function disconnect() { stopRunProgress(); clearReasoning(); if (stream) stream.close(); stream = null; clearTimeout(retry); clearTimeout(refreshTimer); }
 function connect() {
@@ -350,7 +400,7 @@ function connect() {
 }
 async function select(name, cwd) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0;
-  clearReasoning(); sessionMetadata();
+  clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('workspace').textContent = 'Workspace: ' + (cwd || 'server working directory');
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
@@ -464,7 +514,9 @@ async function createSession(e) {
 function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
 }
-$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; $('login').hidden = true; $('app').hidden = false; await Promise.all([sessions(true), roles()]); if (selected) connect(); } catch (err) { error(err); } };
+$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; $('login').hidden = true; $('app').hidden = false; await Promise.all([sessions(true), roles(), models()]); if (selected) connect(); } catch (err) { error(err); } };
+$('model-form').onsubmit = applyModel;
+$('session-model').oninput = () => { modelDirty = true; modelControls(); };
 $('new-session').onsubmit = createSession;
 $('composer').onsubmit = e => { e.preventDefault(); action('send'); };
 $('steer').onclick = () => action('steer'); $('cancel').onclick = () => action('cancel');
@@ -487,3 +539,4 @@ $('toggle-activity').onclick = () => {
 controls();
 sessions(true).catch(error);
 roles().catch(error);
+models().catch(error);

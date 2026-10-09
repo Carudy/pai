@@ -400,4 +400,61 @@ for (const type of ['tool_call','done','ask','terminate','output','prompt','stop
   assert.equal(page.get('reasoning-preview').hidden, true);
   assert.equal(page.get('reasoning-text').textContent, '');
 }
-Promise.all([verifyHistory(), verifyMetadata(), verifyCreate()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+// Validate source nesting: browser parsers silently repair malformed closing tags.
+const markup = fs.readFileSync(__dirname + '/index.html', 'utf8');
+const stack = [], voidTags = new Set(['meta','link','input','br','hr','img']);
+for (const match of markup.matchAll(/<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi)) {
+  const tag = match[1].toLowerCase();
+  assert.ok(!match[0].slice(1).includes('<'), 'malformed tag: ' + match[0]);
+  if (match[0].startsWith('</')) assert.equal(stack.pop(), tag, 'misnested ' + tag);
+  else if (!voidTags.has(tag)) stack.push(tag);
+}
+assert.deepEqual(stack, []);
+assert.match(markup, /Apply<\/button>\s*<\/form>/);
+assert.match(markup, /<input id="session-model"[^>]*list="model-options"[^>]*placeholder="provider:model"/);
+assert.match(markup, /Suggestions are the configured default and saved session models/);
+assert.match(markup, /Type any configured provider:model/);
+const usagePage = browser();
+usagePage.run("snapshot({state:'awaiting',usage_calls:0})");
+assert.equal(usagePage.get('token-usage').hidden, true);
+const usageState = {state:'awaiting',usage_calls:2,usage:{Prompt:20,Completion:3,Total:23},total_usage:{Prompt:30,Completion:5,Total:35}};
+for (let i = 0; i < 2; i++) {
+  usagePage.run(`snapshot(${JSON.stringify(usageState)})`);
+  assert.equal(usagePage.get('token-usage').textContent, 'Tokens · sent 30 · received 5 · total 35 (this run)');
+  assert.match(usagePage.get('token-usage').title, /Latest request: sent 20 · received 3 · total 23/);
+}
+usagePage.run("snapshot({state:'starting',usage_calls:0})");
+assert.equal(usagePage.get('token-usage').hidden, true);
+assert.equal(usagePage.get('token-usage').textContent, '');
+
+async function verifyModels() {
+  const p = browser();
+  p.run("selected='one'; modelBlocked=false; sessionMetadata({model:'test:saved'}); models=async()=>{};");
+  assert.equal(p.get('session-model').value, 'test:saved');
+  p.run("$('session-model').value='test:custom'; modelDirty=true; sessionMetadata({model:'test:changed'}); snapshot({state:'busy',model:'test:live'});");
+  assert.equal(p.get('session-model').value, 'test:custom', 'refresh preserves draft');
+  assert.equal(p.get('session-model').disabled, true);
+  assert.equal(p.get('apply-model').disabled, true);
+  for (const s of [{state:'starting'}, {state:'awaiting',pending:{id:'p',kind:'ask'}}]) {
+    p.run(`snapshot(${JSON.stringify(s)})`);
+    assert.equal(p.get('session-model').disabled, true);
+  }
+  p.run("snapshot({state:'awaiting',model:'test:live'});");
+  assert.equal(p.get('apply-model').disabled, false);
+  p.run("api=async()=>{const e=new Error('configured provider required');e.status=400;throw e}; loadSnapshot=async()=>{};");
+  await p.run("applyModel({preventDefault(){}})");
+  assert.match(p.get('error').textContent, /configured provider/);
+  assert.equal(p.get('session-model').value, 'test:custom');
+  p.run("$('session-model').value=' test : custom '; history=async()=>sessionMetadata({model:'test:custom'}); connect=()=>{}; api=async(path,body)=>{if(body.model!=='test:custom') throw Error('not normalized'); return {ok:true};};");
+  await p.run("applyModel({preventDefault(){}})");
+  assert.equal(p.get('session-model').value, 'test:custom');
+  assert.equal(p.run('modelDirty'), false);
+  p.run("$('session-model').value='test:unsaved'; modelDirty=true; api=()=>new Promise(resolve=>globalThis.finishModel=resolve); modelControls();");
+  const stale = p.run("applyModel({preventDefault(){}})");
+  p.run("history=async()=>sessionMetadata({model:'test:other'});");
+  await p.run("select('two')");
+  p.run("finishModel({ok:true})"); await stale;
+  assert.equal(p.get('session-model').value, 'test:other', 'stale switch cannot overwrite selection');
+  assert.equal(p.run('modelDirty'), false);
+}
+Promise.all([verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

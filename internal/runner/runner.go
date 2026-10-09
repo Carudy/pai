@@ -99,7 +99,11 @@ func clonePrompt(p *Prompt) *Prompt {
 }
 
 type Snapshot struct {
+	Usage      core.Usage     `json:"usage"`
+	TotalUsage core.Usage     `json:"total_usage"`
+	UsageCalls int            `json:"usage_calls"`
 	Name       string         `json:"name"`
+	Model      string         `json:"model"`
 	State      string         `json:"state"` // starting, busy, awaiting, stopped
 	Phase      string         `json:"phase"`
 	ActiveTool *core.ToolCall `json:"active_tool,omitempty"`
@@ -133,6 +137,62 @@ const subscriberLimit = 32
 const eventLimit = 64
 const reasoningLimit = 64 << 10
 
+// ModelBackend is optional; model discovery must not require remote API calls.
+type ModelBackend interface {
+	Models() ([]string, string, error)
+	SetModel(name, model string) error
+}
+
+var ErrBusy = errors.New("session is busy; wait for pending prompts and queued instructions before changing model")
+
+func (m *Manager) Models() ([]string, string, error) {
+	if b, ok := m.backend.(ModelBackend); ok {
+		return b.Models()
+	}
+	return nil, "", errors.New("backend does not support models")
+}
+
+// SetModel retires the idle runtime before persisting settings. The reservation
+// survives releasing mu for the join, so no new runtime can load stale metadata.
+func (m *Manager) SetModel(name, model string) error {
+	m.mu.Lock()
+	if m.closed || m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return ErrClosed
+	}
+	b, ok := m.backend.(ModelBackend)
+	if !ok {
+		m.mu.Unlock()
+		return errors.New("backend does not support models")
+	}
+	if m.changing[name] {
+		m.mu.Unlock()
+		return ErrBusy
+	}
+	w := m.entries[name]
+	if w != nil && (w.state != "awaiting" || w.pending != nil || len(w.tasks) != 0 || len(w.steering) != 0) {
+		m.mu.Unlock()
+		return ErrBusy
+	}
+	if m.changing == nil {
+		m.changing = make(map[string]bool)
+	}
+	m.changing[name] = true
+	if w != nil {
+		w.state = "stopped"
+		w.cancel()
+		m.mu.Unlock()
+		<-w.done
+		m.mu.Lock()
+	}
+	defer m.mu.Unlock()
+	defer delete(m.changing, name)
+	if m.closed || m.ctx.Err() != nil {
+		return ErrClosed
+	}
+	return b.SetModel(name, model)
+}
+
 type Manager struct {
 	mu         sync.Mutex
 	ctx        context.Context
@@ -141,6 +201,7 @@ type Manager struct {
 	max        int
 	closed     bool
 	entries    map[string]*worker
+	changing   map[string]bool
 	wg         sync.WaitGroup
 	sequence   uint64
 	activities map[chan Activity]struct{}
@@ -154,6 +215,7 @@ type worker struct {
 	m            *Manager
 	name         string
 	workingDir   string
+	model        string
 	ctx          context.Context
 	cancel       context.CancelFunc
 	done         chan struct{}
@@ -163,6 +225,9 @@ type worker struct {
 	state        string
 	phase        string
 	reasoning    string
+	usage        core.Usage
+	totalUsage   core.Usage
+	usageCalls   int
 	activeTool   *core.ToolCall
 	failure      string
 	instruction  bool
@@ -259,6 +324,10 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 			m.mu.Unlock()
 			return ErrClosed
 		}
+		if m.changing[name] {
+			m.mu.Unlock()
+			return ErrBusy
+		}
 		if w := m.entries[name]; w != nil {
 			if w.state == "stopped" {
 				done := w.done
@@ -272,6 +341,10 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 			}
 			select {
 			case w.tasks <- text:
+				// The worker may dequeue before reacquiring mu; reserve busy now.
+				if w.state == "awaiting" {
+					w.state = "busy"
+				}
 				w.emitLocked("queued", nil)
 				m.mu.Unlock()
 				return nil
@@ -335,6 +408,9 @@ func (m *Manager) Steer(name, text string) error {
 	}
 	select {
 	case ch <- text:
+		if w.state == "awaiting" {
+			w.state = "busy"
+		}
 		w.emitLocked("queued", nil)
 		return nil
 	default:
@@ -391,9 +467,10 @@ func (m *Manager) Reply(name, id, text string, approve bool) error {
 	return nil
 }
 func (w *worker) snapshotLocked() Snapshot {
-	s := Snapshot{Name: w.name, State: w.state, Queued: len(w.tasks) + len(w.steering), Error: w.failure}
+	s := Snapshot{Name: w.name, Model: w.model, State: w.state, Queued: len(w.tasks) + len(w.steering), Error: w.failure}
 	s.Phase = w.phase
 	s.Reasoning = w.reasoning
+	s.Usage, s.TotalUsage, s.UsageCalls = w.usage, w.totalUsage, w.usageCalls
 	if w.activeTool != nil {
 		tool := *w.activeTool
 		s.ActiveTool = &tool
@@ -569,6 +646,7 @@ func (w *worker) run() {
 		rt := &role.Runtime{WorkingDir: cwd, Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w, Interactive: true, SessionName: w.name}
 		w.m.mu.Lock()
 		w.rt = rt
+		w.model = copyCfg.DefaultModel
 		w.workingDir = cwd
 		if w.state != "stopped" {
 			w.state = "busy"
@@ -725,7 +803,20 @@ func (w *worker) Reasoning(s string) {
 	}
 	w.emitLocked("reasoning", s)
 }
-func (w *worker) Usage(u core.Usage) { w.modelPhase("usage", u) }
+func (w *worker) Usage(u core.Usage) {
+	w.m.mu.Lock()
+	defer w.m.mu.Unlock()
+	// Count observer reports once at the source, never during snapshot replay.
+	w.usage = u
+	w.totalUsage.Prompt += u.Prompt
+	w.totalUsage.Completion += u.Completion
+	w.totalUsage.Total += u.Total
+	w.usageCalls++
+	if w.activeTool == nil {
+		w.phase = "waiting_model"
+	}
+	w.emitLocked("usage", u)
+}
 func (w *worker) ToolCall(c core.ToolCall) {
 	w.m.mu.Lock()
 	defer w.m.mu.Unlock()

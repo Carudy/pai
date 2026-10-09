@@ -115,6 +115,90 @@ func (creationBackend) Create(name, cwd string) (runner.Meta, error) {
 	return runner.Meta{Name: name, Cwd: dir}, err
 }
 
+type modelBackend struct {
+	backend
+	model string
+}
+
+func (*modelBackend) Models() ([]string, string, error) {
+	return []string{"test:model", "test:saved"}, "test:model", nil
+}
+func (b *modelBackend) SetModel(name, model string) error {
+	if model != "test:custom" {
+		return errors.New("model must use a configured provider: test")
+	}
+	b.model = model
+	return nil
+}
+func (b *modelBackend) History(name string, offset, limit int) (runner.History, error) {
+	h, err := b.backend.History(name, offset, limit)
+	h.Model = b.model
+	return h, err
+}
+
+func TestModelsAPI(t *testing.T) {
+	b := &modelBackend{}
+	m := runner.New(context.Background(), b, 1)
+	defer m.Close()
+	h := New(m, Options{})
+	w := request(h, "GET", "/api/models", "", nil, "")
+	var discovery struct {
+		Models  []string `json:"models"`
+		Default string   `json:"default_model"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &discovery); err != nil || w.Code != 200 || len(discovery.Models) != 2 || discovery.Default != "test:model" {
+		t.Fatalf("models: %d %s", w.Code, w.Body.String())
+	}
+	for _, tc := range []struct {
+		method, path, body, origin string
+		status                     int
+	}{
+		{"POST", "/api/models", `{}`, "http://pai.test", 405},
+		{"GET", "/api/model", "", "", 405},
+		{"POST", "/api/model", `{"name":"one","model":"test:custom"}`, "", 403},
+		{"POST", "/api/model", `{"name":"one","model":"test:custom"}`, "http://evil.test", 403},
+		{"POST", "/api/model", `{"name":"","model":"test:custom"}`, "http://pai.test", 400},
+		{"POST", "/api/model", `{"name":"one","model":"invalid"}`, "http://pai.test", 400},
+		{"POST", "/api/model", `{"name":"one","model":"test:custom","api_key":"secret"}`, "http://pai.test", 400},
+		{"POST", "/api/model", `{} {}`, "http://pai.test", 400},
+	} {
+		if w := request(h, tc.method, tc.path, tc.body, nil, tc.origin); w.Code != tc.status {
+			t.Fatalf("%s %s: %d %s", tc.method, tc.path, w.Code, w.Body.String())
+		}
+	}
+	for _, path := range []string{"/api/models", "/api/model"} {
+		method, body := "GET", ""
+		if path == "/api/model" {
+			method, body = "POST", `{"name":"one","model":"test:custom"}`
+		}
+		if w := request(New(m, Options{Token: "secret"}), method, path, body, nil, "http://pai.test"); w.Code != 401 {
+			t.Fatal(w.Code)
+		}
+	}
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatal(err)
+	}
+	pending := wait(t, m, func(s runner.Snapshot) bool { return s.Pending != nil })
+	if w := request(h, "POST", "/api/model", `{"name":"one","model":"test:custom"}`, nil, "http://pai.test"); w.Code != 409 || b.model != "" {
+		t.Fatalf("busy: %d %s", w.Code, w.Body.String())
+	}
+	if err := m.Reply("one", pending.Pending.ID, "target", false); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, m, func(s runner.Snapshot) bool { return s.State == "awaiting" })
+	if w := request(h, "POST", "/api/model", `{"name":"one","model":"test:custom"}`, nil, "http://pai.test"); w.Code != 200 {
+		t.Fatalf("switch: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(h, "GET", "/api/snapshot?name=one", "", nil, ""); w.Code != 404 {
+		t.Fatal(w.Code)
+	}
+	w = request(h, "GET", "/api/history?name=one", "", nil, "")
+	var history runner.History
+	if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil || history.Model != "test:custom" || history.Total != 2 {
+		t.Fatalf("persisted: %s", w.Body.String())
+	}
+}
+
 type roleBackend struct{ creationBackend }
 
 func (roleBackend) Roles() ([]string, string, error) {
@@ -261,8 +345,15 @@ func TestPageLayoutNesting(t *testing.T) {
 	var stack []string
 	var containers []string
 	parents := make(map[string]string)
-	for _, tag := range regexp.MustCompile(`<(/?)(div|main|aside|header|section|form|nav|button)\b[^>]*>`).FindAllStringSubmatch(page, -1) {
+	for _, tag := range regexp.MustCompile(`<(/?)([a-z][a-z0-9-]*)\b[^>]*>`).FindAllStringSubmatch(page, -1) {
 		name := tag[2]
+		if strings.Contains(tag[0][1:], "<") {
+			t.Fatalf("malformed tag: %s", tag[0])
+		}
+		switch name {
+		case "meta", "link", "input", "br", "hr", "img":
+			continue
+		}
 		if tag[1] == "" {
 			container := name
 			if match := regexp.MustCompile(`id="([^"]+)"|class="([^"]+)"`).FindStringSubmatch(tag[0]); match != nil {
@@ -288,6 +379,8 @@ func TestPageLayoutNesting(t *testing.T) {
 		"conversation-wrapper": "main", "conversation": "conversation-wrapper",
 		"pending": "conversation-wrapper", "history": "conversation",
 		"composer-dock": "main", "composer": "composer-dock", "activity": "app",
+		"model-form": "session-title-row", "apply-model": "model-form",
+		"workspace": "header", "state": "status-row", "token-usage": "header",
 	} {
 		if parents[child] != parent {
 			t.Errorf("%s parent = %q, want %q", child, parents[child], parent)

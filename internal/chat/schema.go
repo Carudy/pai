@@ -59,7 +59,7 @@ One example per action:
 - ask — ask the user a question; payload is the question string.
   {"action":"ask","payload":"Which host should I deploy to?","reason":"the target host is unclear"}
 
-- done — the task is finished; payload is a summary of what you accomplished.
+- done — the task is finished; payload is a summary of what you accomplished, use markdown format if suitable.
   {"action":"done","payload":"Deployed v1.2 to staging; the health check returned 200.","reason":"task complete"}
 
 - terminate — the task cannot be completed; payload explains why.

@@ -205,6 +205,24 @@ func (s *sqliteStore) Append(name string, turns ...core.Turn) error {
 	return tx.Commit()
 }
 
+func (s *sqliteStore) SetModel(name, model string) error {
+	if err := validate(name); err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`UPDATE sessions SET model = ?, updated_at = ? WHERE name = ?`, model, time.Now().Unix(), name)
+	if err != nil {
+		return fmt.Errorf("update session model: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	return nil
+}
+
 func (s *sqliteStore) Rename(oldName, newName string) error {
 	if err := validate(newName); err != nil {
 		return err

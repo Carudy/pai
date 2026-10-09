@@ -145,6 +145,39 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/api/models":
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		models, defaultModel, err := h.manager.Models()
+		if err != nil {
+			managerError(w, err)
+			return
+		}
+		if models == nil {
+			models = []string{}
+		}
+		respond(w, 200, map[string]any{"models": models, "default_model": defaultModel})
+	case "/api/model":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Name  string `json:"name"`
+			Model string `json:"model"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+			fail(w, 400, "session name must contain 1–256 bytes")
+			return
+		}
+		if err := h.manager.SetModel(body.Name, body.Model); err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, map[string]bool{"ok": true})
 	case "/api/roles":
 		if !method(w, r, http.MethodGet) {
 			return
@@ -377,7 +410,7 @@ func managerError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, runner.ErrNotFound):
 		status = 404
-	case errors.Is(err, runner.ErrPrompt):
+	case errors.Is(err, runner.ErrPrompt), errors.Is(err, runner.ErrBusy):
 		status = 409
 	case errors.Is(err, runner.ErrCapacity), errors.Is(err, runner.ErrQueueFull):
 		status = 429

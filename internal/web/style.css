@@ -20,6 +20,8 @@
 .session-title-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-width:0}
 .session-title-row h2{min-width:0;overflow-wrap:anywhere}
 .session-meta{max-width:100%;padding:2px 7px;border:1px solid var(--border);border-radius:6px;background:var(--soft);color:var(--muted);font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+#model-form{display:flex;align-items:center;gap:6px;margin:8px 0;max-width:480px}#model-form input{min-width:0;flex:1;width:auto}#model-form input,#model-form button{padding:4px 8px;font-size:12px}#model-form label{flex-shrink:0}
+#model-hint{font-size:11px;color:var(--muted);margin:2px 0 6px}.status-row{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 12px}#token-usage{font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted)}.session-title-row #model-form{margin:0;flex:1 1 280px}
 #cwd-hint{font-size:11px;color:var(--muted);margin-bottom:8px}
 #sessions-heading{font-size:15px;margin-bottom:-12px}
 .confirmation-heading{font-weight:750;font-size:14px;margin:10px 0;overflow-wrap:anywhere}

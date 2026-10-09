@@ -96,6 +96,12 @@ server's launch directory for new sessions. Use separate worktrees when concurre
 tasks could modify the same files. Browser mode does not support `/new` or
 `/rename`; create/select sessions in the sidebar instead.
 
+Change a selected session's model in the header and click **Apply** while it is
+idle (no running work, queued instructions, or pending prompts). Suggestions
+include the configured default and models saved in sessions; you can also type
+`provider:model` for a configured provider. Switching preserves history and
+uses the new model on future sends; it does not change the global default.
+
 API clients can create a saved, empty session before sending any message:
 `POST /api/create` with JSON `{"name":"work","working_dir":"/path/to/project"}`
 returns HTTP 201 with direct metadata fields `name`, `role`, `model`, `cwd`, and

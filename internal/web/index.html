@@ -72,8 +72,16 @@
                         <h2 id="title">Select or create a session</h2>
                         <span id="session-role-info" class="session-meta" title="Saved role" hidden></span>
                         <span id="session-model-info" class="session-meta" title="Saved model" hidden></span>
+                    <form id="model-form" aria-label="Session model">
+                        <label for="session-model">Model</label>
+                        <input id="session-model" list="model-options" placeholder="provider:model" autocomplete="off" aria-describedby="model-hint" disabled />
+                        <datalist id="model-options"></datalist>
+                        <button id="apply-model" type="submit" disabled>Apply</button>
+                    </form>
                     </div>
+                    <p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>
                     <p id="workspace">Workspace — select a session</p>
+                    <div class="status-row">
                     <p id="state" aria-live="polite">Ready when you are</p>
                     <div class="run-progress-slot">
                         <div id="run-progress" role="status" hidden>
@@ -81,6 +89,8 @@
                             <span id="run-elapsed">Running…</span>
                         </div>
                     </div>
+                    </div>
+                    <p id="token-usage" hidden></p>
                 </header>
                 <div class="conversation-wrapper">
                     <section id="reasoning-preview" aria-label="Current reasoning" hidden>

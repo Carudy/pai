@@ -15,6 +15,8 @@ type Store interface {
 	List() ([]Meta, error)
 	// Append adds turns to an existing session, or ErrNotFound.
 	Append(name string, turns ...core.Turn) error
+	// SetModel updates metadata without changing conversation history.
+	SetModel(name, model string) error
 	// Rename renames a session, or ErrNotFound / ErrExists.
 	Rename(oldName, newName string) error
 	// Delete removes a session, or ErrNotFound.

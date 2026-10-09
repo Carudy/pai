@@ -1,5 +1,15 @@
 # Web adapter integration contract
 
+## Module overview
+
+`web` adapts `runner.Manager` to HTTP/SSE and serves the embedded browser UI.
+`New` and `Options` are the handler entry points; the composition root owns the
+listener, backend, and shutdown. Authentication and origin checks stay in this
+adapter, not the agent loop. See the [module map](../organization.md).
+Validation commands and the detailed security/API contract remain below.
+
+## Integration contract
+
 ```go
 handler := web.New(manager, web.Options{Token: token, PublicOrigin: publicOrigin})
 server := &http.Server{
@@ -54,6 +64,17 @@ middleware wraps ResponseWriter, implement Unwrap so ResponseController can
 reach deadline and flush support. Disconnect always unsubscribes, never cancels.
 Slow consumers are also bounded/disconnected by runner. No event replay is
 promised; reconnect yields a snapshot and the UI reloads durable history.
+Snapshots include `usage` (latest reported request), `total_usage` (sum of
+reported request usage), and `usage_calls`. Token fields use core's `Prompt`,
+`Completion`, and `Total` names. The UI hides usage until a report arrives and
+renders snapshots rather than adding SSE events, so reconnects cannot double
+count. “This run” means the worker runtime, including subsequent instructions;
+resuming a retired worker starts fresh, not session-lifetime totals.
+
+Model suggestions come from the configured default and saved sessions, not a
+provider/model catalog. The input accepts any configured `provider:model`, with
+spaces around the colon normalized; suggestions are not an allowlist.
+
 Snapshots also recover the current reasoning tail (at most 64 KiB); ordinary
 reasoning events carry deltas, not repeated full text. Reasoning is transient
 and cleared when the model moves to another action.
@@ -79,6 +100,16 @@ rejected; there is no URL authentication.
   cookie, Secure on TLS or an HTTPS PublicOrigin. Credentials expire after 12 hours, are stored only as
   hashes in memory, and are lost on restart. At most 128 unexpired credentials
   per handler. All API routes except login require this cookie if Token is set.
+- `GET /api/models`: `{ "models": ["provider:model"], "default_model": "provider:model" }`.
+  Discovery uses the configured default and saved session models, not a config
+  model list or remote discovery. Only model names are returned, never credentials.
+- `POST /api/model`: `{ "name": "...", "model": "provider:model" }`; 200
+  `{ "ok": true }`. Requires an idle session; busy/starting, queued work or
+  pending prompts return 409. Custom models for configured providers are accepted.
+  Saves the model without changing history or the global default; future sends
+  use it. Retiring the old runtime closes SSE, so snapshot/events 404 is normal
+  until the next send. The browser reloads saved metadata and preserves unsaved
+  model drafts across history refreshes, but resets them on selection or Apply.
 - `GET /api/sessions?offset=0&limit=100`: `{ "sessions": [runner.Meta], "total": N }`.
   Pagination slices the backend list in its original order; List still fetches
   the full backend list because runner does not expose storage pagination.
@@ -92,7 +123,7 @@ rejected; there is no URL authentication.
 - `POST /api/reply`: `{ "name": "...", "prompt_id": "...", "text": "...",
   "approve": false }`; text answers questions, approve answers confirmations.
 
-POST success is 202 (login 200), not a promise that the task completed. Stale
+Send/steer/cancel/reply success is 202 (login/model 200), not a promise that the task completed. Stale
 prompt IDs are 409, missing live workers 404, full capacity/queues 429, closed
 manager 503, malformed/invalid actions 400. JSON must be a single object with
 known fields and application/json content type. Pagination defaults to offset

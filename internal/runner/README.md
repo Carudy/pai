@@ -1,5 +1,18 @@
 # Runner integration contract
 
+## Module overview
+
+`runner` hosts bounded concurrent role runtimes independently of terminal or
+HTTP transport. `New` creates a `Manager`; `Backend` supplies persistence and
+per-worker preparation, while snapshots and subscriptions expose live state.
+The composition root owns adapters and shutdown; runner does not import them.
+See the [module map](../organization.md) for layering.
+
+Suggested validation from the repository root: `go test ./internal/runner` and
+`go test -tags filestore ./internal/runner`.
+
+## Integration contract
+
 Only the composition root supplies a `Backend`; runner imports no storage or transport adapters. Backend methods may run concurrently. `Prepare` returns a per-worker configuration/provider/recorder, resumed messages, and a cleanup function. It must return promptly (the requested interface has no context). Cleanup runs once before the worker's slot is released. Runner copies the configuration struct; treat its nested maps/slices as immutable or return independently owned values.
 
 ```go

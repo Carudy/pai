@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -386,6 +387,63 @@ func (b *serveBackend) Prepare(name string) (*config.UserConfig, provider.Provid
 	return cfg, p, rec, history, cleanup, err
 }
 
+func (b *serveBackend) Models() ([]string, string, error) {
+	cfg, err := config.LoadUserConfig()
+	if err != nil {
+		return nil, "", fmt.Errorf("load config: %w", err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	metas, err := b.store.List()
+	if err != nil {
+		return nil, "", fmt.Errorf("list session models: %w", err)
+	}
+	seen := map[string]bool{cfg.DefaultModel: true}
+	for _, meta := range metas {
+		if meta.Model != "" {
+			seen[meta.Model] = true
+		}
+	}
+	models := make([]string, 0, len(seen))
+	for model := range seen {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	return models, cfg.DefaultModel, nil
+}
+
+func (b *serveBackend) SetModel(name, model string) error {
+	if !session.ValidName(name) {
+		return errors.New("invalid session name")
+	}
+	providerName, modelName, found := strings.Cut(model, ":")
+	providerName, modelName = strings.TrimSpace(providerName), strings.TrimSpace(modelName)
+	model = providerName + ":" + modelName
+	if !found || providerName == "" || strings.TrimSpace(modelName) == "" || strings.IndexFunc(model, unicode.IsSpace) >= 0 || strings.IndexFunc(model, unicode.IsControl) >= 0 {
+		return errors.New("model must be provider:model with nonempty names and no whitespace")
+	}
+	cfg, err := config.LoadUserConfig()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	pc, ok := cfg.ProvidersConfigs[providerName]
+	if !ok {
+		return fmt.Errorf("provider %q is not configured", providerName)
+	}
+	if _, err := provider.CreateClient(providerName, pc.APIKey, modelName, pc.BaseURL); err != nil {
+		return fmt.Errorf("validate provider: %w", err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := b.store.SetModel(name, model); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return runner.ErrNotFound
+		}
+		return fmt.Errorf("set session model: %w", err)
+	}
+	return nil
+}
+
 func (b *serveBackend) Roles() ([]string, string, error) {
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
@@ -519,3 +577,4 @@ func (r *serveRecorder) AppendTurn(t core.Turn) error {
 }
 
 var _ runner.Backend = (*serveBackend)(nil)
+var _ runner.ModelBackend = (*serveBackend)(nil)

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Carudy/pai/internal/core"
@@ -35,11 +36,16 @@ func openBackend(dir string) (Store, error) {
 // Writes are plain appends, so a process killed mid-write can leave a truncated
 // final line. Reads tolerate exactly that (see readLines) rather than letting a
 // single bad byte brick the whole session.
-type fileStore struct{ dir string }
+type fileStore struct {
+	dir string
+	mu  sync.Mutex
+}
 
 func (s *fileStore) path(name string) string { return filepath.Join(s.dir, name+fileExt) }
 
 func (s *fileStore) Create(meta Meta) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := validate(meta.Name); err != nil {
 		return nil, err
 	}
@@ -166,6 +172,8 @@ func (s *fileStore) List() ([]Meta, error) {
 }
 
 func (s *fileStore) Append(name string, turns ...core.Turn) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(turns) == 0 {
 		return nil
 	}
@@ -190,7 +198,53 @@ func (s *fileStore) Append(name string, turns ...core.Turn) error {
 	return nil
 }
 
+func (s *fileStore) SetModel(name, model string) error {
+	if err := validate(name); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw, err := os.ReadFile(s.path(name))
+	if os.IsNotExist(err) {
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	if err != nil {
+		return err
+	}
+	header, history, found := bytes.Cut(raw, []byte{'\n'})
+	var meta Meta
+	if err := json.Unmarshal(header, &meta); err != nil {
+		return fmt.Errorf("parse session metadata: %w", err)
+	}
+	meta.Model = model
+	meta.UpdatedAt = time.Now()
+	f, err := os.CreateTemp(s.dir, ".model-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if err := writeJSONLine(f, meta); err != nil {
+		return err
+	}
+	// Preserve even a truncated final turn byte-for-byte.
+	if found {
+		if _, err := f.Write(history); err != nil {
+			return err
+		}
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), s.path(name))
+}
+
 func (s *fileStore) Rename(oldName, newName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := validate(newName); err != nil {
 		return err
 	}
@@ -207,6 +261,8 @@ func (s *fileStore) Rename(oldName, newName string) error {
 }
 
 func (s *fileStore) Delete(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := os.Remove(s.path(name)); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("%w: %s", ErrNotFound, name)

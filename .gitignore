@@ -35,3 +35,4 @@ pai
 vendor/
 
 todo.md
+local_deploy.sh
