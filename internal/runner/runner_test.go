@@ -19,6 +19,7 @@ type fakeBackend struct {
 	starts, cleanups int
 	question         bool
 	turns            map[string][]core.Turn
+	rewinds          map[string]int
 }
 
 func (b *fakeBackend) List() ([]Meta, error) { return []Meta{{Name: "one"}}, nil }
@@ -38,6 +39,19 @@ func (b *fakeBackend) Prepare(name string) (*config.UserConfig, provider.Provide
 	}
 	b.mu.Unlock()
 	return &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}, &fakeProvider{question: b.question}, fakeRecorder{b, name}, nil, func() { b.mu.Lock(); b.cleanups++; b.mu.Unlock() }, nil
+}
+
+func (b *fakeBackend) Rewind(name string, keep int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.rewinds == nil {
+		b.rewinds = make(map[string]int)
+	}
+	b.rewinds[name] = keep
+	if turns := b.turns[name]; keep < len(turns) {
+		b.turns[name] = turns[:keep]
+	}
+	return nil
 }
 
 type workspaceBackend struct {
@@ -401,6 +415,38 @@ func TestConfirmAndSlowSubscriber(t *testing.T) {
 		if m.Send("one", text) == nil {
 			t.Fatalf("accepted %q", text)
 		}
+	}
+}
+
+func TestRewindTruncatesAndRetires(t *testing.T) {
+	b := &fakeBackend{}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	if err := m.Rewind("one", 2); err != nil {
+		t.Fatalf("Rewind: %v", err)
+	}
+	if b.rewinds["one"] != 2 {
+		t.Fatalf("backend keep = %d, want 2", b.rewinds["one"])
+	}
+	if err := m.Rewind("one", -1); err == nil {
+		t.Error("negative keep should be rejected")
+	}
+}
+
+func TestRewindBusyRejected(t *testing.T) {
+	b := &fakeBackend{}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	ctx, cancel := context.WithCancel(m.ctx)
+	w := &worker{m: m, name: "one", ctx: ctx, cancel: cancel, state: "busy"}
+	m.mu.Lock()
+	m.entries["one"] = w
+	m.mu.Unlock()
+	if err := m.Rewind("one", 0); !errors.Is(err, ErrBusy) {
+		t.Fatalf("Rewind on a busy session = %v, want ErrBusy", err)
+	}
+	if _, called := b.rewinds["one"]; called {
+		t.Error("backend reached while busy")
 	}
 }
 func TestApprovalReconnectToolCopy(t *testing.T) {

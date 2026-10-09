@@ -72,6 +72,7 @@
                     </div>
                     <div class="session-title-row">
                         <h2 id="title">Select or create a session</h2>
+                        <button id="rename-session" type="button" title="Rename this session" hidden>✎ Rename</button>
                         <span id="session-role-info" class="session-meta" title="Saved role" hidden></span>
                         <span id="session-model-info" class="session-meta" title="Saved model" hidden></span>
                     <form id="model-form" aria-label="Session model">
@@ -79,6 +80,11 @@
                         <input id="session-model" list="model-options" placeholder="provider:model" autocomplete="off" disabled />
                         <datalist id="model-options"></datalist>
                         <button id="apply-model" type="submit" disabled>Apply</button>
+                    </form>
+                    <form id="role-form" aria-label="Session role">
+                        <label for="session-role-select">Role</label>
+                        <select id="session-role-select" disabled></select>
+                        <button id="apply-role" type="submit" disabled>Apply</button>
                     </form>
                     </div>
                     <!--<p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>-->

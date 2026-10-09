@@ -208,6 +208,37 @@ func (s *sqliteStore) Append(name string, turns ...core.Turn) error {
 func (s *sqliteStore) SetModel(name, model string) error { return s.setField(name, "model", model) }
 func (s *sqliteStore) SetRole(name, role string) error   { return s.setField(name, "role", role) }
 
+// Truncate keeps the first keep turns and drops the rest. seq is dense and
+// 1-based and only the tail is removed, so keep is the last surviving seq.
+func (s *sqliteStore) Truncate(name string, keep int) error {
+	if err := validate(name); err != nil {
+		return err
+	}
+	if keep < 0 {
+		keep = 0
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var exists int
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM sessions WHERE name = ?`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	if _, err := tx.Exec(`DELETE FROM turns WHERE name = ? AND seq > ?`, name, keep); err != nil {
+		return fmt.Errorf("truncate session: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET updated_at = ? WHERE name = ?`, time.Now().Unix(), name); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // setField rewrites one metadata column. column is a compile-time constant, never
 // caller input, so concatenating it into the statement is safe.
 func (s *sqliteStore) setField(name, column, value string) error {

@@ -19,6 +19,9 @@ type Store interface {
 	SetModel(name, model string) error
 	// SetRole updates the session's role without changing conversation history.
 	SetRole(name, role string) error
+	// Truncate keeps the first `keep` turns and drops the rest, or ErrNotFound.
+	// It backs rewinding to an earlier point in a conversation.
+	Truncate(name string, keep int) error
 	// Rename renames a session, or ErrNotFound / ErrExists.
 	Rename(oldName, newName string) error
 	// Delete removes a session, or ErrNotFound.

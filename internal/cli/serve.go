@@ -444,12 +444,138 @@ func (b *serveBackend) SetModel(name, model string) error {
 	return nil
 }
 
+// Rewind drops every turn from index keep onward. When [session] rewind_backup
+// is on (the default), the current turns are first copied into a rolling backup
+// session so the dropped tail stays attachable.
+func (b *serveBackend) Rewind(name string, keep int) error {
+	if !session.ValidName(name) {
+		return errors.New("invalid session name")
+	}
+	if keep < 0 {
+		return errors.New("keep must be non-negative")
+	}
+	cfg, err := config.LoadUserConfig()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s, err := b.store.Get(name)
+	if errors.Is(err, session.ErrNotFound) {
+		return runner.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("get session: %w", err)
+	}
+	if keep >= len(s.Turns) {
+		return nil // nothing after the rewind point
+	}
+	if cfg.SessionRewindBackup {
+		if err := b.writeBackup(*s); err != nil {
+			return fmt.Errorf("rewind backup: %w", err)
+		}
+	}
+	if err := b.store.Truncate(name, keep); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return runner.ErrNotFound
+		}
+		return fmt.Errorf("truncate session: %w", err)
+	}
+	return nil
+}
+
+// writeBackup replaces a session's rolling backup with its current turns. At
+// most one backup per conversation exists; each rewind overwrites it, so the
+// sidebar does not grow without bound.
+func (b *serveBackend) writeBackup(s session.Session) error {
+	bak := backupName(s.Meta.Name)
+	if _, err := b.store.Get(bak); err == nil {
+		if err := b.store.Delete(bak); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, session.ErrNotFound) {
+		return err
+	}
+	meta := s.Meta
+	meta.Name = bak
+	meta.Title = "backup of " + s.Meta.Name
+	if _, err := b.store.Create(meta); err != nil {
+		return err
+	}
+	if len(s.Turns) > 0 {
+		return b.store.Append(bak, s.Turns...)
+	}
+	return nil
+}
+
+// backupName derives the rolling backup name, kept within the valid-name length.
+func backupName(name string) string {
+	const suffix = ".rewind-backup"
+	if len(name)+len(suffix) <= 64 {
+		return name + suffix
+	}
+	return name[:64-len(suffix)] + suffix
+}
+
 func (b *serveBackend) Roles() ([]string, string, error) {
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
 		return nil, "", fmt.Errorf("load config: %w", err)
 	}
 	return prompts.RoleNames(), cfg.DefaultRole, nil
+}
+
+// SetRole persists a new role for a session. The next instruction re-prepares
+// with the new role's prompt and tools.
+func (b *serveBackend) SetRole(name, role string) error {
+	if !session.ValidName(name) {
+		return errors.New("invalid session name")
+	}
+	valid := false
+	for _, candidate := range prompts.RoleNames() {
+		if candidate == role {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("unknown role %q (available: %s)", role, strings.Join(prompts.RoleNames(), ", "))
+	}
+	if _, err := chat.LoadRolePrompt(role, config.CustomPrompt{}); err != nil {
+		return fmt.Errorf("load role: %w", err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := b.store.SetRole(name, role); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return runner.ErrNotFound
+		}
+		return fmt.Errorf("set session role: %w", err)
+	}
+	return nil
+}
+
+// Rename changes a session's name. The next instruction starts a worker under
+// the new name.
+func (b *serveBackend) Rename(name, newName string) error {
+	if !session.ValidName(name) || !session.ValidName(newName) {
+		return errors.New("invalid session name")
+	}
+	if name == newName {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := b.store.Rename(name, newName); err != nil {
+		switch {
+		case errors.Is(err, session.ErrNotFound):
+			return runner.ErrNotFound
+		case errors.Is(err, session.ErrExists):
+			return errors.New("a session with that name already exists")
+		}
+		return fmt.Errorf("rename session: %w", err)
+	}
+	return nil
 }
 
 func (b *serveBackend) Create(name, cwd string) (runner.Meta, error) {

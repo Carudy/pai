@@ -417,3 +417,50 @@ func TestServeBackend(t *testing.T) {
 		t.Fatal("changed cwd")
 	}
 }
+
+// Rewind truncates the session and copies the pre-rewind turns into a single
+// rolling backup, so a later rewind overwrites rather than accumulates.
+func TestServeBackendRewindBackup(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	cwd, _ := os.Getwd()
+	b := &serveBackend{store: store, cwd: cwd}
+	if _, err := store.Create(session.Meta{Name: "conv", Role: "devops", Model: "deepseek:test", Cwd: cwd}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append("conv",
+		core.Turn{Role: "user", Kind: "input", Content: "one"},
+		core.Turn{Role: "user", Kind: "input", Content: "two"},
+		core.Turn{Role: "user", Kind: "input", Content: "three"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := b.Rewind("conv", 1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get("conv")
+	if err != nil || len(got.Turns) != 1 || got.Turns[0].Content != "one" {
+		t.Fatalf("rewound: %+v %v", got, err)
+	}
+	bak, err := store.Get("conv.rewind-backup")
+	if err != nil || len(bak.Turns) != 3 || bak.Turns[2].Content != "three" {
+		t.Fatalf("backup: %+v %v", bak, err)
+	}
+
+	// A second rewind replaces the rolling backup with the newer pre-rewind state.
+	if err := store.Append("conv", core.Turn{Role: "user", Kind: "input", Content: "one-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Rewind("conv", 1); err != nil {
+		t.Fatal(err)
+	}
+	bak, err = store.Get("conv.rewind-backup")
+	if err != nil || len(bak.Turns) != 2 {
+		t.Fatalf("rolling backup: %+v %v", bak, err)
+	}
+}

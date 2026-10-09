@@ -34,6 +34,8 @@ function browser() {
     const storage = new Map();
     const context = vm.createContext({URL, Date: {now: () => now}, EventSource: MockEventSource,
       localStorage: {getItem: key => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key)},
+      confirm: () => true,
+      prompt: () => 'renamed',
       setInterval: (callback, delay) => { assert.equal(delay, 1000); intervals.set(++timerID, callback); return timerID; },
       clearInterval: id => intervals.delete(id), setTimeout: callback => { timeouts.set(++timerID, callback); return timerID; }, clearTimeout: id => timeouts.delete(id), document: {
     body: new Element('body'),
@@ -481,4 +483,30 @@ async function verifyModels() {
   assert.equal(p.get('session-model').value, 'test:other', 'stale switch cannot overwrite selection');
   assert.equal(p.run('modelDirty'), false);
 }
-Promise.all([verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+// The rewind control lives in the card's async click handler, so this check is
+// async (never await at the top level: this file is CommonJS).
+async function verifyRewind() {
+  const p = browser();
+  p.run("selected='one'; historyTotal=9; historyOffset=2; sessionBusy=false; durable=[{Role:'user',Kind:'input',Content:'do x'},{Role:'assistant',Kind:'output',Content:JSON.stringify({action:'done',payload:'ok'})}]; api=async(path,body)=>{globalThis.rewound=[path,body];return {ok:true};}; loadSnapshot=async()=>{}; refreshHistory=async()=>{}; sessions=async()=>{}; renderTurns(durable)");
+  const button = p.get('history').children[0].children.find(node => node.className === 'rewind');
+  assert.ok(button, 'a user input card offers a rewind button');
+  await button.onclick();
+  assert.equal(p.run('rewound[0]'), 'rewind');
+  assert.equal(p.run('rewound[1].name'), 'one');
+  assert.equal(p.run('rewound[1].keep'), 2, 'rewind posts the persisted turn index');
+  assert.equal(p.get('message').value, 'do x', 'the instruction returns to the composer');
+}
+// Role change and rename are manager operations gated on an idle worker.
+async function verifyRole() {
+  const p = browser();
+  p.run("selected='one'; modelBlocked=false; savedRole='devops'; $('session-role-select').replaceChildren(...['devops','coder'].map(r=>{const o=document.createElement('option');o.value=r;o.textContent=r;return o;})); $('session-role-select').value='devops'; api=async(path,body)=>{globalThis.roleCall=[path,body];return {ok:true};}; loadSnapshot=async()=>{}; refreshHistory=async()=>{}; controls()");
+  assert.equal(p.get('apply-role').disabled, true, 'the unchanged role cannot be applied');
+  p.run("$('session-role-select').value='coder'; controls()");
+  assert.equal(p.get('apply-role').disabled, false, 'a new role can be applied');
+  await p.run("applyRole({preventDefault(){}})");
+  assert.equal(p.run('roleCall[0]'), 'role');
+  assert.equal(p.run('roleCall[1].role'), 'coder');
+  assert.equal(p.run('roleCall[1].name'), 'one');
+}
+
+Promise.all([verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

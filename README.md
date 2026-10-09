@@ -93,14 +93,32 @@ The concurrency limit bounds live runtimes; idle runtimes can be evicted to
 make room. Full busy capacity rejects new work rather than growing an unbounded
 queue. Sessions execute in their persisted working directory, defaulting to the
 server's launch directory for new sessions. Use separate worktrees when concurrent
-tasks could modify the same files. Browser mode does not support `/new` or
-`/rename`; create/select sessions in the sidebar instead.
+tasks could modify the same files. Browser mode does not support in-session
+slash commands; create/select sessions in the sidebar and act on the selected
+session from the header controls instead.
 
-Change a selected session's model in the header and click **Apply** while it is
+A session keeps its role, so the header role control switches it: pick a role and
+click **Apply** while the session is idle. The change is saved (like the CLI's
+`/role`) and the next instruction rebuilds its prompt and tools. **Rename** opens
+a prompt for a new session name (also idle-only). Change a selected session's model
+in the header and click **Apply** while it is
 idle (no running work, queued instructions, or pending prompts). Suggestions
 include the configured default and models saved in sessions; you can also type
 `provider:model` for a configured provider. Switching preserves history and
 uses the new model on future sends; it does not change the global default.
+
+`POST /api/model` and `/api/role` take `{"name","model"}` or `{"name","role"}`
+to switch settings, `/api/rename` takes `{"name","new_name"}` (200, echoing the
+new `name`), and `/api/rewind` takes `{"name","keep"}` to keep the first `keep`
+turns and drop the rest. Each acts on an idle session and retires its runtime, so
+the next send rebuilds against the current settings and history.
+
+Every user instruction in the conversation carries an **↩ from here** button:
+it rewinds the session to just before that instruction, drops the turns after
+it, and returns the instruction to the composer. With `[session] rewind_backup`
+(the default), the pre-rewind turns are copied into a single rolling
+`<name>.rewind-backup` session first, so nothing is lost; disable it to make
+rewind purely destructive.
 
 API clients can create a saved, empty session before sending any message:
 `POST /api/create` with JSON `{"name":"work","working_dir":"/path/to/project"}`

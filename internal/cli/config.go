@@ -29,18 +29,19 @@ type configKey struct {
 }
 
 var configKeys = map[string]configKey{
-	"default_model":       {section: "app", key: "default_model", kind: "model"},
-	"default_role":        {section: "app", key: "default_role", kind: "role"},
-	"streaming":           {section: "app", key: "streaming", kind: "bool"},
-	"reasoning":           {section: "app", key: "reasoning", kind: "reasoning"},
-	"interactive":         {section: "app", key: "interactive", kind: "bool"},
-	"session.persist":     {section: "session", key: "persist", kind: "bool"},
-	"session.max_turns":   {section: "session", key: "max_turns", kind: "int"},
-	"session.recap_turns": {section: "session", key: "recap_turns", kind: "int"},
-	"tavily_api_key":      {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
-	"remote_shell":        {section: "tool", key: "remote_shell", kind: "string"},
-	"cmd_timeout_seconds": {section: "tool", key: "cmd_timeout_seconds", kind: "int"},
-	"confirm_read":        {section: "tool", key: "confirm_read", kind: "bool"},
+	"default_model":         {section: "app", key: "default_model", kind: "model"},
+	"default_role":          {section: "app", key: "default_role", kind: "role"},
+	"streaming":             {section: "app", key: "streaming", kind: "bool"},
+	"reasoning":             {section: "app", key: "reasoning", kind: "reasoning"},
+	"interactive":           {section: "app", key: "interactive", kind: "bool"},
+	"session.persist":       {section: "session", key: "persist", kind: "bool"},
+	"session.max_turns":     {section: "session", key: "max_turns", kind: "int"},
+	"session.recap_turns":   {section: "session", key: "recap_turns", kind: "int"},
+	"session.rewind_backup": {section: "session", key: "rewind_backup", kind: "bool"},
+	"tavily_api_key":        {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
+	"remote_shell":          {section: "tool", key: "remote_shell", kind: "string"},
+	"cmd_timeout_seconds":   {section: "tool", key: "cmd_timeout_seconds", kind: "int"},
+	"confirm_read":          {section: "tool", key: "confirm_read", kind: "bool"},
 	// Deprecated aliases: [context] exec_limit/search_limit replaced these [app] keys.
 	"truncate_exec_limit":            {section: "app", key: "truncate_exec_limit", kind: "int"},
 	"truncate_search_limit":          {section: "app", key: "truncate_search_limit", kind: "int"},
@@ -339,6 +340,8 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return strconv.Itoa(cfg.SessionMaxTurns)
 	case "session.recap_turns":
 		return strconv.Itoa(cfg.SessionRecapTurns)
+	case "session.rewind_backup":
+		return strconv.FormatBool(cfg.SessionRewindBackup)
 	case "tavily_api_key":
 		if reveal {
 			return cfg.TavilyAPIKey

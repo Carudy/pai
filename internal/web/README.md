@@ -116,6 +116,18 @@ rejected; there is no URL authentication.
   use it. Retiring the old runtime closes SSE, so snapshot/events 404 is normal
   until the next send. The browser reloads saved metadata and preserves unsaved
   model drafts across history refreshes, but resets them on selection or Apply.
+- `POST /api/role`: `{ "name": "...", "role": "..." }`; 202 `{ "ok": true }`.
+  Requires an idle session (else 409) and a known role (else 400). Saves the role
+  without changing history; the next send rebuilds the prompt and tool set.
+- `POST /api/rename`: `{ "name": "...", "new_name": "..." }`; 200
+  `{ "name": "<new>" }`. Requires an idle session; a taken name is 400 and a
+  missing session 404. The old runtime is retired and its entry dropped, so the
+  browser re-selects the new name.
+- `POST /api/rewind`: `{ "name": "...", "keep": N }`; 202 `{ "ok": true }`.
+  Requires an idle session (else 409); `keep < 0` is 400. Keeps the first `keep`
+  turns and drops the rest, retiring the runtime. With `[session] rewind_backup`
+  on (the default), the pre-rewind turns are first copied into a rolling
+  `<name>.rewind-backup` session.
 - `GET /api/sessions?offset=0&limit=100`: `{ "sessions": [runner.Meta], "total": N,
   "default_cwd": "/path" }`. Pagination slices the backend list in its original
   order; List still fetches the full backend list because runner does not expose

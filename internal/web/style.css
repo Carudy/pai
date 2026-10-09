@@ -313,7 +313,8 @@ header p {
     overflow-wrap: anywhere;
 }
 
-#model-form {
+#model-form,
+#role-form {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -321,25 +322,44 @@ header p {
     max-width: 480px;
 }
 
-.session-title-row #model-form {
+.session-title-row #model-form,
+.session-title-row #role-form {
     margin: 0;
     flex: 1 1 280px;
 }
 
-#model-form input {
+#model-form input,
+#role-form select {
     min-width: 0;
     flex: 1;
     width: auto;
 }
 
 #model-form input,
-#model-form button {
+#model-form button,
+#role-form select,
+#role-form button {
     padding: 4px 8px;
     font-size: 12px;
 }
 
-#model-form label {
+#model-form label,
+#role-form label {
     flex-shrink: 0;
+}
+
+#rename-session {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--soft);
+    color: var(--muted);
+}
+
+#rename-session:disabled {
+    opacity: 0.5;
 }
 
 #model-hint {
@@ -438,6 +458,7 @@ header p {
 }
 
 .turn {
+    position: relative;
     border: 1px solid var(--border);
     background: var(--panel);
     border-radius: 14px;
@@ -452,6 +473,28 @@ header p {
 .turn.user {
     background: var(--soft);
     box-shadow: none;
+}
+
+/* Rewind control on a user turn: quiet until the card is hovered or focused. */
+.rewind {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    padding: 2px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--muted);
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+}
+
+.turn.user:hover .rewind,
+.rewind:hover,
+.rewind:focus-visible {
+    opacity: 1;
 }
 
 .turn-heading,

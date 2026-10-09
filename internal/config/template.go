@@ -37,6 +37,10 @@ api_key = ""
 # Persist every conversation, not just named/nursed ones.
 persist = false
 
+# Before a rewind ("from here") truncates a conversation, snapshot it into a
+# rolling per-session backup so the dropped turns remain attachable. Default on.
+# rewind_backup = true
+
 [context]
 # How much of a single command's output is fed back to the model (bytes), and
 # how many lines are kept from its head and tail. The tail is kept on purpose:

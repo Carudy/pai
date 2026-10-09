@@ -120,7 +120,9 @@ func (creationBackend) Create(name, cwd string) (runner.Meta, error) {
 
 type modelBackend struct {
 	backend
-	model string
+	model   string
+	role    string
+	renamed string
 }
 
 func (*modelBackend) Models() ([]string, string, error) {
@@ -131,6 +133,26 @@ func (b *modelBackend) SetModel(name, model string) error {
 		return errors.New("model must use a configured provider: test")
 	}
 	b.model = model
+	return nil
+}
+func (b *modelBackend) SetRole(name, role string) error {
+	if name != "one" {
+		return runner.ErrNotFound
+	}
+	if role != "coder" {
+		return errors.New("unknown role")
+	}
+	b.role = role
+	return nil
+}
+func (b *modelBackend) Rename(name, newName string) error {
+	if name != "one" {
+		return runner.ErrNotFound
+	}
+	if newName == "taken" {
+		return errors.New("a session with that name already exists")
+	}
+	b.renamed = newName
 	return nil
 }
 func (b *modelBackend) History(name string, offset, limit int) (runner.History, error) {
@@ -199,6 +221,89 @@ func TestModelsAPI(t *testing.T) {
 	var history runner.History
 	if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil || history.Model != "test:custom" || history.Total != 2 {
 		t.Fatalf("persisted: %s", w.Body.String())
+	}
+}
+
+func TestRoleAndRenameAPI(t *testing.T) {
+	b := &modelBackend{}
+	m := runner.New(context.Background(), b, 1)
+	defer m.Close()
+	h := New(m, Options{})
+	if w := request(h, "POST", "/api/role", `{"name":"one","role":"coder"}`, nil, "http://pai.test"); w.Code != 202 {
+		t.Fatalf("role: %d %s", w.Code, w.Body.String())
+	}
+	if b.role != "coder" {
+		t.Fatalf("backend role = %q, want coder", b.role)
+	}
+	if w := request(h, "POST", "/api/rename", `{"name":"one","new_name":"two"}`, nil, "http://pai.test"); w.Code != 200 {
+		t.Fatalf("rename: %d %s", w.Code, w.Body.String())
+	}
+	if b.renamed != "two" {
+		t.Fatalf("backend renamed = %q, want two", b.renamed)
+	}
+	for _, tc := range []struct {
+		path, body string
+		status     int
+	}{
+		{"/api/role", `{"name":"one","role":""}`, 400},
+		{"/api/role", `{"name":"one","role":"ghost"}`, 400},
+		{"/api/role", `{"name":"ghost","role":"coder"}`, 404},
+		{"/api/rename", `{"name":"one","new_name":""}`, 400},
+		{"/api/rename", `{"name":"one","new_name":"taken"}`, 400},
+		{"/api/rename", `{"name":"ghost","new_name":"two"}`, 404},
+	} {
+		if w := request(h, "POST", tc.path, tc.body, nil, "http://pai.test"); w.Code != tc.status {
+			t.Fatalf("%s %s: %d %s", tc.path, tc.body, w.Code, w.Body.String())
+		}
+	}
+	for _, path := range []string{"/api/role", "/api/rename"} {
+		if w := request(h, "GET", path, "", nil, ""); w.Code != 405 {
+			t.Fatalf("GET %s = %d, want 405", path, w.Code)
+		}
+	}
+}
+
+type rewindBackend struct {
+	backend
+	keep int
+}
+
+func (b *rewindBackend) Rewind(name string, keep int) error {
+	if name != "one" {
+		return runner.ErrNotFound
+	}
+	b.keep = keep
+	return nil
+}
+
+func TestRewindAPI(t *testing.T) {
+	b := &rewindBackend{}
+	m := runner.New(context.Background(), b, 1)
+	defer m.Close()
+	h := New(m, Options{})
+	if w := request(h, "POST", "/api/rewind", `{"name":"one","keep":2}`, nil, "http://pai.test"); w.Code != 202 {
+		t.Fatalf("rewind: %d %s", w.Code, w.Body.String())
+	}
+	if b.keep != 2 {
+		t.Fatalf("backend keep = %d, want 2", b.keep)
+	}
+	if w := request(h, "GET", "/api/rewind", "", nil, ""); w.Code != 405 {
+		t.Fatalf("method = %d", w.Code)
+	}
+	for _, tc := range []struct {
+		body   string
+		origin string
+		status int
+	}{
+		{`{"name":"one","keep":-1}`, "http://pai.test", 400},
+		{`{"name":"","keep":0}`, "http://pai.test", 400},
+		{`{"name":"one","keep":0}`, "", 403},
+		{`{"name":"ghost","keep":0}`, "http://pai.test", 404},
+		{`{"name":"one","keep":0,"extra":1}`, "http://pai.test", 400},
+	} {
+		if w := request(h, "POST", "/api/rewind", tc.body, nil, tc.origin); w.Code != tc.status {
+			t.Fatalf("rewind %s: %d %s", tc.body, w.Code, w.Body.String())
+		}
 	}
 }
 

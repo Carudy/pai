@@ -23,6 +23,10 @@ err := m.Send(name, text)
 err = m.Steer(name, text)
 err = m.Cancel(name)
 err = m.Reply(name, promptID, text, choice)
+err = m.SetModel(name, "provider:model") // needs ModelBackend
+err = m.SetRole(name, role)              // needs RoleSetter
+err = m.Rename(name, newName)            // needs RenameBackend
+err = m.Rewind(name, keep)               // needs RewindBackend
 snapshot, err := m.Snapshot(name)
 events, unsubscribe, err := m.Subscribe(name)
 // Call unsubscribe when the client disconnects; it does not cancel the worker.
@@ -34,6 +38,7 @@ history, err := m.History(name, offset, limit)
 - Capacity caps **live** workers, including busy workers and pending approvals/questions. Idle (`awaiting`) workers are reused, or evicted and joined when a different session needs the slot. Full busy capacity returns `ErrCapacity`; there is no unbounded cross-session wait queue.
 - Task and steering queues each hold 32 messages. `Send` never answers a model question. `Steer` is consumed at a safe point; while idle it becomes a normal instruction. `/new` and `/rename` are rejected, including case/whitespace variants; steering rejects slash commands altogether.
 - `Cancel` interrupts the active role step and aborts its pending prompt. It does not abort idle instruction input or discard queued tasks. Cancel during preparation shuts that worker down. Worker lifetime follows the application context, not HTTP request contexts.
+- `SetModel`, `SetRole`, `Rename`, and `Rewind` change persisted session state. Each requires an idle session (a busy/starting worker, queued work, or a pending prompt returns `ErrBusy`) and retires the worker under a reservation, so the next `Send` re-prepares against the new settings and history; `Rename` also drops the old entry. They are optional capabilities: each returns an error when the backend does not implement its interface.
 - `Reply` requires the pending prompt's string ID. `text` answers `ask`; `choice`
   answers `confirm` (`once`/`deny`, plus `session`/`always` when the confirmation
   carries non-empty `untrusted` names). Stale/duplicate replies return `ErrPrompt`. Prompt IDs are unique for the manager lifetime.

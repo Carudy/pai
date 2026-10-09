@@ -97,6 +97,10 @@ type tomlConfig struct {
 		// RecapTurns is a pointer so an explicit 0 (disable) is distinguishable
 		// from an omitted key (use the built-in default).
 		RecapTurns *int `toml:"recap_turns"`
+		// RewindBackup is a pointer so an explicit false is distinguishable from an
+		// omitted key (default on): before a rewind truncates a session, snapshot
+		// its current turns into a rolling backup session.
+		RewindBackup *bool `toml:"rewind_backup"`
 	} `toml:"session"`
 }
 
@@ -147,6 +151,9 @@ type UserConfig struct {
 	SessionPersist    bool
 	SessionMaxTurns   int
 	SessionRecapTurns int
+	// SessionRewindBackup snapshots a session before a rewind truncates it, into a
+	// rolling per-session backup, so nothing is permanently lost. Default on.
+	SessionRewindBackup bool
 
 	// Provider and Model are derived from DefaultModel's "provider:model" form.
 	Provider string
@@ -193,7 +200,8 @@ func defaultConfig() *UserConfig {
 			ElideMinBytes:   1000,
 			ElideHeadLines:  8,
 		},
-		SessionRecapTurns: 3,
+		SessionRecapTurns:   3,
+		SessionRewindBackup: true,
 	}
 }
 
@@ -224,6 +232,9 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.SessionMaxTurns = raw.Session.MaxTurns
 	if raw.Session.RecapTurns != nil {
 		cfg.SessionRecapTurns = *raw.Session.RecapTurns
+	}
+	if raw.Session.RewindBackup != nil {
+		cfg.SessionRewindBackup = *raw.Session.RewindBackup
 	}
 	if raw.App.TruncateExecLimit > 0 {
 		cfg.Context.ExecLimit = raw.App.TruncateExecLimit

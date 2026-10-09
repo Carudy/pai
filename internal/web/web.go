@@ -245,6 +245,50 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, 200, map[string]bool{"ok": true})
+	case "/api/role":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Name string `json:"name"`
+			Role string `json:"role"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+			fail(w, 400, "session name must contain 1–256 bytes")
+			return
+		}
+		if strings.TrimSpace(body.Role) == "" {
+			fail(w, 400, "role is required")
+			return
+		}
+		if err := h.manager.SetRole(body.Name, body.Role); err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, http.StatusAccepted, map[string]bool{"ok": true})
+	case "/api/rename":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Name    string `json:"name"`
+			NewName string `json:"new_name"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Name) == "" || strings.TrimSpace(body.NewName) == "" || len(body.NewName) > 256 {
+			fail(w, 400, "session names must contain 1–256 bytes")
+			return
+		}
+		if err := h.manager.Rename(body.Name, body.NewName); err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, map[string]string{"name": body.NewName})
 	case "/api/roles":
 		if !method(w, r, http.MethodGet) {
 			return
@@ -331,6 +375,30 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, http.StatusCreated, meta)
+	case "/api/rewind":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Name string `json:"name"`
+			Keep int    `json:"keep"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+			fail(w, 400, "session name must contain 1–256 bytes")
+			return
+		}
+		if body.Keep < 0 {
+			fail(w, 400, "keep must be non-negative")
+			return
+		}
+		if err := h.manager.Rewind(body.Name, body.Keep); err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, http.StatusAccepted, map[string]bool{"ok": true})
 	case "/api/send", "/api/steer", "/api/cancel", "/api/reply":
 		if !method(w, r, http.MethodPost) {
 			return

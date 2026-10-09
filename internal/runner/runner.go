@@ -161,6 +161,24 @@ type ModelBackend interface {
 	SetModel(name, model string) error
 }
 
+// RewindBackend is optional; truncating a session's persisted history must not
+// require a backend that cannot persist.
+type RewindBackend interface {
+	Rewind(name string, keep int) error
+}
+
+// RoleSetter is optional; changing a session's role must not require a backend
+// that cannot persist roles.
+type RoleSetter interface {
+	SetRole(name, role string) error
+}
+
+// RenameBackend is optional; renaming a session must not require a backend that
+// cannot persist.
+type RenameBackend interface {
+	Rename(name, newName string) error
+}
+
 var ErrBusy = errors.New("session is busy; wait for pending prompts and queued instructions before changing model")
 
 func (m *Manager) Models() ([]string, string, error) {
@@ -170,27 +188,25 @@ func (m *Manager) Models() ([]string, string, error) {
 	return nil, "", errors.New("backend does not support models")
 }
 
-// SetModel retires the idle runtime before persisting settings. The reservation
-// survives releasing mu for the join, so no new runtime can load stale metadata.
-func (m *Manager) SetModel(name, model string) error {
+// reserveIdle marks name as changing and retires its idle runtime, so the next
+// instruction re-prepares with fresh metadata. On success m.mu is held and the
+// caller must call the returned finish (typically deferred) after the backend
+// change. The reservation survives releasing mu for the join, so no send can
+// start a runtime that would load stale metadata (Send returns ErrBusy).
+func (m *Manager) reserveIdle(name string) (func(), error) {
 	m.mu.Lock()
 	if m.closed || m.ctx.Err() != nil {
 		m.mu.Unlock()
-		return ErrClosed
-	}
-	b, ok := m.backend.(ModelBackend)
-	if !ok {
-		m.mu.Unlock()
-		return errors.New("backend does not support models")
+		return nil, ErrClosed
 	}
 	if m.changing[name] {
 		m.mu.Unlock()
-		return ErrBusy
+		return nil, ErrBusy
 	}
 	w := m.entries[name]
 	if w != nil && (w.state != "awaiting" || w.pending != nil || len(w.tasks) != 0 || len(w.steering) != 0) {
 		m.mu.Unlock()
-		return ErrBusy
+		return nil, ErrBusy
 	}
 	if m.changing == nil {
 		m.changing = make(map[string]bool)
@@ -203,12 +219,82 @@ func (m *Manager) SetModel(name, model string) error {
 		<-w.done
 		m.mu.Lock()
 	}
-	defer m.mu.Unlock()
-	defer delete(m.changing, name)
 	if m.closed || m.ctx.Err() != nil {
-		return ErrClosed
+		delete(m.changing, name)
+		m.mu.Unlock()
+		return nil, ErrClosed
 	}
+	return func() {
+		delete(m.changing, name)
+		m.mu.Unlock()
+	}, nil
+}
+
+// SetModel retires the idle runtime before persisting settings, so the next
+// instruction uses the new model.
+func (m *Manager) SetModel(name, model string) error {
+	b, ok := m.backend.(ModelBackend)
+	if !ok {
+		return errors.New("backend does not support models")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	return b.SetModel(name, model)
+}
+
+// SetRole retires the idle runtime before persisting the new role, so the next
+// instruction rebuilds its prompt and tool set with the new role.
+func (m *Manager) SetRole(name, role string) error {
+	b, ok := m.backend.(RoleSetter)
+	if !ok {
+		return errors.New("backend does not support changing roles")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	return b.SetRole(name, role)
+}
+
+// Rename retires the idle runtime before renaming the session, so no live worker
+// keeps serving under the old name, and drops the now-orphaned entry.
+func (m *Manager) Rename(name, newName string) error {
+	b, ok := m.backend.(RenameBackend)
+	if !ok {
+		return errors.New("backend does not support renaming")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.Rename(name, newName); err != nil {
+		return err
+	}
+	delete(m.entries, name)
+	return nil
+}
+
+// Rewind drops every persisted turn from index keep onward, retiring the idle
+// runtime so the next instruction re-prepares from the truncated history.
+func (m *Manager) Rewind(name string, keep int) error {
+	if keep < 0 {
+		return errors.New("keep must be non-negative")
+	}
+	b, ok := m.backend.(RewindBackend)
+	if !ok {
+		return errors.New("backend does not support rewinding")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	return b.Rewind(name, keep)
 }
 
 type Manager struct {

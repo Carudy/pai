@@ -14,6 +14,7 @@ let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, mode
 // it needs no server state. A cleared store just leaves the workspace empty.
 const SESSION_KEY = 'pai.session';
 let toastHost = null;
+let savedRole = '';
 // ── Model controls ──────────────────────────────────────────
 function normalizeModel(value) { return value.trim().replace(/\s*:\s*/, ':'); }
 function modelControls() {
@@ -166,6 +167,12 @@ function controls() {
   // Steer only redirects a running task; while idle it would just be a Send.
   $('steer').disabled = !ready || !filled || !sessionBusy;
   $('cancel').disabled = !ready;
+  $('rename-session').disabled = !ready || sessionBusy;
+  // Changing role or model requires an idle worker (it retires the runtime).
+  const configReady = ready && !modelBlocked;
+  const roleSelect = $('session-role-select');
+  roleSelect.disabled = !configReady;
+  $('apply-role').disabled = !configReady || !roleSelect.value || roleSelect.value === savedRole;
   $('composer-hint').textContent = !ready
     ? 'Open a session to send instructions'
     : sessionBusy
@@ -254,17 +261,26 @@ function response(node, data) {
 function renderTurns(turns) {
   let toolCard = null;
   const cards = [];
-  for (const turn of turns || []) {
+  (turns || []).forEach((turn, i) => {
     if (turn.Kind === 'tool_result') {
       if (!toolCard) { toolCard = text('article', '', 'turn assistant tool-card'); toolCard.append(text('div', '⚙ Tool result', 'badge')); $('history').append(toolCard); }
-      cards.push(toolCard); logDetails(toolCard, 'Result', turn.Content); toolCard = null; continue;
+      cards.push(toolCard); logDetails(toolCard, 'Result', turn.Content); toolCard = null; return;
     }
     const parsed = turn.Role === 'assistant' ? parsedResponse(turn.Content) : null;
     const article = text('article', '', 'turn ' + (turn.Role === 'user' ? 'user' : 'assistant'));
     if (!parsed || parsed.action !== 'tool') article.append(text('div', turn.Role === 'user' ? 'You' : '✦ PAI', 'turn-heading'));
+    // Only a plain user instruction is a rewind point; ask-answers and tool
+    // results share the user role but are not instructions.
+    if (turn.Role === 'user' && turn.Kind === 'input') {
+      const button = text('button', '↩ from here', 'rewind');
+      button.type = 'button';
+      button.title = 'Rewind the conversation to before this instruction';
+      button.onclick = () => rewind(historyOffset + i, turn.Content);
+      article.append(button);
+    }
     if (parsed) response(article, parsed); else article.append(prose(turn.Content));
     $('history').append(article); cards.push(article); toolCard = parsed && parsed.action === 'tool' ? article : null;
-  }
+  });
   return cards;
 }
 function paintConversation() {
@@ -295,6 +311,9 @@ function paintConversation() {
 // ── History and session metadata ────────────────────────────
 function sessionMetadata(meta = {}) {
   modelMetadata(meta.model);
+  savedRole = typeof meta.role === 'string' ? meta.role.trim() : '';
+  const roleSelect = $('session-role-select');
+  roleSelect.value = [...roleSelect.children].some(option => option.value === savedRole) ? savedRole : '';
   for (const field of ['role', 'model']) {
     const node = $('session-' + field + '-info');
     const value = typeof meta[field] === 'string' ? meta[field].trim() : '';
@@ -494,6 +513,23 @@ function restoreSession(list) {
   if (!name || !list.some(meta => meta.name === name)) return;
   select(name);
 }
+// Rewind to just before the user instruction at persisted index. The dropped
+// turns stay restorable from the rolling backup the server keeps.
+async function rewind(index, content) {
+  if (!selected || sessionBusy) return;
+  const dropped = historyTotal - index;
+  if (!confirm(`Rewind to here? ${dropped} later turn${dropped === 1 ? '' : 's'} will be dropped.`)) return;
+  const name = selected;
+  try {
+    await api('rewind', {name, keep: index});
+    if (selected !== name) return;
+    $('message').value = content || '';
+    controls();
+    await loadSnapshot();
+    await refreshHistory();
+    sessions(true).catch(error);
+  } catch (e) { error(e); }
+}
 async function action(kind) {
   if (!selected) { error(new Error('Open a named session first')); return; }
   const name = selected, message = $('message').value;
@@ -590,10 +626,38 @@ function clearReasoning() {
 }
 async function roles() {
   const data = await api('roles');
+  const option = role => { const node = text('option', role); node.value = role; return node; };
   const dropdown = $('session-role'), previous = dropdown.value;
-  const options = data.roles.map(role => { const option = text('option', role); option.value = role; return option; });
-  dropdown.replaceChildren(...options);
+  dropdown.replaceChildren(...data.roles.map(option));
   dropdown.value = data.roles.includes(previous) ? previous : data.default_role;
+  // The header role control switches an existing session's role.
+  const header = $('session-role-select');
+  header.replaceChildren(...data.roles.map(option));
+  header.value = data.roles.includes(savedRole) ? savedRole : '';
+  controls();
+}
+async function applyRole(e) {
+  e.preventDefault();
+  const role = $('session-role-select').value;
+  if (!selected || !role || role === savedRole) return;
+  const name = selected;
+  try {
+    await api('role', {name, role});
+    if (selected !== name) return;
+    await loadSnapshot();
+    await refreshHistory();
+  } catch (err) { error(err); }
+}
+async function renameSession() {
+  if (!selected || sessionBusy) return;
+  const name = selected;
+  const next = (prompt('Rename session to', name) || '').trim();
+  if (!next || next === name) return;
+  try {
+    const meta = await api('rename', {name, new_name: next});
+    await sessions(true);
+    await select(meta.name || next);
+  } catch (err) { error(err); }
 }
 let creating = false;
 async function createSession(e) {
@@ -616,6 +680,8 @@ function composerKey(e) {
 // ── Event wiring ────────────────────────────────────────────
 $('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; $('login').hidden = true; $('app').hidden = false; const list = await sessions(true); await Promise.all([roles(), models()]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
 $('model-form').onsubmit = applyModel;
+$('role-form').onsubmit = applyRole;
+$('rename-session').onclick = renameSession;
 $('session-model').oninput = () => { modelDirty = true; modelControls(); };
 $('new-session').onsubmit = createSession;
 $('composer').onsubmit = e => { e.preventDefault(); action('send'); };

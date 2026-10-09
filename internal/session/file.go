@@ -221,25 +221,74 @@ func (s *fileStore) updateMeta(name string, apply func(*Meta)) error {
 	if err != nil {
 		return err
 	}
-	header, history, found := bytes.Cut(raw, []byte{'\n'})
+	header, history, _ := bytes.Cut(raw, []byte{'\n'})
 	var meta Meta
 	if err := json.Unmarshal(header, &meta); err != nil {
 		return fmt.Errorf("parse session metadata: %w", err)
 	}
 	apply(&meta)
 	meta.UpdatedAt = time.Now()
-	f, err := os.CreateTemp(s.dir, ".meta-*")
+	return s.rewrite(name, meta, history)
+}
+
+// Truncate keeps the first keep turns and drops the rest. It rewrites the file
+// with the surviving turn lines, so a later append starts after them.
+func (s *fileStore) Truncate(name string, keep int) error {
+	if err := validate(name); err != nil {
+		return err
+	}
+	if keep < 0 {
+		keep = 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw, err := os.ReadFile(s.path(name))
+	if os.IsNotExist(err) {
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	if err != nil {
+		return err
+	}
+	header, history, _ := bytes.Cut(raw, []byte{'\n'})
+	var meta Meta
+	if err := json.Unmarshal(header, &meta); err != nil {
+		return fmt.Errorf("parse session metadata: %w", err)
+	}
+	meta.UpdatedAt = time.Now()
+
+	lines := nonEmptyLines(history)
+	if keep > len(lines) {
+		keep = len(lines)
+	}
+	var body []byte
+	if keep > 0 {
+		body = append(body, bytes.Join(lines[:keep], []byte{'\n'})...)
+		body = append(body, '\n')
+	}
+	return s.rewrite(name, meta, body)
+}
+
+// rewrite atomically replaces a session file with its Meta header followed by
+// body (the raw turn block, which may be empty). Callers hold s.mu.
+func (s *fileStore) rewrite(name string, meta Meta, body []byte) error {
+	header, err := json.Marshal(meta)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(s.dir, ".session-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-	if err := writeJSONLine(f, meta); err != nil {
+	if _, err := f.Write(header); err != nil {
 		return err
 	}
-	// Preserve even a truncated final turn byte-for-byte.
-	if found {
-		if _, err := f.Write(history); err != nil {
+	if _, err := f.Write([]byte{'\n'}); err != nil {
+		return err
+	}
+	if len(body) > 0 {
+		if _, err := f.Write(body); err != nil {
 			return err
 		}
 	}
