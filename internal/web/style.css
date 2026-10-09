@@ -780,6 +780,13 @@ header p {
     white-space: pre-wrap;
 }
 
+/* The programs a command confirmation would trust, above the trust buttons. */
+.untrusted-names {
+    color: var(--red);
+    font-weight: 650;
+    margin: 8px 0 0;
+}
+
 .primary {
     background: var(--accent);
     color: white;

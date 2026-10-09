@@ -377,18 +377,30 @@ function snapshot(s) {
     if (tool.Diff) $('pending').append(diff(tool.Diff));
   }
   if (p.title) $('pending').append(text('p', p.title, 'prompt-question'));
-  const reply = async (answer, approve) => {
-    try { await api('reply', {name, prompt_id:p.id, text:answer, approve}); if (name === selected) await loadSnapshot(); }
+  const reply = async (answer, choice) => {
+    try { await api('reply', {name, prompt_id:p.id, text:answer, choice}); if (name === selected) await loadSnapshot(); }
     catch (e) { error(e); if (name === selected) await loadSnapshot(); }
   };
   if (p.kind === 'confirm') {
-    const yes = text('button', 'Approve'), no = text('button', 'Decline');
-    yes.className = 'primary'; no.className = 'caution';
-    yes.onclick = () => reply('', true); no.onclick = () => reply('', false); $('pending').append(yes, no);
+    const untrusted = Array.isArray(p.untrusted) ? p.untrusted : [];
+    if (untrusted.length) {
+      // A chained command needs approval for specific programs: offer to trust
+      // them for this run or for good, not just yes/no.
+      $('pending').append(text('p', '⚠ not trusted: ' + untrusted.join(', '), 'untrusted-names'));
+      const once = text('button', 'Run once'), session = text('button', 'Trust session'), always = text('button', 'Always'), no = text('button', 'Decline');
+      once.className = 'primary'; session.className = 'secondary'; always.className = 'secondary'; no.className = 'caution';
+      once.onclick = () => reply('', 'once'); session.onclick = () => reply('', 'session');
+      always.onclick = () => reply('', 'always'); no.onclick = () => reply('', 'deny');
+      $('pending').append(once, session, always, no);
+    } else {
+      const yes = text('button', 'Approve'), no = text('button', 'Decline');
+      yes.className = 'primary'; no.className = 'caution';
+      yes.onclick = () => reply('', 'once'); no.onclick = () => reply('', 'deny'); $('pending').append(yes, no);
+    }
   } else {
     const form = document.createElement('form'), input = document.createElement('textarea'), button = text('button', 'Reply');
     input.setAttribute('aria-label', 'Answer'); input.required = true;
-    form.append(input, button); form.onsubmit = e => { e.preventDefault(); reply(input.value, false); }; $('pending').append(form);
+    form.append(input, button); form.onsubmit = e => { e.preventDefault(); reply(input.value, 'once'); }; $('pending').append(form);
   }
 }
 async function loadSnapshot() {

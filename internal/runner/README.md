@@ -22,7 +22,7 @@ defer m.Close()
 err := m.Send(name, text)
 err = m.Steer(name, text)
 err = m.Cancel(name)
-err = m.Reply(name, promptID, text, approve)
+err = m.Reply(name, promptID, text, choice)
 snapshot, err := m.Snapshot(name)
 events, unsubscribe, err := m.Subscribe(name)
 // Call unsubscribe when the client disconnects; it does not cancel the worker.
@@ -34,7 +34,9 @@ history, err := m.History(name, offset, limit)
 - Capacity caps **live** workers, including busy workers and pending approvals/questions. Idle (`awaiting`) workers are reused, or evicted and joined when a different session needs the slot. Full busy capacity returns `ErrCapacity`; there is no unbounded cross-session wait queue.
 - Task and steering queues each hold 32 messages. `Send` never answers a model question. `Steer` is consumed at a safe point; while idle it becomes a normal instruction. `/new` and `/rename` are rejected, including case/whitespace variants; steering rejects slash commands altogether.
 - `Cancel` interrupts the active role step and aborts its pending prompt. It does not abort idle instruction input or discard queued tasks. Cancel during preparation shuts that worker down. Worker lifetime follows the application context, not HTTP request contexts.
-- `Reply` requires the pending prompt's string ID. `text` answers `ask`; `approve` answers `confirm`. Stale/duplicate replies return `ErrPrompt`. Prompt IDs are unique for the manager lifetime.
+- `Reply` requires the pending prompt's string ID. `text` answers `ask`; `choice`
+  answers `confirm` (`once`/`deny`, plus `session`/`always` when the confirmation
+  carries non-empty `untrusted` names). Stale/duplicate replies return `ErrPrompt`. Prompt IDs are unique for the manager lifetime.
 - `Subscribe` requires an existing live worker and immediately yields a `snapshot` event. Every event includes a snapshot with `name`, `state`, `queued`, optional `pending` (`id`, `kind`, `title`, optional `tool`), and optional `error`. Pending prompts survive disconnect/reconnect. Idle instruction requests have no pending prompt: render input based on `state == "awaiting"` and use `Send`.
 - Confirmation prompts include `pending.tool` (and `prompt` event `data.tool`) when associated with a current tool call. This is an independently copied `core.ToolCall`, including exact `Detail` and `Diff` fields, so reconnecting clients can render the full approval preview without replaying earlier events. Tool fields retain their native Go/JSON names (`Name`, `Target`, `Detail`, `Reason`, `Trusted`, `Diff`). Questions and unrelated confirmations omit `tool`; completed or consumed tool calls are not reused.
 - Events have `type`, optional `data`, and `snapshot`. Types: `snapshot`, `queued`, `busy`, `awaiting`, `prompt`, `prompt_replied`, `prompt_cancelled`, `reason`, `done`, `terminate`, `ask`, `user`, `session`, `reasoning`, `usage`, `tool_call`, `tool_output`, `tool_result`, `notice`, `output`, `separator`, `error`, `stopped`. Observer `ask` is informational; only `prompt` carries a replyable question/confirmation.

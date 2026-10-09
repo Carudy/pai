@@ -264,13 +264,13 @@ func TestQuestionQueueReconnectAndCapacity(t *testing.T) {
 	if (<-ch).Snapshot.Pending == nil {
 		t.Fatal("lost prompt")
 	}
-	if err := m.Reply("one", "stale", "answer", false); !errors.Is(err, ErrPrompt) {
+	if err := m.Reply("one", "stale", "answer", core.TrustDeny); !errors.Is(err, ErrPrompt) {
 		t.Fatal(err)
 	}
-	if err := m.Reply("one", s.Pending.ID, "target", false); err != nil {
+	if err := m.Reply("one", s.Pending.ID, "target", core.TrustDeny); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Reply("one", s.Pending.ID, "duplicate", false); !errors.Is(err, ErrPrompt) {
+	if err := m.Reply("one", s.Pending.ID, "duplicate", core.TrustDeny); !errors.Is(err, ErrPrompt) {
 		t.Fatal(err)
 	}
 	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" && s.Queued == 0 })
@@ -305,7 +305,7 @@ func TestCancelPromptAndShutdownRaces(t *testing.T) {
 		if err := m.Cancel("one"); err != nil {
 			t.Fatal(err)
 		}
-		if err := m.Reply("one", s.Pending.ID, "late", true); !errors.Is(err, ErrPrompt) {
+		if err := m.Reply("one", s.Pending.ID, "late", core.TrustOnce); !errors.Is(err, ErrPrompt) {
 			t.Fatal(err)
 		}
 		waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" })
@@ -330,6 +330,36 @@ func TestCancelPromptAndShutdownRaces(t *testing.T) {
 		}
 	}
 }
+
+// A command confirmation carries the untrusted names and resolves to the chosen
+// trust level, so a browser can offer trust-for-this-run / trust-always.
+func TestConfirmCommandResolvesTrustChoice(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{}, 1)
+	defer m.Close()
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatal(err)
+	}
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" })
+
+	m.mu.Lock()
+	w := m.entries["one"]
+	m.mu.Unlock()
+
+	done := make(chan core.TrustChoice, 1)
+	go func() { choice, _ := w.ConfirmCommand("Execute this command?", []string{"sudo", "rm"}); done <- choice }()
+
+	s := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
+	if s.Pending.Kind != "confirm" || len(s.Pending.Untrusted) != 2 || s.Pending.Untrusted[0] != "sudo" {
+		t.Fatalf("pending = %+v", s.Pending)
+	}
+	if err := m.Reply("one", s.Pending.ID, "", core.TrustPersist); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-done; got != core.TrustPersist {
+		t.Fatalf("choice = %v, want TrustPersist", got)
+	}
+}
+
 func TestConfirmAndSlowSubscriber(t *testing.T) {
 	m := New(context.Background(), &fakeBackend{}, 1)
 	defer m.Close()
@@ -346,7 +376,7 @@ func TestConfirmAndSlowSubscriber(t *testing.T) {
 	if s.Pending.Kind != "confirm" {
 		t.Fatal(s)
 	}
-	if err := m.Reply("one", s.Pending.ID, "", true); err != nil {
+	if err := m.Reply("one", s.Pending.ID, "", core.TrustOnce); err != nil {
 		t.Fatal(err)
 	}
 	if !<-done {
@@ -424,7 +454,7 @@ func TestApprovalReconnectToolCopy(t *testing.T) {
 	if !reflect.DeepEqual(*fresh.Pending.Tool, tool) {
 		t.Fatal("snapshot aliases reconnect event")
 	}
-	if err := m.Reply("one", fresh.Pending.ID, "", true); err != nil {
+	if err := m.Reply("one", fresh.Pending.ID, "", core.TrustOnce); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err != nil {
@@ -445,12 +475,12 @@ func TestApprovalReconnectToolCopy(t *testing.T) {
 		case "awaiting":
 			w.Awaiting()
 		case "ask":
-			go func() { _, err := w.prompt("ask", "question?"); done <- err }()
+			go func() { _, err := w.prompt("ask", "question?", nil); done <- err }()
 			question := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
 			if question.Pending.Tool != nil {
 				t.Fatal("question inherited tool")
 			}
-			if err := m.Reply("one", question.Pending.ID, "answer", false); err != nil {
+			if err := m.Reply("one", question.Pending.ID, "answer", core.TrustDeny); err != nil {
 				t.Fatal(err)
 			}
 			if err := <-done; err != nil {
@@ -462,7 +492,7 @@ func TestApprovalReconnectToolCopy(t *testing.T) {
 		if pending.Pending.Tool != nil {
 			t.Fatalf("%s retained stale tool: %+v", boundary, pending.Pending.Tool)
 		}
-		if err := m.Reply("one", pending.Pending.ID, "", false); err != nil {
+		if err := m.Reply("one", pending.Pending.ID, "", core.TrustDeny); err != nil {
 			t.Fatal(err)
 		}
 		if err := <-done; err != nil {

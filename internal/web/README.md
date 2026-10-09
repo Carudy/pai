@@ -126,7 +126,10 @@ rejected; there is no URL authentication.
 - `POST /api/send`, `/api/steer`: `{ "name": "...", "text": "..." }`.
 - `POST /api/cancel`: `{ "name": "..." }`.
 - `POST /api/reply`: `{ "name": "...", "prompt_id": "...", "text": "...",
-  "approve": false }`; text answers questions, approve answers confirmations.
+  "choice": "once"|"deny"|"session"|"always" }`; text answers questions and
+  choice answers confirmations (an omitted choice defaults to deny). A
+  confirmation whose `pending.untrusted` is non-empty additionally offers
+  trusting those command names for the run (`session`) or for good (`always`).
 
 Send/steer/cancel/reply success is 202 (login/model 200), not a promise that the task completed. Stale
 prompt IDs are 409, missing live workers 404, full capacity/queues 429, closed
@@ -148,7 +151,8 @@ Diff previews and reply cards, and replaces history on state refresh rather
 than treating transient SSE output as durable turns. Snapshots recover pending
 prompt titles/IDs and retained `pending.tool` approval context (native core
 keys `Name`, `Target`, `Detail`, `Reason`, `Diff`) on reconnect, page reload, and
-session switch. Approval cards render only this retained tool, not a transient
+session switch, together with `pending.untrusted` (the command names a
+confirmation can trust). Approval cards render only this retained tool, not a transient
 last tool event. Repeated snapshots for the same session/pending ID preserve
 the existing question form, focus, and draft; a new ID or cleared prompt resets
 the card. Drafts are not persisted across page reloads or session switches. Selecting

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/runner"
 )
 
@@ -300,7 +301,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			WorkingDir string `json:"working_dir"`
 			Text       string `json:"text"`
 			PromptID   string `json:"prompt_id"`
-			Approve    bool   `json:"approve"`
+			Choice     string `json:"choice"`
 		}
 		if !decode(w, r, &body) {
 			return
@@ -318,7 +319,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case "/api/cancel":
 			err = h.manager.Cancel(body.Name)
 		case "/api/reply":
-			err = h.manager.Reply(body.Name, body.PromptID, body.Text, body.Approve)
+			choice, ok := trustChoice(body.Choice)
+			if !ok {
+				fail(w, 400, "invalid trust choice")
+				return
+			}
+			err = h.manager.Reply(body.Name, body.PromptID, body.Text, choice)
 		}
 		if err != nil {
 			managerError(w, err)
@@ -424,6 +430,24 @@ func pagination(w http.ResponseWriter, r *http.Request) (int, int, bool) {
 	}
 	return offset, limit, true
 }
+
+// trustChoice maps the reply's choice field onto a core.TrustChoice. An empty
+// value is the safe default (deny), so a client that omits it never approves a
+// command by accident.
+func trustChoice(s string) (core.TrustChoice, bool) {
+	switch s {
+	case "", "deny":
+		return core.TrustDeny, true
+	case "once":
+		return core.TrustOnce, true
+	case "session":
+		return core.TrustSession, true
+	case "always":
+		return core.TrustPersist, true
+	}
+	return core.TrustDeny, false
+}
+
 func respond(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)

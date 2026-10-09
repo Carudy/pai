@@ -80,10 +80,11 @@ func ResolveWorkingDir(cwd string) (string, error) {
 }
 
 type Prompt struct {
-	ID    string         `json:"id"`
-	Kind  string         `json:"kind"`
-	Title string         `json:"title"`
-	Tool  *core.ToolCall `json:"tool,omitempty"`
+	ID        string         `json:"id"`
+	Kind      string         `json:"kind"`
+	Title     string         `json:"title"`
+	Tool      *core.ToolCall `json:"tool,omitempty"`
+	Untrusted []string       `json:"untrusted,omitempty"`
 }
 
 func clonePrompt(p *Prompt) *Prompt {
@@ -95,6 +96,7 @@ func clonePrompt(p *Prompt) *Prompt {
 		tool := *p.Tool
 		copy.Tool = &tool
 	}
+	copy.Untrusted = append([]string(nil), p.Untrusted...)
 	return &copy
 }
 
@@ -208,7 +210,7 @@ type Manager struct {
 }
 type answer struct {
 	text    string
-	approve bool
+	choice  core.TrustChoice
 	aborted bool
 }
 type worker struct {
@@ -443,7 +445,7 @@ func (m *Manager) Cancel(name string) error {
 	}
 	return nil
 }
-func (m *Manager) Reply(name, id, text string, approve bool) error {
+func (m *Manager) Reply(name, id, text string, choice core.TrustChoice) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -456,7 +458,7 @@ func (m *Manager) Reply(name, id, text string, approve bool) error {
 	if w.pending == nil || w.pending.ID != id {
 		return ErrPrompt
 	}
-	w.reply <- answer{text: text, approve: approve}
+	w.reply <- answer{text: text, choice: choice}
 	if w.pending.Kind == "confirm" && w.activeTool != nil {
 		w.phase = "tool"
 	} else {
@@ -686,7 +688,7 @@ func (w *worker) Ask(title string) (string, error) {
 	w.instruction = false
 	w.m.mu.Unlock()
 	if !instruction {
-		a, err := w.prompt("ask", title)
+		a, err := w.prompt("ask", title, nil)
 		return a.text, err
 	}
 	var text string
@@ -707,7 +709,7 @@ func (w *worker) Ask(title string) (string, error) {
 	w.emitLocked("busy", nil)
 	return text, nil
 }
-func (w *worker) prompt(kind, title string) (answer, error) {
+func (w *worker) prompt(kind, title string, untrusted []string) (answer, error) {
 	w.m.mu.Lock()
 	tool := w.latestTool
 	w.latestTool = nil // A tool can belong to only its immediately following prompt.
@@ -724,6 +726,9 @@ func (w *worker) prompt(kind, title string) (answer, error) {
 	if kind == "confirm" && tool != nil {
 		copy := *tool
 		w.pending.Tool = &copy
+	}
+	if len(untrusted) > 0 {
+		w.pending.Untrusted = append([]string(nil), untrusted...)
 	}
 	ch := make(chan answer, 1)
 	w.reply = ch
@@ -747,8 +752,18 @@ func (w *worker) prompt(kind, title string) (answer, error) {
 	return a, nil
 }
 func (w *worker) Confirm(title string) (bool, error) {
-	a, err := w.prompt("confirm", title)
-	return a.approve, err
+	a, err := w.prompt("confirm", title, nil)
+	return a.choice != core.TrustDeny, err
+}
+
+// ConfirmCommand implements core.CommandConfirmer: a command confirmation that
+// also offers to trust the flagged command names for this run or future runs.
+func (w *worker) ConfirmCommand(title string, untrusted []string) (core.TrustChoice, error) {
+	a, err := w.prompt("confirm", title, untrusted)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	return a.choice, nil
 }
 func (w *worker) Steer() (string, bool) {
 	select {

@@ -185,7 +185,7 @@ func TestModelsAPI(t *testing.T) {
 	if w := request(h, "POST", "/api/model", `{"name":"one","model":"test:custom"}`, nil, "http://pai.test"); w.Code != 409 || b.model != "" {
 		t.Fatalf("busy: %d %s", w.Code, w.Body.String())
 	}
-	if err := m.Reply("one", pending.Pending.ID, "target", false); err != nil {
+	if err := m.Reply("one", pending.Pending.ID, "target", core.TrustDeny); err != nil {
 		t.Fatal(err)
 	}
 	wait(t, m, func(s runner.Snapshot) bool { return s.State == "awaiting" })
@@ -442,6 +442,15 @@ func TestPageLayoutNesting(t *testing.T) {
 	}
 	if !strings.Contains(page, `aria-labelledby="pending-title"`) {
 		t.Error("pending overlay missing accessible title reference")
+	}
+}
+
+// An unknown reply choice is rejected before it reaches the manager.
+func TestReplyRejectsUnknownChoice(t *testing.T) {
+	h, _ := setup(t, "")
+	w := request(h, "POST", "/api/reply", `{"name":"one","prompt_id":"1","choice":"bogus"}`, nil, "http://pai.test")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", w.Code)
 	}
 }
 
