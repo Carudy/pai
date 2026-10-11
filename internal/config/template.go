@@ -33,6 +33,15 @@ streaming = true
 # Leave empty to use the DEEPSEEK_API_KEY environment variable instead.
 api_key = ""
 
+# More providers can be added the same way, using the name that appears before
+# the colon in default_model. A name PAI does not know needs base_url, the
+# complete endpoint URL. To speak OpenAI's Responses protocol (the Codex-style
+# /responses endpoint) rather than chat-completions, add a protocol key set to
+# the word responses in that provider's section. A provider may also carry a
+# [providers.<name>.headers] sub-table of extra HTTP headers, e.g. a custom
+# User-Agent; PAI already sends one and, for the OpenCode Go gateway, the
+# x-opencode-session routing id.
+
 [session]
 # Persist every conversation, not just named/nursed ones.
 persist = false

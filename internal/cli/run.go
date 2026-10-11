@@ -57,7 +57,14 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 
 	log.Debugf("🔌 Connecting to %#v...\n", cfg.DefaultModel)
 	providerCfg := cfg.ProvidersConfigs[cfg.Provider]
-	client, err := provider.CreateClient(cfg.Provider, providerCfg.APIKey, cfg.Model, providerCfg.BaseURL)
+	client, err := provider.CreateClient(provider.ProviderConfig{
+		Name:     cfg.Provider,
+		APIKey:   providerCfg.APIKey,
+		Model:    cfg.Model,
+		BaseURL:  providerCfg.BaseURL,
+		Protocol: providerCfg.Protocol,
+		Headers:  providerCfg.Headers,
+	})
 	if err != nil {
 		log.Errorf("Error creating LLM client: %v\n", err)
 		return 1

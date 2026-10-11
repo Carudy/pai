@@ -10,6 +10,15 @@ import (
 type ProviderConfig struct {
 	APIKey  string `toml:"api_key"`
 	BaseURL string `toml:"base_url"`
+	// Protocol selects the wire format: "" or "chat" for the OpenAI-compatible
+	// chat completions API, "responses" for OpenAI's Responses API (the
+	// Codex-style /responses endpoint). Unknown values are rejected when a client
+	// is created.
+	Protocol string `toml:"protocol"`
+	// Headers are extra HTTP request headers sent with every call, e.g. a custom
+	// User-Agent or the x-opencode-session routing id. They override PAI's own
+	// defaults. See internal/provider for how they are resolved.
+	Headers map[string]string `toml:"headers"`
 }
 
 type CustomPrompt struct {

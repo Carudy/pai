@@ -2,11 +2,9 @@ package provider
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 )
@@ -25,8 +23,9 @@ import (
 
 var builtInProviders = map[string]providerSpec{
 	"openai": {
-		name:    "openai",
-		baseURL: "https://api.openai.com/v1/chat/completions",
+		name:         "openai",
+		baseURL:      "https://api.openai.com/v1/chat/completions",
+		responsesURL: "https://api.openai.com/v1/responses",
 	},
 	"deepseek": {
 		name:    "deepseek",
@@ -66,7 +65,7 @@ func (p *openAIProvider) Completion(ctx context.Context, params CompletionParams
 		return nil, fmt.Errorf("%s: marshal request: %w", p.spec.name, err)
 	}
 
-	rawBody, err := p.doRequest(ctx, bodyBytes)
+	rawBody, err := postJSON(ctx, p.spec.name, p.spec.baseURL, p.apiKey, p.spec.headers, bodyBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +89,7 @@ func (p *openAIProvider) CompletionStream(ctx context.Context, params Completion
 		return chunkChan, errChan
 	}
 
-	resp, err := p.doRequestRaw(ctx, bodyBytes)
+	resp, err := postJSONStream(ctx, p.spec.name, p.spec.baseURL, p.apiKey, p.spec.headers, bodyBytes)
 	if err != nil {
 		errChan <- err
 		close(chunkChan)
@@ -136,66 +135,6 @@ func streamReader(ctx context.Context, resp *http.Response, spec providerSpec, c
 	} else {
 		errChan <- nil
 	}
-}
-
-// ----------------------
-// apiError reads the error body from a non-200 response, closes it, and
-// returns a formatted error. Used by both doRequest and doRequestRaw.
-func (p *openAIProvider) apiError(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	return fmt.Errorf("%s: API error (status %d): %s", p.spec.name, resp.StatusCode, string(body))
-}
-
-func (p *openAIProvider) doRequest(ctx context.Context, bodyBytes []byte) ([]byte, error) {
-	req, err := p.newRequest(ctx, bodyBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%s: do request: %w", p.spec.name, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, p.apiError(resp)
-	}
-
-	rawBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("%s: read response: %w", p.spec.name, err)
-	}
-	return rawBody, nil
-}
-
-func (p *openAIProvider) doRequestRaw(ctx context.Context, bodyBytes []byte) (*http.Response, error) {
-	req, err := p.newRequest(ctx, bodyBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%s: do request: %w", p.spec.name, err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, p.apiError(resp)
-	}
-	return resp, nil
-}
-
-func (p *openAIProvider) newRequest(ctx context.Context, bodyBytes []byte) (*http.Request, error) {
-	url := p.spec.baseURL
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("%s: create request: %w", p.spec.name, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
-	return req, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -6,14 +6,24 @@ See the [module map](../organization.md) for the chat layer above this package.
 ## Entry points
 
 - `Provider` exposes blocking completion and streamed completion.
-- `CreateClient` selects a built-in provider or a generic OpenAI-compatible
-  client for a custom name with a configured endpoint.
-- `ProviderConfig` describes API key, model, and base URL settings.
+- `CreateClient` selects a transport from a `ProviderConfig`: the OpenAI-compatible
+  chat completions API by default, or the Responses API when
+  `Protocol = ProtocolResponses`. An unknown protocol is rejected here.
+- `ProviderConfig` describes the provider name, API key, model, base URL,
+  protocol, and any extra HTTP `Headers`. On creation PAI resolves the request
+  headers: it always sends a `User-Agent`, and for the OpenCode Go gateway
+  (`opencode.ai`) it generates the `x-opencode-session` routing id that gateway
+  requires. A user-supplied header of the same name always wins.
 - `Message`, `CompletionParams`, `ChatCompletion`, and `ChatCompletionChunk`
   model requests, complete replies, and streaming deltas.
 - `ReasoningEffort` and `Usage` carry reasoning controls and token accounting.
-- `openai.go` implements HTTP requests and stream decoding, including
-  provider-specific request enrichment for built-in providers.
+- `openai.go` implements the chat completions transport (HTTP + `data:` SSE),
+  including provider-specific request enrichment for built-in providers.
+- `responses.go` implements OpenAI's Responses API (`POST /responses`), whose
+  named SSE events and reasoning-summary shape are flattened into the same
+  `ChatCompletion`/`ChatCompletionChunk` types. Requests are stateless
+  (`store = false`).
+- `http.go` holds the shared JSON-POST plumbing both transports use.
 
 ## Boundaries
 

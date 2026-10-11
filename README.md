@@ -259,6 +259,9 @@ keys, the search key, and the hand-edited trusted lists (`trusted_cmds`,
 deepseek = { api_key = "your-deepseek-key" }
 # Unknown providers use OpenAI-compatible format.
 # kimi   = { base_url = "https://api.moonshot.cn/v1/chat/completions", api_key = "your-kimi-key" }
+# Use OpenAI's Responses API (the Codex-style /responses protocol) instead of
+# chat-completions:
+# openai = { api_key = "sk-...", protocol = "responses" }
 
 [app]
 default_model = "deepseek:deepseek-v4-flash"
@@ -322,6 +325,24 @@ export TAVILY_API_KEY="your-key"    # for web search
 ### Model Format
 
 `provider:model_name` — e.g. `deepseek:deepseek-chat`, `openai:gpt-4o`, `doubao:doubao-1-5-pro-32k`.
+
+### Protocols
+
+Every provider speaks the OpenAI-compatible **chat completions** API by default.
+Set `protocol = "responses"` in a provider's section to use OpenAI's
+**Responses API** (`POST /responses`) instead — the protocol Codex-style clients
+use. `base_url` is honored under either protocol and must be the complete
+endpoint URL. The built-in names (`deepseek`, `mistral`, `openai`) each carry a
+default endpoint; only `openai` has a built-in `/responses` endpoint, so any other
+provider needs `base_url` set for `responses`. The Responses transport is
+stateless (`store = false`): the whole conversation is replayed each turn.
+Reasoning still works, but the API returns a model-written *summary* rather than
+raw chain of thought, and only when `reasoning` is enabled.
+
+A provider may also carry a `[providers.<name>.headers]` sub-table of extra HTTP
+headers (for example a custom `User-Agent`). PAI always sends a `User-Agent` and,
+for the OpenCode Go gateway (`opencode.ai`), generates the `x-opencode-session`
+routing id that gateway requires; a header you set with the same name wins.
 
 ### Custom Prompts
 

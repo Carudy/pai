@@ -430,7 +430,14 @@ func (b *serveBackend) SetModel(name, model string) error {
 	if !ok {
 		return fmt.Errorf("provider %q is not configured", providerName)
 	}
-	if _, err := provider.CreateClient(providerName, pc.APIKey, modelName, pc.BaseURL); err != nil {
+	if _, err := provider.CreateClient(provider.ProviderConfig{
+		Name:     providerName,
+		APIKey:   pc.APIKey,
+		Model:    modelName,
+		BaseURL:  pc.BaseURL,
+		Protocol: pc.Protocol,
+		Headers:  pc.Headers,
+	}); err != nil {
 		return fmt.Errorf("validate provider: %w", err)
 	}
 	b.mu.Lock()
@@ -675,7 +682,14 @@ func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, p
 		return fail(fmt.Errorf("load role: %w", err))
 	}
 	pc := cfg.ProvidersConfigs[cfg.Provider]
-	client, err := provider.CreateClient(cfg.Provider, pc.APIKey, cfg.Model, pc.BaseURL)
+	client, err := provider.CreateClient(provider.ProviderConfig{
+		Name:     cfg.Provider,
+		APIKey:   pc.APIKey,
+		Model:    cfg.Model,
+		BaseURL:  pc.BaseURL,
+		Protocol: pc.Protocol,
+		Headers:  pc.Headers,
+	})
 	if err != nil {
 		return fail(fmt.Errorf("create provider: %w", err))
 	}
