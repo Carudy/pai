@@ -884,7 +884,7 @@ header p {
 #composer textarea {
     display: block;
     width: 100%;
-    min-height: 44px;
+    min-height: 56px;
     max-height: 140px;
 }
 
@@ -912,6 +912,8 @@ header p {
 
 .actions button {
     width: 96px;
+    padding: 5px 8px;
+    font-size: 13px;
 }
 
 #composer-hint {
