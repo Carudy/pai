@@ -28,6 +28,10 @@ streaming = true
 # reasoning = "none"
 # Keep the session alive for follow-up input instead of exiting after one task.
 # interactive = true
+# Provider:model suggestions for the web model dropdown. A suggestion list (not
+# an allowlist). If default_model is unset, the first entry becomes the model.
+# Set or inspect it with "pai config set preset_models a:b,c:d".
+# preset_models = ["deepseek:deepseek-v4-flash", "openai:gpt-4o"]
 
 [providers.deepseek]
 # Leave empty to use the DEEPSEEK_API_KEY environment variable instead.

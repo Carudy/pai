@@ -103,9 +103,10 @@ click **Apply** while the session is idle. The change is saved (like the CLI's
 a prompt for a new session name (also idle-only). Change a selected session's model
 in the header and click **Apply** while it is
 idle (no running work, queued instructions, or pending prompts). Suggestions
-include the configured default and models saved in sessions; you can also type
-`provider:model` for a configured provider. Switching preserves history and
-uses the new model on future sends; it does not change the global default.
+include the configured default, `preset_models`, and models saved in sessions;
+you can also type `provider:model` for a configured provider. Switching preserves
+history and uses the new model on future sends; it does not change the global
+default.
 
 `POST /api/model` and `/api/role` take `{"name","model"}` or `{"name","role"}`
 to switch settings, `/api/rename` takes `{"name","new_name"}` (200, echoing the
@@ -169,8 +170,9 @@ pai config init                 # write/merge a starter config.toml (asks first)
 
 `pai config set` edits `config.toml` in place and preserves comments. Values are
 validated (booleans, integers, `provider:model`, known roles), and arrays like
-`trusted_cmds` and `trusted_paths` must still be edited by hand. `list` masks
-secrets; `get` reveals them.
+`trusted_cmds` and `trusted_paths` must still be edited by hand.
+`preset_models` is set as a comma-separated list of `provider:model` entries.
+`list` masks secrets; `get` reveals them.
 
 Chat flags:
 
@@ -269,6 +271,11 @@ default_role  = "devops"      # see `pai role ls` for the available roles
 streaming     = true        # token-by-token output
 reasoning     = "low"       # "low" | "medium" | "high" (omit for none)
 interactive   = false       # if true, auto-enables -i mode
+# Extra provider:model suggestions offered by frontends (the web model dropdown).
+# A suggestion list, never an allowlist; when default_model is unset, the first
+# entry becomes the model. Set it with
+# `pai config set preset_models deepseek:deepseek-v4-flash,openai:gpt-4o`.
+# preset_models = ["deepseek:deepseek-v4-flash", "openai:gpt-4o"]
 
 [context]
 # Byte budget for one observation fed back to the model, and the lines kept

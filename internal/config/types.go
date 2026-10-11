@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Carudy/pai/internal/provider"
@@ -68,6 +69,9 @@ type tomlConfig struct {
 		Interactive         bool                     `toml:"interactive"`
 		TruncateExecLimit   int                      `toml:"truncate_exec_limit"`
 		TruncateSearchLimit int                      `toml:"truncate_search_limit"`
+		// PresetModels are provider:model suggestions offered by frontends; a
+		// suggestion list, never an allowlist.
+		PresetModels []string `toml:"preset_models"`
 	} `toml:"app"`
 	Context struct {
 		ExecLimit            int `toml:"exec_limit"`
@@ -167,6 +171,11 @@ type UserConfig struct {
 	// Provider and Model are derived from DefaultModel's "provider:model" form.
 	Provider string
 	Model    string
+
+	// PresetModels are extra provider:model suggestions for frontends (the web
+	// model dropdown). They are suggestions only, never an allowlist, and are
+	// cleaned to well-formed, de-duplicated provider:model entries on load.
+	PresetModels []string
 }
 
 // Redacted returns a copy that is safe to log: provider API keys and the
@@ -182,6 +191,23 @@ func (cfg *UserConfig) Redacted() *UserConfig {
 	}
 	dup.TavilyAPIKey = maskSecret(cfg.TavilyAPIKey)
 	return &dup
+}
+
+// cleanModels trims each entry, drops empties and duplicates, and keeps only
+// provider:model forms, so a stray entry never becomes a broken frontend
+// suggestion. Order is preserved so the author controls the dropdown order.
+func cleanModels(models []string) []string {
+	clean := make([]string, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	for _, m := range models {
+		m = strings.TrimSpace(m)
+		if m == "" || !strings.Contains(m, ":") || seen[m] {
+			continue
+		}
+		seen[m] = true
+		clean = append(clean, m)
+	}
+	return clean
 }
 
 // maskSecret renders a secret as a presence hint, never its contents.
@@ -218,8 +244,14 @@ func defaultConfig() *UserConfig {
 // ignored so an omitted key keeps its built-in default.
 func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.ProvidersConfigs = raw.Providers
-	if raw.App.DefaultModel != "" {
+	cfg.PresetModels = cleanModels(raw.App.PresetModels)
+	switch {
+	case raw.App.DefaultModel != "":
 		cfg.DefaultModel = raw.App.DefaultModel
+	case len(cfg.PresetModels) > 0:
+		// No default_model configured: fall back to the first preset, so a
+		// presets-only config still has a usable model instead of the built-in one.
+		cfg.DefaultModel = cfg.PresetModels[0]
 	}
 	if raw.App.DefaultRole != "" {
 		cfg.DefaultRole = raw.App.DefaultRole

@@ -31,6 +31,7 @@ type configKey struct {
 var configKeys = map[string]configKey{
 	"default_model":         {section: "app", key: "default_model", kind: "model"},
 	"default_role":          {section: "app", key: "default_role", kind: "role"},
+	"preset_models":         {section: "app", key: "preset_models", kind: "model_list"},
 	"streaming":             {section: "app", key: "streaming", kind: "bool"},
 	"reasoning":             {section: "app", key: "reasoning", kind: "reasoning"},
 	"interactive":           {section: "app", key: "interactive", kind: "bool"},
@@ -301,6 +302,8 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 	switch name {
 	case "default_model":
 		return cfg.DefaultModel
+	case "preset_models":
+		return "[" + strings.Join(cfg.PresetModels, ", ") + "]"
 	case "default_role":
 		return cfg.DefaultRole
 	case "streaming":
@@ -365,6 +368,17 @@ func formatConfigValue(kind, raw string) (string, error) {
 			return "", fmt.Errorf("expected provider:model (e.g. deepseek:deepseek-v4-flash)")
 		}
 		return strconv.Quote(raw), nil
+	case "model_list":
+		entries := strings.Split(raw, ",")
+		quoted := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			entry = strings.TrimSpace(entry)
+			if !strings.Contains(entry, ":") {
+				return "", fmt.Errorf("expected comma-separated provider:model entries, got %q", entry)
+			}
+			quoted = append(quoted, strconv.Quote(entry))
+		}
+		return "[" + strings.Join(quoted, ", ") + "]", nil
 	case "role":
 		for _, n := range prompts.RoleNames() {
 			if n == raw {

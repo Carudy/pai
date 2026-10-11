@@ -10,7 +10,9 @@ See the [module map](../organization.md) for its near-leaf position.
   Defaults include streaming enabled, role `devops`, model
   `deepseek:deepseek-v4-flash`, and three recap exchanges.
 - `SetModel` resolves the `provider:model` selection; `LoadCustomPrompt`
-  reads the selected role's intro override.
+  reads the selected role's intro override. `PresetModels` are the cleaned
+  `provider:model` suggestions frontends offer (never an allowlist); when
+  `default_model` is unset, the first preset becomes the default.
 - `SetScalar` / `UnsetScalar` perform comment-preserving scalar edits.
 - `Template`, `WriteTemplate`, `MergeTemplate`, and `ResetTemplate` support
   configuration initialization and maintenance.
