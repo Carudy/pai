@@ -385,7 +385,6 @@ header p {
 
 #model-form input {
     min-width: 0;
-    width: 100%;
 }
 
 #model-form input,
@@ -451,12 +450,6 @@ header p {
     opacity: 0.5;
 }
 
-#model-hint {
-    font-size: 11px;
-    color: var(--muted);
-    margin: 2px 0 6px;
-}
-
 .status-row {
     display: flex;
     align-items: center;
@@ -472,7 +465,6 @@ header p {
     flex: 0 1 auto;
     min-width: 0;
     min-height: 0;
-    padding-top: 0;
 }
 
 #run-progress {
@@ -954,10 +946,6 @@ header p {
     box-shadow: 0 8px 30px #0003;
 }
 
-#pending button {
-    margin: 8px 8px 0 0;
-}
-
 /* Confirmation choices share an aligned grid: equal widths, two per row, with a
    distinct colour per role (go / trust / caution). */
 .pending-actions {
@@ -969,7 +957,6 @@ header p {
 
 .pending-actions button {
     width: 100%;
-    margin: 0;
 }
 
 /* Drag the confirmation card aside by its title. */
@@ -1386,10 +1373,6 @@ header p {
 
 :root[data-theme="dark"] #sessions button {
     color: #8cd4d2;
-}
-
-:root[data-theme="dark"] #sessions .session-delete {
-    color: var(--muted);
 }
 
 :root[data-theme="dark"] .session-row.selected .session-open {

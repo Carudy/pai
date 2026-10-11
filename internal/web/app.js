@@ -642,6 +642,7 @@ async function select(name, cwd) {
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
     $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
+  updatePrevInput();
   $('conversation').scrollTop = 0; controls();
   for (const row of $('sessions').children) { const active = row.dataset?.name === name; row.classList.toggle('selected', active); const open = row.firstElementChild; if (open) open.setAttribute('aria-current', active ? 'page' : 'false'); }
   $('app').classList.remove('sessions-open'); $('toggle-sessions').setAttribute('aria-expanded', 'false');
@@ -733,6 +734,7 @@ function clearWorkspace() {
   const empty = text('div', '', 'empty');
   empty.append(text('h3', 'Best partner, PAI!'), text('p', 'Open a named session to start working with PAI.'));
   $('history').append(empty);
+  updatePrevInput();
   controls();
 }
 // ── Activity feed ───────────────────────────────────────────
