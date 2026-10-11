@@ -345,6 +345,12 @@ header p {
     overflow-wrap: anywhere;
 }
 
+/* "Session:" sits inline before the name; .field-label's top margin is for
+   stacked form labels, so it is removed here. */
+#session-label {
+    margin-top: 0;
+}
+
 /* Role and Model side by side: a fixed, equal control width with Apply right
    after it, so neither stretches across the header. */
 .session-config {
@@ -471,16 +477,8 @@ header p {
     text-overflow: ellipsis;
 }
 
-.workspace-row {
-    display: flex;
-    align-items: baseline;
-    gap: 12px;
-    min-width: 0;
-    margin: 4px 0 2px;
-}
-
 #workspace {
-    flex: 1 1 auto;
+    flex: 1 1 160px;
     min-width: 0;
     font-size: 11px;
     white-space: nowrap;
@@ -885,19 +883,41 @@ header p {
 
 #composer textarea {
     display: block;
+    width: 100%;
+    min-height: 44px;
+    max-height: 140px;
+}
+
+/* Input on the left, actions on the right, so the dock stays thin and leaves
+   vertical room for the conversation. */
+.composer-row {
+    display: flex;
+    align-items: stretch;
+    gap: 12px;
+}
+
+.composer-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .actions {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 10px;
+    flex-direction: column;
+    gap: 6px;
+    flex: 0 0 auto;
+}
+
+.actions button {
+    width: 96px;
 }
 
 #composer-hint {
     font-size: 11px;
     color: var(--muted);
-    margin-right: auto;
+    margin-top: 4px;
 }
 
 /* ── Prompt / confirmation card ──────────────────────────── */
@@ -1304,11 +1324,16 @@ header p {
         position: relative;
         z-index: 5;
     }
-    .actions {
-        flex-wrap: wrap;
+    .composer-row {
+        flex-direction: column;
     }
-    #composer-hint {
-        flex-basis: 100%;
+    .actions {
+        flex-direction: row;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    .actions button {
+        width: auto;
     }
     .turn {
         padding: 14px;

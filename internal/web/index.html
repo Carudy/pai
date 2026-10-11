@@ -28,20 +28,19 @@
         <div id="app">
             <aside id="sidebar" aria-label="Session sidebar">
                 <div class="brand">
-                    <h1>✦ PAI</h1>
-                    <span>Personal workspace</span>
+                    <center><h1>✦ PAI</h1></center>
                 </div>
+                <hr class="response-divider">
                 <form id="new-session">
-                    <label for="session-name">New named session</label>
+                    <label for="session-name">New Session</label>
                     <input id="session-name" maxlength="256" placeholder="Session name" required />
-                    <label for="session-cwd">Working directory (optional)</label>
+                    <label for="session-cwd">Working DIR</label>
                     <input id="session-cwd" placeholder="PAI serving DIR" aria-describedby="cwd-hint" />
-                    <p id="cwd-hint">The server checks that this directory exists.</p>
                     <label for="session-role">Role</label>
                     <select id="session-role"><option value="">Configured default</option></select>
                     <button id="create-session" class="primary" type="submit">Create</button>
                 </form>
-                <hr width="100%" size="2">
+                <hr class="response-divider">
                 <p id="sessions-status" role="status">Loading sessions…</p>
                 <h2 id="sessions-heading">Sessions</h2>
                 <nav id="sessions" aria-label="Sessions"></nav>
@@ -74,8 +73,11 @@
                         </button>
                     </div>
                     <div class="session-title-row">
+                        <span id="session-label" class="field-label" hidden>Session:</span>
                         <h2 id="title">Select or create a session</h2>
                         <button id="rename-session" type="button" title="Rename this session" hidden>✎ Rename</button>
+                        <p id="workspace" title="Workspace">Workspace — select a session</p>
+                        <p id="token-usage" hidden></p>
                     </div>
                     <div class="session-config">
                         <form id="role-form" aria-label="Session role">
@@ -93,10 +95,7 @@
                         </form>
                     </div>
                     <!--<p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>-->
-                    <div class="workspace-row">
-                        <p id="workspace" title="Workspace">Workspace — select a session</p>
-                        <p id="token-usage" hidden></p>
-                    </div>
+
                     <div class="status-row">
                         <p id="state" aria-live="polite">Ready when you are</p>
                         <div class="run-progress-slot">
@@ -131,24 +130,29 @@
                 </div>
                 <div class="composer-dock">
                     <form id="composer">
-                        <label for="message">Instruction</label
-                        ><textarea
-                            id="message"
-                            rows="3"
-                            placeholder="Tell PAI what to do"
-                            required
-                            aria-describedby="composer-hint"
-                        ></textarea>
-                        <div class="actions">
-                            <span id="composer-hint"
-                                >Open a session to send instructions</span
-                            ><button id="send" class="primary" type="submit" title="Send an instruction; queued while PAI is busy" disabled>
-                                Send</button
-                            ><button id="steer" type="button" title="Redirect the running task at its next step" disabled>
-                                Steer</button
-                            ><button id="cancel" type="button" title="Stop the current step" disabled>
-                                Cancel
-                            </button>
+                        <div class="composer-row">
+                            <div class="composer-input">
+                                <label for="message">Instruction</label
+                                ><textarea
+                                    id="message"
+                                    rows="1"
+                                    placeholder="Tell PAI what to do"
+                                    required
+                                    aria-describedby="composer-hint"
+                                ></textarea>
+                                <span id="composer-hint"
+                                    >Open a session to send instructions</span
+                                >
+                            </div>
+                            <div class="actions">
+                                <button id="send" class="primary" type="submit" title="Send an instruction; queued while PAI is busy" disabled>
+                                    Send</button
+                                ><button id="steer" type="button" title="Redirect the running task at its next step" disabled>
+                                    Steer</button
+                                ><button id="cancel" type="button" title="Stop the current step" disabled>
+                                    Cancel
+                                </button>
+                            </div>
                         </div>
                     </form>
                 </div>

@@ -306,6 +306,7 @@ function controls() {
   $('cancel').disabled = !ready;
   $('rename-session').hidden = !ready;
   $('rename-session').disabled = !ready || sessionBusy;
+  $('session-label').hidden = !ready;
   // Changing role or model requires an idle worker (it retires the runtime).
   const configReady = ready && !modelBlocked;
   const roleSelect = $('session-role-select');
@@ -367,7 +368,7 @@ function completeProse(value) {
     return node;
   } catch { return literal(); }
 }
-const icons = {execute:'⌘', remote:'🌐', read:'📄', write:'✍', edit:'✎', websearch:'🔎'};
+const icons = {execute:'💻', remote:'🔐', read:'📖', write:'✍️', edit:'📝', websearch:'🔎'};
 function payload(node, value, limit = Infinity) {
   if (typeof value === 'string') { node.append(text('pre', value.slice(0, limit))); return; }
   if (!value || typeof value !== 'object') { if (value !== undefined) node.append(prose(String(value))); return; }
@@ -387,7 +388,7 @@ function rawDetails(node, value, limit = Infinity) {
 }
 function response(node, data) {
   const tool = data.action === 'tool';
-  node.append(text('div', (tool ? (icons[data.toolname] || '⚙') + ' ' + (data.toolname || 'Tool') : ({done:'✓ Complete',ask:'? Question',terminate:'■ Stopped'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
+  node.append(text('div', (tool ? (icons[data.toolname] || '🔩') + ' ' + (data.toolname || 'Tool') : ({done:'✅ Complete',ask:'❓ Question',terminate:'🤚 Stopped'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
   if (data.reason) {
     const reason = prose(data.reason); reason.className += ' reason-text';
     node.append(text('div', 'Reason', 'field-label'), reason, text('hr', '', 'response-divider'));
@@ -443,7 +444,7 @@ function paintConversation() {
     if (card) {
       const represented = match >= 0 && durable[match + 1] && durable[match + 1].Kind === 'tool_result';
       if (step.output) logDetails(card, 'Execution log', step.output, !step.result);
-      if (step.result && !represented) { card.append(text('div', step.result.Skipped ? 'Skipped' : step.result.OK ? '✓ Success' : '✕ Failed', 'badge')); logDetails(card, 'Result', [step.result.Message, step.result.Detail].filter(Boolean).join('\n')); }
+      if (step.result && !represented) { card.append(text('div', step.result.Skipped ? 'Skipped' : step.result.OK ? '✅ Success' : '❌ Failed', 'badge')); logDetails(card, 'Result', [step.result.Message, step.result.Detail].filter(Boolean).join('\n')); }
       else if (!represented) card.append(text('div', step.result ? 'Finished' : 'Executing…', 'progress-status'));
     }
   }
@@ -569,7 +570,7 @@ function snapshot(s) {
         original.append(text('summary', 'Original command'), command); $('pending').append(original);
       }
     }
-    if (tool.Reason) $('pending').append(text('p', tool.Reason, 'reason')); 
+    if (tool.Reason) $('pending').append(text('p', tool.Reason, 'reason'));
     if (tool.Diff) $('pending').append(diff(tool.Diff));
   }
   if (p.title) $('pending').append(text('p', p.title, 'prompt-question'));
