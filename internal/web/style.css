@@ -21,6 +21,12 @@
     --green: #18794e;
     --red: #c13e4c;
     --shadow: 0 8px 30px #20283b08;
+    --link: #247b80;
+    --link-bg: #e2f2f1;
+    --link-ink: #145e63;
+    --link-border: #75b7b4;
+    --complete-bg: #def4e5;
+    --complete-ink: #18794e;
 }
 
 * {
@@ -247,14 +253,6 @@ header p {
     width: auto;
     padding: 4px 14px;
     font-size: 12px;
-    background: var(--accent);
-    color: white;
-    border-color: var(--accent);
-}
-
-#new-session button:hover {
-    background: var(--accent);
-    filter: brightness(0.94);
 }
 
 #cwd-hint {
@@ -297,7 +295,7 @@ header p {
     text-align: left;
     overflow-wrap: anywhere;
     font-style: italic;
-    color: #247b80;
+    color: var(--link);
 }
 
 .session-row .session-open {
@@ -326,9 +324,9 @@ header p {
 }
 
 .session-row.selected .session-open {
-    background: #e2f2f1;
-    border-color: #75b7b4;
-    color: #145e63;
+    background: var(--link-bg);
+    border-color: var(--link-border);
+    color: var(--link-ink);
     font-weight: 700;
 }
 
@@ -344,18 +342,6 @@ header p {
 
 .session-title-row h2 {
     min-width: 0;
-    overflow-wrap: anywhere;
-}
-
-.session-meta {
-    max-width: 100%;
-    padding: 2px 7px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--soft);
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 1.5;
     overflow-wrap: anywhere;
 }
 
@@ -666,8 +652,8 @@ header p {
 
 .badge.complete {
     display: inline-block;
-    background: #def4e5;
-    color: #18794e;
+    background: var(--complete-bg);
+    color: var(--complete-ink);
     font-weight: 800;
     font-size: 13px;
     text-transform: none;
@@ -914,13 +900,7 @@ header p {
     margin-right: auto;
 }
 
-#send {
-    background: var(--accent);
-    color: white;
-    border-color: var(--accent);
-}
-
-/* ── Prompt / confirmation card ────────────────────────────── */
+/* ── Prompt / confirmation card ──────────────────────────── */
 
 #pending:empty {
     display: none;
@@ -1361,31 +1341,15 @@ header p {
     --accent: #9aa7ff;
     --green: #7bdcaa;
     --red: #ff97a3;
+    --link: #8cd4d2;
+    --link-bg: #223d40;
+    --link-ink: #b2e9e4;
+    --link-border: #579c99;
+    --complete-bg: #203e30;
+    --complete-ink: #8ee0ae;
 }
 
-:root[data-theme="dark"] #send {
-    color: #141927;
-}
-
-:root[data-theme="dark"] #new-session button {
-    color: #141927;
-}
-
-:root[data-theme="dark"] #sessions button {
-    color: #8cd4d2;
-}
-
-:root[data-theme="dark"] .session-row.selected .session-open {
-    background: #223d40;
-    color: #b2e9e4;
-    border-color: #579c99;
-}
-
-:root[data-theme="dark"] .badge.complete {
-    background: #203e30;
-    color: #8ee0ae;
-}
-
+/* On a light accent, accent-button text must be dark. */
 :root[data-theme="dark"] .primary {
     color: #141927;
 }

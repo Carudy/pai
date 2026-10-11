@@ -457,13 +457,6 @@ function sessionMetadata(meta = {}) {
   // Preserve an unsaved role choice across the frequent history/snapshot
   // refreshes, exactly as model drafts are kept.
   if (!roleDirty) roleSelect.value = [...roleSelect.children].some(option => option.value === savedRole) ? savedRole : '';
-  for (const field of ['role', 'model']) {
-    const node = $('session-' + field + '-info');
-    const value = typeof meta[field] === 'string' ? meta[field].trim() : '';
-    node.textContent = value ? field + ': ' + value : '';
-    node.title = 'Saved ' + field + (value ? ': ' + value : '');
-    node.hidden = !value;
-  }
 }
 async function history(reset = false, forceBottom = false) {
   const version = generation, request = ++historyRequest;

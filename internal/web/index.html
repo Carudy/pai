@@ -39,7 +39,7 @@
                     <p id="cwd-hint">The server checks that this directory exists.</p>
                     <label for="session-role">Role</label>
                     <select id="session-role"><option value="">Configured default</option></select>
-                    <button id="create-session" type="submit">Create</button>
+                    <button id="create-session" class="primary" type="submit">Create</button>
                 </form>
                 <hr width="100%" size="2">
                 <p id="sessions-status" role="status">Loading sessions…</p>
@@ -76,8 +76,6 @@
                     <div class="session-title-row">
                         <h2 id="title">Select or create a session</h2>
                         <button id="rename-session" type="button" title="Rename this session" hidden>✎ Rename</button>
-                        <span id="session-role-info" class="session-meta" title="Saved role" hidden></span>
-                        <span id="session-model-info" class="session-meta" title="Saved model" hidden></span>
                     </div>
                     <div class="session-config">
                         <form id="role-form" aria-label="Session role">
@@ -144,7 +142,7 @@
                         <div class="actions">
                             <span id="composer-hint"
                                 >Open a session to send instructions</span
-                            ><button id="send" type="submit" title="Send an instruction; queued while PAI is busy" disabled>
+                            ><button id="send" class="primary" type="submit" title="Send an instruction; queued while PAI is busy" disabled>
                                 Send</button
                             ><button id="steer" type="button" title="Redirect the running task at its next step" disabled>
                                 Steer</button

@@ -348,31 +348,26 @@ async function verifyMetadata() {
   await p.run("select('one', '/initial')");
   assert.equal(p.get('title').textContent, 'one');
   assert.equal(p.get('workspace').textContent, 'Workspace: /fixed');
-  assert.equal(p.get('session-role-info').textContent, 'role: custom');
-  assert.equal(p.get('session-role-info').title, 'Saved role: custom');
-  assert.equal(p.get('session-model-info').textContent, 'model: provider:model');
-  assert.equal(p.get('session-model-info').title, 'Saved model: provider:model');
-  assert.equal(p.get('session-model-info').hidden, false);
+  assert.equal(p.run('savedRole'), 'custom');
+  assert.equal(p.get('session-model').value, 'provider:model');
   p.run("api=()=>new Promise(resolve=>globalThis.finishHistory=resolve)");
   const stale = p.run("select('two')");
-  for (const field of ['role','model']) {
-    assert.equal(p.get('session-' + field + '-info').hidden, true, 'selection clears saved metadata while loading');
-    assert.equal(p.get('session-' + field + '-info').textContent, '');
-  }
+  // Selection clears saved metadata while the new history loads.
+  assert.equal(p.run('savedRole'), '');
+  assert.equal(p.get('session-model').value, '');
   p.run("api=async()=>({turns:[],total:0})");
   await p.run("select('three')");
   p.run("finishHistory({turns:[],total:0,role:'stale',model:'stale'})");
   await stale;
-  for (const field of ['role','model']) {
-    assert.equal(p.get('session-' + field + '-info').hidden, true, 'missing fields stay hidden; stale response cannot populate them');
-    assert.equal(p.get('session-' + field + '-info').textContent, '');
-  }
+  // A stale response cannot populate the newer selection.
+  assert.equal(p.run('savedRole'), '');
+  assert.equal(p.get('session-model').value, '');
   p.run("sessionMetadata({role:'<script>literal</script>',model:42})");
-  assert.equal(p.get('session-role-info').textContent, 'role: <script>literal</script>');
-  assert.equal(p.get('session-model-info').hidden, true);
+  assert.equal(p.run('savedRole'), '<script>literal</script>');
+  assert.equal(p.get('session-model').value, '', 'a non-string model is ignored');
   p.run("sessionMetadata({role:'  ',model:' model '})");
-  assert.equal(p.get('session-role-info').hidden, true);
-  assert.equal(p.get('session-model-info').textContent, 'model: model');
+  assert.equal(p.run('savedRole'), '', 'a blank role clears the saved role');
+  assert.equal(p.get('session-model').value, 'model');
 }
 async function verifyCreate() {
   const p = browser();
