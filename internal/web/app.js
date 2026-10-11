@@ -131,7 +131,7 @@ function activityScroll() { $('events').scrollTop = $('events').scrollHeight; }
 function scrollBottom() { $('conversation').scrollTop = $('conversation').scrollHeight; }
 // Jump-to-previous-instruction: a floating up-arrow scrolls to the user turn just
 // above the current position, then the one before it, and so on.
-function userCards() { return ($('history').children || []).filter(node => typeof node.className === 'string' && node.className.includes('turn user')); }
+function userCards() { return [...$('history').children].filter(node => typeof node.className === 'string' && node.className.includes('turn user')); }
 function updatePrevInput() { $('prev-input').hidden = userCards().length === 0; }
 function jumpToPrevInput() {
   const scroller = $('conversation');

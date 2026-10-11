@@ -528,6 +528,18 @@ func TestHTMLJavaScriptIDContract(t *testing.T) {
 	}
 }
 
+// `element.children` is an HTMLCollection in a browser (no filter/find/map), even
+// though the dependency-free test double uses a plain array. Calling an Array
+// method on it throws at load and wedges the UI, so guard against it in source.
+func TestAppDoesNotCallArrayMethodsOnChildren(t *testing.T) {
+	h, _ := setup(t, "")
+	js := request(h, "GET", "/app.js", "", nil, "").Body.String()
+	bad := regexp.MustCompile(`\.children(?:\s*\|\|\s*\[\]\))?\s*\.(filter|find|map|some|every|forEach)\s*\(`)
+	if m := bad.FindString(js); m != "" {
+		t.Fatalf("app.js calls an array method on element.children: %q", m)
+	}
+}
+
 func TestPageLayoutNesting(t *testing.T) {
 	h, _ := setup(t, "")
 	page := request(h, "GET", "/", "", nil, "").Body.String()
