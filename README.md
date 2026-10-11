@@ -114,12 +114,16 @@ new `name`), and `/api/rewind` takes `{"name","keep"}` to keep the first `keep`
 turns and drop the rest. Each acts on an idle session and retires its runtime, so
 the next send rebuilds against the current settings and history.
 
-Every user instruction in the conversation carries an **↩ from here** button:
-it rewinds the session to just before that instruction, drops the turns after
-it, and returns the instruction to the composer. With `[session] rewind_backup`
-(the default), the pre-rewind turns are copied into a single rolling
-`<name>.rewind-backup` session first, so nothing is lost; disable it to make
-rewind purely destructive.
+Every user instruction in the conversation carries an **↩ from here** button: it
+rewinds the session to just before that instruction, drops the turns after it,
+and returns the instruction to the composer. The confirmation offers **Rewind +
+backup** (copies the dropped turns into a single rolling `<name>.rewind-backup`
+session first, so nothing is lost) or **Rewind** (truncate directly);
+`[session] rewind_backup` only sets the default when an API client omits the
+choice.
+
+The browser also has a light/dark theme switch (remembered locally), a compact
+Role/Model settings grid, and loads history lazily as you scroll up.
 
 API clients can create a saved, empty session before sending any message:
 `POST /api/create` with JSON `{"name":"work","working_dir":"/path/to/project"}`

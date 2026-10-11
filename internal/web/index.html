@@ -67,7 +67,14 @@
                             aria-controls="activity"
                             aria-expanded="false"
                         >
-                            Activities
+                            Activities</button
+                        ><button
+                            id="theme-toggle"
+                            type="button"
+                            aria-label="Toggle light or dark theme"
+                            title="Switch theme"
+                        >
+                            🌙
                         </button>
                     </div>
                     <div class="session-title-row">
@@ -75,31 +82,33 @@
                         <button id="rename-session" type="button" title="Rename this session" hidden>✎ Rename</button>
                         <span id="session-role-info" class="session-meta" title="Saved role" hidden></span>
                         <span id="session-model-info" class="session-meta" title="Saved model" hidden></span>
-                    <form id="model-form" aria-label="Session model">
-                        <label for="session-model">Model</label>
-                        <div class="model-field">
-                            <input id="session-model" placeholder="provider:model" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="model-options" aria-autocomplete="list" disabled />
-                            <ul id="model-options" role="listbox" aria-label="Model suggestions" hidden></ul>
-                        </div>
-                        <button id="apply-model" type="submit" disabled>Apply</button>
-                    </form>
-                    <form id="role-form" aria-label="Session role">
-                        <label for="session-role-select">Role</label>
-                        <select id="session-role-select" disabled></select>
-                        <button id="apply-role" type="submit" disabled>Apply</button>
-                    </form>
+                    </div>
+                    <div class="session-config">
+                        <form id="role-form" aria-label="Session role">
+                            <label for="session-role-select">Role</label>
+                            <select id="session-role-select" disabled></select>
+                            <button id="apply-role" type="submit" disabled>Apply</button>
+                        </form>
+                        <form id="model-form" aria-label="Session model">
+                            <label for="session-model">Model</label>
+                            <div class="model-field">
+                                <input id="session-model" placeholder="provider:model" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="model-options" aria-autocomplete="list" disabled />
+                                <ul id="model-options" role="listbox" aria-label="Model suggestions" hidden></ul>
+                            </div>
+                            <button id="apply-model" type="submit" disabled>Apply</button>
+                        </form>
                     </div>
                     <!--<p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>-->
-                    <p id="workspace">Workspace — select a session</p>
+                    <p id="workspace" title="Workspace">Workspace — select a session</p>
                     <p id="token-usage" hidden></p>
                     <div class="status-row">
-                    <p id="state" aria-live="polite">Ready when you are</p>
-                    <div class="run-progress-slot">
-                        <div id="run-progress" role="status" hidden>
-                            <span class="busy-indicator" aria-hidden="true">⏳</span>
-                            <span id="run-elapsed">Running…</span>
+                        <p id="state" aria-live="polite">Ready when you are</p>
+                        <div class="run-progress-slot">
+                            <div id="run-progress" role="status" hidden>
+                                <span class="busy-indicator" aria-hidden="true">⏳</span>
+                                <span id="run-elapsed">Running…</span>
+                            </div>
                         </div>
-                    </div>
                     </div>
                 </header>
                 <div class="conversation-wrapper">
@@ -107,18 +116,18 @@
                         <h3>Thinking…</h3>
                         <div id="reasoning-text"></div>
                     </section>
-                <div id="conversation">
-                    <section id="history" aria-label="Conversation">
-                        <div class="empty">
-                            ✦
-                            <h3>Best partner, PAI!</h3>
-                            <p>
-                                Open a named session to start working with PAI.
-                            </p>
-                        </div>
-                    </section>
-                    <button id="more-history" hidden>More history</button>
-                </div>
+                    <div id="conversation">
+                        <section id="history" aria-label="Conversation">
+                            <div class="empty">
+                                ✦
+                                <h3>Best partner, PAI!</h3>
+                                <p>
+                                    Open a named session to start working with PAI.
+                                </p>
+                            </div>
+                        </section>
+                    </div>
+                    <button id="prev-input" type="button" title="Jump to the previous instruction" aria-label="Jump to the previous instruction" hidden>↑</button>
                     <section
                         id="pending"
                         aria-labelledby="pending-title"

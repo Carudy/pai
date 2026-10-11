@@ -456,10 +456,10 @@ func (b *serveBackend) SetModel(name, model string) error {
 	return nil
 }
 
-// Rewind drops every turn from index keep onward. When [session] rewind_backup
-// is on (the default), the current turns are first copied into a rolling backup
-// session so the dropped tail stays attachable.
-func (b *serveBackend) Rewind(name string, keep int) error {
+// Rewind drops every turn from index keep onward. When backup is true (or nil
+// and [session] rewind_backup is on), the current turns are first copied into a
+// rolling backup session so the dropped tail stays attachable.
+func (b *serveBackend) Rewind(name string, keep int, backup *bool) error {
 	if !session.ValidName(name) {
 		return errors.New("invalid session name")
 	}
@@ -469,6 +469,10 @@ func (b *serveBackend) Rewind(name string, keep int) error {
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	doBackup := cfg.SessionRewindBackup
+	if backup != nil {
+		doBackup = *backup
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -482,7 +486,7 @@ func (b *serveBackend) Rewind(name string, keep int) error {
 	if keep >= len(s.Turns) {
 		return nil // nothing after the rewind point
 	}
-	if cfg.SessionRewindBackup {
+	if doBackup {
 		if err := b.writeBackup(*s); err != nil {
 			return fmt.Errorf("rewind backup: %w", err)
 		}

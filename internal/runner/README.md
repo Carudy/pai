@@ -26,7 +26,7 @@ err = m.Reply(name, promptID, text, choice)
 err = m.SetModel(name, "provider:model") // needs ModelBackend
 err = m.SetRole(name, role)              // needs RoleSetter
 err = m.Rename(name, newName)            // needs RenameBackend
-err = m.Rewind(name, keep)               // needs RewindBackend
+err = m.Rewind(name, keep, backup)        // needs RewindBackend
 snapshot, err := m.Snapshot(name)
 events, unsubscribe, err := m.Subscribe(name)
 // Call unsubscribe when the client disconnects; it does not cancel the worker.

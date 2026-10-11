@@ -399,8 +399,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			Name string `json:"name"`
-			Keep int    `json:"keep"`
+			Name   string `json:"name"`
+			Keep   int    `json:"keep"`
+			Backup *bool  `json:"backup"`
 		}
 		if !decode(w, r, &body) {
 			return
@@ -413,7 +414,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "keep must be non-negative")
 			return
 		}
-		if err := h.manager.Rewind(body.Name, body.Keep); err != nil {
+		if err := h.manager.Rewind(body.Name, body.Keep, body.Backup); err != nil {
 			managerError(w, err)
 			return
 		}

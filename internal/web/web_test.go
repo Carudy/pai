@@ -303,7 +303,7 @@ type rewindBackend struct {
 	keep int
 }
 
-func (b *rewindBackend) Rewind(name string, keep int) error {
+func (b *rewindBackend) Rewind(name string, keep int, backup *bool) error {
 	if name != "one" {
 		return runner.ErrNotFound
 	}
@@ -573,7 +573,8 @@ func TestPageLayoutNesting(t *testing.T) {
 		"conversation-wrapper": "main", "conversation": "conversation-wrapper",
 		"pending": "conversation-wrapper", "history": "conversation",
 		"composer-dock": "main", "composer": "composer-dock", "activity": "app",
-		"model-form": "session-title-row", "apply-model": "model-form",
+		"session-config": "header", "model-form": "session-config", "role-form": "session-config",
+		"apply-model": "model-form", "reasoning-preview": "conversation-wrapper", "prev-input": "conversation-wrapper",
 		"workspace": "header", "state": "status-row", "token-usage": "header",
 	} {
 		if parents[child] != parent {

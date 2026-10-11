@@ -80,6 +80,14 @@ focusing the field shows every suggestion, typing filters it, and choosing one
 fills the field. The field still accepts any configured `provider:model`, with
 spaces around the colon normalized; suggestions are not an allowlist.
 
+The header keeps a compact settings grid (Role and Model, each with Apply), a
+Rename button, and a light/dark theme switch (remembered in `localStorage`; light
+is the default, seeded from the system preference on a first visit). The status
+bar is a fixed height and truncates, so the header does not reflow as the state
+text changes. The conversation loads only the most recent turns and appends older
+ones as the reader scrolls to the top (there is no "More history" button); a
+floating up-arrow jumps to the previous user instruction.
+
 Snapshots also recover the current reasoning tail (at most 64 KiB); ordinary
 reasoning events carry deltas, not repeated full text. Reasoning is transient
 and cleared when the model moves to another action. In the browser it streams
@@ -131,11 +139,11 @@ rejected; there is no URL authentication.
   session (else 409); a missing session is 404. The idle runtime is retired and
   its entry dropped, and the stored history is removed. The browser confirms
   before deleting and, when the open session is deleted, clears the workspace.
-- `POST /api/rewind`: `{ "name": "...", "keep": N }`; 202 `{ "ok": true }`.
-  Requires an idle session (else 409); `keep < 0` is 400. Keeps the first `keep`
-  turns and drops the rest, retiring the runtime. With `[session] rewind_backup`
-  on (the default), the pre-rewind turns are first copied into a rolling
-  `<name>.rewind-backup` session.
+- `POST /api/rewind`: `{ "name": "...", "keep": N, "backup": true|false }`;
+  202 `{ "ok": true }`. Requires an idle session (else 409); `keep < 0` is 400.
+  Keeps the first `keep` turns and drops the rest, retiring the runtime. `backup`
+  (omitted = `[session] rewind_backup`) copies the pre-rewind turns into a rolling
+  `<name>.rewind-backup` session before truncating; `false` truncates directly.
 - `GET /api/sessions?offset=0&limit=100`: `{ "sessions": [runner.Meta], "total": N,
   "default_cwd": "/path" }`. Pagination slices the backend list in its original
   order; List still fetches the full backend list because runner does not expose
@@ -181,7 +189,9 @@ session switch, together with `pending.untrusted` (what a confirmation can
 trust) and `pending.trust_target` (`command` or `path`, so the card words it
 correctly). Approval cards render only this retained tool, not a transient
 last tool event. The floating prompt card can be dragged aside by its title
-(clamped to the conversation panel; its position resets when the prompt changes). Repeated snapshots for the same session/pending ID preserve
+(clamped to the conversation panel; its position resets when the prompt changes), and
+the reasoning card is draggable too, remembering its position across reasoning
+sessions (it is only visible while reasoning). Repeated snapshots for the same session/pending ID preserve
 the existing question form, focus, and draft; a new ID or cleared prompt resets
 the card. Drafts are not persisted across page reloads or session switches. Selecting
 another session closes its subscription but never calls Cancel. New named

@@ -470,7 +470,7 @@ func TestServeBackendRewindBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := b.Rewind("conv", 1); err != nil {
+	if err := b.Rewind("conv", 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := store.Get("conv")
@@ -486,7 +486,7 @@ func TestServeBackendRewindBackup(t *testing.T) {
 	if err := store.Append("conv", core.Turn{Role: "user", Kind: "input", Content: "one-b"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Rewind("conv", 1); err != nil {
+	if err := b.Rewind("conv", 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	bak, err = store.Get("conv.rewind-backup")

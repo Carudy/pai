@@ -16,6 +16,8 @@ let modelList = [];
 const SESSION_KEY = 'pai.session';
 let toastHost = null;
 let savedRole = '', roleDirty = false;
+const THEME_KEY = 'pai.theme';
+const REASONING_POS_KEY = 'pai.reasoning-position';
 // ── Model controls ──────────────────────────────────────────
 function normalizeModel(value) { return value.trim().replace(/\s*:\s*/, ':'); }
 function modelControls() {
@@ -127,6 +129,18 @@ function runSnapshot(s) {
 }
 function activityScroll() { $('events').scrollTop = $('events').scrollHeight; }
 function scrollBottom() { $('conversation').scrollTop = $('conversation').scrollHeight; }
+// Jump-to-previous-instruction: a floating up-arrow scrolls to the user turn just
+// above the current position, then the one before it, and so on.
+function userCards() { return ($('history').children || []).filter(node => typeof node.className === 'string' && node.className.includes('turn user')); }
+function updatePrevInput() { $('prev-input').hidden = userCards().length === 0; }
+function jumpToPrevInput() {
+  const scroller = $('conversation');
+  const cards = userCards();
+  const above = cards.filter(card => (card.offsetTop || 0) < scroller.scrollTop - 4);
+  const target = above.length ? above[above.length - 1] : cards[0];
+  if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({block: 'start'});
+  updatePrevInput();
+}
 function logDetails(node, title, value, open = false) {
   if (!value) return;
   const details = text('details', '', 'tool-log'); details.open = open;
@@ -156,45 +170,62 @@ function clearPending() {
   node.classList.remove('dragging');
   pendingID = null; pendingSession = null;
 }
-// The confirmation card floats over the conversation; let the user drag it by its
-// title out of the way. It stays clamped inside the conversation panel, and its
-// position resets whenever the prompt changes. Bound once (by delegation) so it
-// survives the card being rebuilt for each prompt.
-function initPendingDrag() {
-  const pending = $('pending');
+// A confirmation card floats over the conversation; let the user drag it by its
+// handle out of the way. It stays clamped inside its parent, and its position
+// resets whenever the prompt changes. Bound once (by delegation) so it survives
+// the card being rebuilt for each prompt.
+function freezeAt(el, left, top) {
+  el.style.transform = 'none';
+  el.style.bottom = '';
+  el.style.left = left + 'px';
+  el.style.top = top + 'px';
+}
+function savePosition(key, el) {
+  try { localStorage.setItem(key, JSON.stringify({left: parseFloat(el.style.left) || 0, top: parseFloat(el.style.top) || 0})); } catch (_) {}
+}
+// Restore a remembered drag offset so the card reappears where the user left it.
+function restorePosition(el, key) {
+  let position = null;
+  try { position = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
+  if (position && typeof position.left === 'number' && typeof position.top === 'number') freezeAt(el, position.left, position.top);
+}
+function initDraggable(el, handle, key) {
+  if (!el || typeof el.addEventListener !== 'function') return;
   let drag = null;
-  const clamp = (value, max) => Math.min(Math.max(0, max), Math.max(0, value));
-  pending.addEventListener('pointerdown', event => {
-    if (event.button !== 0 || !event.target || event.target.id !== 'pending-title') return;
-    const wrapper = pending.parentElement;
-    if (!wrapper) return;
-    // Freeze the centered card at its current pixels before switching to an
-    // explicit offset, so it does not jump when the drag begins.
-    const frame = wrapper.getBoundingClientRect(), card = pending.getBoundingClientRect();
+  const clamp = (value, max) => Math.min(Math.max(0, Math.min(max, value)), Math.max(0, value));
+  el.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !event.target) return;
+    if (handle && typeof event.target.matches === 'function' && !event.target.matches(handle)) return;
+    const frame = el.parentElement && el.parentElement.getBoundingClientRect();
+    if (!frame) return;
+    const card = el.getBoundingClientRect();
     const left = card.left - frame.left, top = card.top - frame.top;
-    pending.style.transform = 'none';
-    pending.style.left = left + 'px';
-    pending.style.top = top + 'px';
+    freezeAt(el, left, top);
     drag = {id: event.pointerId, x: event.clientX, y: event.clientY, left, top, width: card.width, height: card.height};
-    pending.classList.add('dragging');
-    try { pending.setPointerCapture(event.pointerId); } catch (_) {}
+    el.classList.add('dragging');
+    try { el.setPointerCapture(event.pointerId); } catch (_) {}
     event.preventDefault();
   });
-  pending.addEventListener('pointermove', event => {
+  el.addEventListener('pointermove', event => {
     if (!drag || event.pointerId !== drag.id) return;
-    const frame = pending.parentElement.getBoundingClientRect();
-    pending.style.left = clamp(drag.left + event.clientX - drag.x, frame.width - drag.width) + 'px';
-    pending.style.top = clamp(drag.top + event.clientY - drag.y, frame.height - drag.height) + 'px';
+    const frame = el.parentElement.getBoundingClientRect();
+    freezeAt(el, clamp(drag.left + event.clientX - drag.x, frame.width - drag.width), clamp(drag.top + event.clientY - drag.y, frame.height - drag.height));
   });
   const end = event => {
     if (!drag || event.pointerId !== drag.id) return;
     drag = null;
-    pending.classList.remove('dragging');
-    try { pending.releasePointerCapture(event.pointerId); } catch (_) {}
+    el.classList.remove('dragging');
+    try { el.releasePointerCapture(event.pointerId); } catch (_) {}
+    if (key) savePosition(key, el);
   };
-  pending.addEventListener('pointerup', end);
-  pending.addEventListener('pointercancel', end);
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
 }
+function initPendingDrag() { initDraggable($('pending'), '#pending-title'); }
+// The reasoning card keeps its position across reasoning sessions, so it can be
+// parked out of the way once and stays there (invisible between sessions).
+function initReasoningDrag() { initDraggable($('reasoning-preview'), '#reasoning-preview h3', REASONING_POS_KEY); }
+function showReasoning() { restorePosition($('reasoning-preview'), REASONING_POS_KEY); $('reasoning-preview').hidden = false; }
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
 function error(e) { $('error').textContent = e.message || String(e); }
 // A transient notice, layered over the workspace so a reason (e.g. why "Always"
@@ -209,6 +240,24 @@ function toast(message) {
   setTimeout(() => node.remove(), 6000);
 }
 function loginNeeded() { $('login').hidden = false; $('app').hidden = true; disconnect(); }
+// ── Theme ───────────────────────────────────────────────────
+// Light is the default; the switch sets data-theme on <html> and remembers the
+// choice. The system preference only seeds the first visit.
+function initialTheme() {
+  try { const saved = localStorage.getItem(THEME_KEY); if (saved === 'dark' || saved === 'light') return saved; } catch (_) {}
+  try { return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch (_) { return 'light'; }
+}
+function applyTheme(theme) {
+  if (document.documentElement && document.documentElement.dataset) document.documentElement.dataset.theme = theme;
+  const button = $('theme-toggle');
+  if (button) { button.textContent = theme === 'dark' ? '☀' : '🌙'; button.title = 'Switch to ' + (theme === 'dark' ? 'light' : 'dark') + ' theme'; }
+}
+function toggleTheme() {
+  const current = document.documentElement && document.documentElement.dataset ? document.documentElement.dataset.theme : 'light';
+  const next = current === 'dark' ? 'light' : 'dark';
+  try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
+  applyTheme(next);
+}
 async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
   const response = await fetch('/api/' + path, options);
@@ -338,7 +387,7 @@ function rawDetails(node, value, limit = Infinity) {
 function response(node, data) {
   const tool = data.action === 'tool';
   node.append(text('div', (tool ? (icons[data.toolname] || '⚙') + ' ' + (data.toolname || 'Tool') : ({done:'✓ Complete',ask:'? Question',terminate:'■ Stopped'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
-  if (data.reason) node.append(text('div', 'Reason', 'field-label'), prose(data.reason));
+  if (data.reason) node.append(text('div', 'Reason', 'field-label'), prose(data.reason), text('hr', '', 'response-divider'));
   if (tool) { node.className += ' tool-card'; if (typeof data.payload === 'string') node.append(text('div', data.toolname === 'execute' ? 'CMD' : 'Query', 'field-label')); payload(node, data.payload); }
   else if (typeof data.payload === 'string') node.append(data.action === 'done' ? completeProse(data.payload) : prose(data.payload));
   else payload(node, data.payload);
@@ -394,7 +443,7 @@ function paintConversation() {
       else if (!represented) card.append(text('div', step.result ? 'Finished' : 'Executing…', 'progress-status'));
     }
   }
-
+  updatePrevInput();
 }
 // ── History and session metadata ────────────────────────────
 function sessionMetadata(meta = {}) {
@@ -417,7 +466,7 @@ async function history(reset = false, forceBottom = false) {
   const scroller = $('conversation');
   let probe = await api(query('history', 0, 1));
   if (version !== generation || request !== historyRequest) return;
-  const offset = reset ? (durable.length ? historyOffset : Math.max(0, probe.total - 100)) : Math.max(0, historyOffset - 100);
+  const offset = reset ? (durable.length ? historyOffset : Math.max(0, probe.total - 30)) : Math.max(0, historyOffset - 30);
   const wanted = reset ? probe.total - offset : historyOffset - offset;
   if (!reset && !wanted) return;
   let collected = [], meta = probe, position = offset;
@@ -434,8 +483,8 @@ async function history(reset = false, forceBottom = false) {
   const follow = height - scroller.clientHeight - top <= 80;
   durable = next; historyOffset = offset; historyTotal = meta.total;
   if (changed || initial) paintConversation();
-  $('more-history').hidden = historyOffset === 0;
   $('workspace').textContent = 'Workspace: ' + (meta.cwd || 'server working directory');
+  $('workspace').title = $('workspace').textContent;
   sessionMetadata(meta);
   if (!durable.length && (changed || initial)) { const welcome = text('div', '', 'empty'); welcome.append(text('h3', 'Best partner, PAI!'), text('p', 'Give PAI an instruction below.')); $('history').append(welcome); }
   if (forceBottom || initial || (reset && changed && follow)) scrollBottom();
@@ -479,7 +528,8 @@ function snapshot(s) {
   if (s.state !== 'busy' || s.pending) flushReasoning();
     else if (s.reasoning !== undefined) {
       thinking = String(s.reasoning).slice(-liveTextLimit);
-      $('reasoning-text').textContent = thinking; $('reasoning-preview').hidden = !thinking;
+      $('reasoning-text').textContent = thinking;
+      if (thinking) showReasoning(); else $('reasoning-preview').hidden = true;
       $('reasoning-text').scrollTop = $('reasoning-text').scrollHeight;
     }
   const detail = s.active_tool ? statusText(s.active_tool.Detail) : '';
@@ -603,15 +653,35 @@ function restoreSession(list) {
   if (!name || !list.some(meta => meta.name === name)) return;
   select(name);
 }
-// Rewind to just before the user instruction at persisted index. The dropped
-// turns stay restorable from the rolling backup the server keeps.
+// Ask whether to snapshot the dropped turns before rewinding. Resolves to true
+// (backup), false (plain truncate), or null (cancelled).
+function rewindChoice(dropped) {
+  return new Promise(resolve => {
+    const box = text('div', '', 'rewind-confirm');
+    box.append(
+      text('p', `Rewind to here? ${dropped} later turn${dropped === 1 ? '' : 's'} will be dropped.`),
+      text('p', 'Keep a backup session of the dropped turns?', 'rewind-note'),
+    );
+    const backup = text('button', 'Rewind + backup', 'primary'), plain = text('button', 'Rewind', 'secondary'), cancel = text('button', 'Cancel', 'caution');
+    backup.type = plain.type = cancel.type = 'button';
+    const close = value => { box.remove(); resolve(value); };
+    backup.onclick = () => close(true);
+    plain.onclick = () => close(false);
+    cancel.onclick = () => close(null);
+    box.append(backup, plain, cancel);
+    document.body.append(box);
+  });
+}
+// Rewind to just before the user instruction at persisted index. With a backup
+// the dropped turns stay restorable from a rolling session; without, they are
+// simply removed.
 async function rewind(index, content) {
   if (!selected || sessionBusy) return;
-  const dropped = historyTotal - index;
-  if (!confirm(`Rewind to here? ${dropped} later turn${dropped === 1 ? '' : 's'} will be dropped.`)) return;
+  const backup = await rewindChoice(historyTotal - index);
+  if (backup === null) return;
   const name = selected;
   try {
-    await api('rewind', {name, keep: index});
+    await api('rewind', {name, keep: index, backup});
     if (selected !== name) return;
     $('message').value = content || '';
     controls();
@@ -679,7 +749,7 @@ function activity(event) {
     // hands the finished block to the activity log, so it is never shown in both
     // places at once.
     currentStep = null; thinking = (thinking + String(data)).slice(-liveTextLimit);
-    $('reasoning-text').textContent = thinking; $('reasoning-preview').hidden = false;
+    $('reasoning-text').textContent = thinking; showReasoning();
     $('reasoning-text').scrollTop = $('reasoning-text').scrollHeight;
     return;
   }
@@ -811,7 +881,14 @@ $('new-session').onsubmit = createSession;
 $('composer').onsubmit = e => { e.preventDefault(); action('send'); };
 $('steer').onclick = () => action('steer'); $('cancel').onclick = () => action('cancel');
 $('more-sessions').onclick = () => sessions().catch(error);
-$('more-history').onclick = () => history().catch(error);
+$('theme-toggle').onclick = toggleTheme;
+$('prev-input').onclick = jumpToPrevInput;
+$('conversation').onscroll = () => {
+  updatePrevInput();
+  // Reach the top and load a few more older turns (the initial window is small).
+  const scroller = $('conversation');
+  if (scroller.scrollTop <= 8 && historyOffset > 0 && !refreshing) history().catch(error);
+};
 $('message').oninput = controls;
 $('message').onkeydown = composerKey;
 $('toggle-sessions').onclick = () => {
@@ -827,7 +904,10 @@ $('toggle-activity').onclick = () => {
 };
 
 controls();
+applyTheme(initialTheme());
 initPendingDrag();
+initReasoningDrag();
+updatePrevInput();
 sessions(true).then(restoreSession).catch(error);
 roles().catch(error);
 models().catch(error);

@@ -41,7 +41,7 @@ func (b *fakeBackend) Prepare(name string) (*config.UserConfig, provider.Provide
 	return &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}, &fakeProvider{question: b.question}, fakeRecorder{b, name}, nil, func() { b.mu.Lock(); b.cleanups++; b.mu.Unlock() }, nil
 }
 
-func (b *fakeBackend) Rewind(name string, keep int) error {
+func (b *fakeBackend) Rewind(name string, keep int, backup *bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.rewinds == nil {
@@ -422,13 +422,13 @@ func TestRewindTruncatesAndRetires(t *testing.T) {
 	b := &fakeBackend{}
 	m := New(context.Background(), b, 1)
 	defer m.Close()
-	if err := m.Rewind("one", 2); err != nil {
+	if err := m.Rewind("one", 2, nil); err != nil {
 		t.Fatalf("Rewind: %v", err)
 	}
 	if b.rewinds["one"] != 2 {
 		t.Fatalf("backend keep = %d, want 2", b.rewinds["one"])
 	}
-	if err := m.Rewind("one", -1); err == nil {
+	if err := m.Rewind("one", -1, nil); err == nil {
 		t.Error("negative keep should be rejected")
 	}
 }
@@ -442,7 +442,7 @@ func TestRewindBusyRejected(t *testing.T) {
 	m.mu.Lock()
 	m.entries["one"] = w
 	m.mu.Unlock()
-	if err := m.Rewind("one", 0); !errors.Is(err, ErrBusy) {
+	if err := m.Rewind("one", 0, nil); !errors.Is(err, ErrBusy) {
 		t.Fatalf("Rewind on a busy session = %v, want ErrBusy", err)
 	}
 	if _, called := b.rewinds["one"]; called {

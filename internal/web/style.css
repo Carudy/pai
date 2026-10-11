@@ -6,7 +6,7 @@
 /* ── Tokens & base ─────────────────────────────────────────── */
 
 :root {
-    color-scheme: light dark;
+    color-scheme: light;
     font:
         15px/1.6 system-ui,
         -apple-system,
@@ -198,11 +198,10 @@ main > header h2,
 }
 
 #state {
-    margin-top: 6px;
     color: var(--accent);
     /* Status text changes on every phase tick; keep it on one ellipsized line so
-       the auto-height header never reflows as the wording grows and shrinks. The
-       full text stays available via the title tooltip. */
+       the fixed-height status bar never reflows as the wording grows and shrinks.
+       The full text stays available via the title tooltip. */
     flex: 1 1 auto;
     min-width: 0;
     white-space: nowrap;
@@ -354,23 +353,23 @@ header p {
 
 #model-form,
 #role-form {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 8px 0;
-    max-width: 480px;
+    display: contents;
 }
 
-.session-title-row #model-form,
-.session-title-row #role-form {
-    margin: 0;
-    flex: 1 1 280px;
+/* The settings grid aligns each label/control/Apply column, so role and model
+   read as one compact table instead of a wrapping row of forms. */
+.session-config {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    align-items: center;
+    gap: 6px 8px;
+    margin: 10px 0 4px;
+    max-width: 620px;
 }
 
 #model-form input,
 #role-form select {
     min-width: 0;
-    flex: 1;
     width: auto;
 }
 
@@ -445,18 +444,20 @@ header p {
 
 .status-row {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     flex-wrap: nowrap;
     gap: 4px 12px;
     min-width: 0;
+    height: 26px;
 }
 
-/* The compact run-status slot keeps its height even while idle. */
+/* The run-status slot sits in the fixed-height status bar; its own height never
+   contributes to the bar's. */
 .run-progress-slot {
     flex: 0 1 auto;
     min-width: 0;
-    min-height: 26px;
-    padding-top: 4px;
+    min-height: 0;
+    padding-top: 0;
 }
 
 #run-progress {
@@ -477,10 +478,27 @@ header p {
     text-overflow: ellipsis;
 }
 
+#workspace {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 4px 0 2px;
+}
+
 #token-usage {
     margin-top: 2px;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
+    color: var(--muted);
+}
+
+#theme-toggle {
+    padding: 2px 8px;
+    font-size: 13px;
+    line-height: 1.6;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--soft);
     color: var(--muted);
 }
 
@@ -535,9 +553,24 @@ header p {
     margin-top: 8px;
 }
 
-#more-history {
-    display: block;
-    margin: 16px auto;
+#prev-input {
+    position: absolute;
+    right: 16px;
+    bottom: 16px;
+    z-index: 2;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--muted);
+    box-shadow: var(--shadow);
+    font-size: 15px;
+    line-height: 1;
+}
+
+#prev-input:hover {
+    color: var(--accent);
 }
 
 .turn {
@@ -644,6 +677,13 @@ header p {
     letter-spacing: 0.6px;
     color: var(--muted);
     margin-top: 12px;
+}
+
+/* Separates the model's stated reason from its actual output (payload). */
+.response-divider {
+    border: 0;
+    border-top: 1px solid var(--border);
+    margin: 12px 0;
 }
 
 .diff-line {
@@ -991,6 +1031,12 @@ header p {
     font-size: 12px;
     color: var(--muted);
     margin-bottom: 8px;
+    cursor: grab;
+    user-select: none;
+}
+
+#reasoning-preview.dragging h3 {
+    cursor: grabbing;
 }
 
 #reasoning-text {
@@ -1030,21 +1076,28 @@ header p {
 }
 
 .activity-card {
-    padding: 12px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    margin-bottom: 10px;
-    font-size: 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    line-height: 1.5;
     overflow-wrap: anywhere;
 }
 
+.activity-card .card-heading {
+    font-size: 10px;
+    margin-bottom: 2px;
+}
+
 .activity-card pre {
-    max-height: 220px;
+    max-height: 200px;
     font-size: 11px;
+    padding: 8px;
+    margin: 4px 0 0;
 }
 
 .activity-card .prose {
-    max-height: 220px;
+    max-height: 200px;
     overflow: auto;
 }
 
@@ -1093,6 +1146,35 @@ header p {
     color: var(--ink);
     box-shadow: var(--shadow);
     animation: toast-in 0.18s ease-out;
+}
+
+/* Rewind confirmation: a small centered card offering backup vs a plain
+   truncate (and cancel). */
+.rewind-confirm {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 20;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    max-width: min(420px, 90vw);
+    padding: 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 12px 40px #0006;
+}
+
+.rewind-confirm p {
+    flex: 1 1 100%;
+}
+
+.rewind-confirm .rewind-note {
+    color: var(--muted);
+    font-size: 12px;
 }
 
 #login {
@@ -1230,45 +1312,54 @@ header p {
     }
 }
 
-@media (prefers-color-scheme: dark) {
-    :root {
-        --bg: #11151e;
-        --panel: #191f2b;
-        --soft: #242c3c;
-        --ink: #e4e9f3;
-        --muted: #9ca9bf;
-        --border: #303a4e;
-        --accent: #9aa7ff;
-        --green: #7bdcaa;
-        --red: #ff97a3;
-    }
-    #send {
-        color: #141927;
-    }
-    #new-session button {
-        background: #c2ebce;
-        border-color: #83c797;
-        color: #174d2a;
-    }
-    #new-session button:hover {
-        background: #d8f4df;
-    }
-    #sessions button {
-        color: #8cd4d2;
-    }
-    #sessions .session-delete {
-        color: var(--muted);
-    }
-    .session-row.selected .session-open {
-        background: #223d40;
-        color: #b2e9e4;
-        border-color: #579c99;
-    }
-    .badge.complete {
-        background: #203e30;
-        color: #8ee0ae;
-    }
-    .primary {
-        color: #141927;
-    }
+/* Dark theme. The switch sets data-theme on <html>; light is the default,
+   so an absent attribute means light. */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #11151e;
+    --panel: #191f2b;
+    --soft: #242c3c;
+    --ink: #e4e9f3;
+    --muted: #9ca9bf;
+    --border: #303a4e;
+    --accent: #9aa7ff;
+    --green: #7bdcaa;
+    --red: #ff97a3;
+}
+
+:root[data-theme="dark"] #send {
+    color: #141927;
+}
+
+:root[data-theme="dark"] #new-session button {
+    background: #c2ebce;
+    border-color: #83c797;
+    color: #174d2a;
+}
+
+:root[data-theme="dark"] #new-session button:hover {
+    background: #d8f4df;
+}
+
+:root[data-theme="dark"] #sessions button {
+    color: #8cd4d2;
+}
+
+:root[data-theme="dark"] #sessions .session-delete {
+    color: var(--muted);
+}
+
+:root[data-theme="dark"] .session-row.selected .session-open {
+    background: #223d40;
+    color: #b2e9e4;
+    border-color: #579c99;
+}
+
+:root[data-theme="dark"] .badge.complete {
+    background: #203e30;
+    color: #8ee0ae;
+}
+
+:root[data-theme="dark"] .primary {
+    color: #141927;
 }

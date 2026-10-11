@@ -302,17 +302,16 @@ async function verifyHistory() {
   const p = browser();
   p.run("selected='one'; globalThis.calls=[]; api=async path => { calls.push(path); const offset=Number(/offset=(\\d+)/.exec(path)[1]),limit=Number(/limit=(\\d+)/.exec(path)[1]); return {turns:Array.from({length:Math.min(limit,250-offset)},(_,i)=>({Role:'user',Content:String(offset+i)})),total:250,cwd:'/fixed'}; }");
   p.get('conversation').scrollTop = 123;
-  await p.run('history(true)'); assert.equal(p.get('history').children.length, 100);
-  assert.equal(p.get('history').children[0].textContent, 'You150', 'initial load shows latest tail');
+  await p.run('history(true)'); assert.equal(p.get('history').children.length, 30);
+  assert.equal(p.get('history').children[0].textContent, 'You220', 'initial load shows latest tail');
   assert.equal(p.get('conversation').scrollTop, 1000, 'initial history follows latest');
   p.get('conversation').scrollTop = 123;
   p.run("globalThis.originalPaint=paintConversation; paintConversation=()=>{originalPaint(); $('conversation').scrollHeight+=500;}");
-  await p.run('history()'); assert.equal(p.get('history').children.length, 200);
+  await p.run('history()'); assert.equal(p.get('history').children.length, 60);
   assert.equal(p.get('conversation').scrollTop, 623, 'earlier history offsets the added height to preserve the viewport');
   p.run('paintConversation=originalPaint');
-  await p.run('history(true)'); assert.equal(p.get('history').children.length, 200, 'refresh retains earlier loaded pages');
-  await p.run('history()'); assert.equal(p.get('history').children.length, 250);
-  assert.equal(p.get('more-history').hidden, true);
+  await p.run('history(true)'); assert.equal(p.get('history').children.length, 60, 'refresh retains earlier loaded pages');
+  await p.run('history()'); assert.equal(p.get('history').children.length, 90);
   p.get('conversation').scrollTop = 50;
   await p.run('history(true)');
   assert.equal(p.get('conversation').scrollTop, 50, 'unchanged refresh preserves reading position');
@@ -492,10 +491,14 @@ async function verifyRewind() {
   p.run("selected='one'; historyTotal=9; historyOffset=2; sessionBusy=false; durable=[{Role:'user',Kind:'input',Content:'do x'},{Role:'assistant',Kind:'output',Content:JSON.stringify({action:'done',payload:'ok'})}]; api=async(path,body)=>{globalThis.rewound=[path,body];return {ok:true};}; loadSnapshot=async()=>{}; refreshHistory=async()=>{}; sessions=async()=>{}; renderTurns(durable)");
   const button = p.get('history').children[0].children.find(node => node.className === 'rewind');
   assert.ok(button, 'a user input card offers a rewind button');
-  await button.onclick();
+  const pending = button.onclick();
+  assert.ok(p.run("document.body.children.find(node => node.className === 'rewind-confirm')"), 'rewind asks whether to keep a backup');
+  p.run("document.body.children.find(node => node.className === 'rewind-confirm').children.filter(node => node.tag === 'button')[0].onclick()");
+  await pending;
   assert.equal(p.run('rewound[0]'), 'rewind');
   assert.equal(p.run('rewound[1].name'), 'one');
   assert.equal(p.run('rewound[1].keep'), 2, 'rewind posts the persisted turn index');
+  assert.equal(p.run('rewound[1].backup'), true, 'the backup choice is sent');
   assert.equal(p.get('message').value, 'do x', 'the instruction returns to the composer');
 }
 // Role change and rename are manager operations gated on an idle worker.

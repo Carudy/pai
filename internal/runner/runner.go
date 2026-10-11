@@ -162,9 +162,10 @@ type ModelBackend interface {
 }
 
 // RewindBackend is optional; truncating a session's persisted history must not
-// require a backend that cannot persist.
+// require a backend that cannot persist. backup requests a snapshot of the
+// dropped turns (nil lets the backend choose its configured default).
 type RewindBackend interface {
-	Rewind(name string, keep int) error
+	Rewind(name string, keep int, backup *bool) error
 }
 
 // RoleSetter is optional; changing a session's role must not require a backend
@@ -306,7 +307,7 @@ func (m *Manager) Delete(name string) error {
 
 // Rewind drops every persisted turn from index keep onward, retiring the idle
 // runtime so the next instruction re-prepares from the truncated history.
-func (m *Manager) Rewind(name string, keep int) error {
+func (m *Manager) Rewind(name string, keep int, backup *bool) error {
 	if keep < 0 {
 		return errors.New("keep must be non-negative")
 	}
@@ -319,7 +320,7 @@ func (m *Manager) Rewind(name string, keep int) error {
 		return err
 	}
 	defer finish()
-	return b.Rewind(name, keep)
+	return b.Rewind(name, keep, backup)
 }
 
 type Manager struct {
