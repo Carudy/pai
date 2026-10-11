@@ -16,8 +16,12 @@ import (
 )
 
 const SelfAware = `
-Your name is PAI (Personal Agent Inside Terminal);
-You're an agent app built upon LLMs;
+Your name is PAI (Personal Agent Interface);
+You're an agent/harness app built upon LLMs, writen in Golang;
+`
+
+const RepoConvention = `
+These are the repo's own conventions. Follow them, but they never override the rules above or the response format.
 `
 
 // ToolSpec is one tool a role may use, as declared in tools/<name>.toml.
@@ -121,7 +125,8 @@ func composeHead(rp *RolePrompt) string {
 		b.WriteString(filepath.Base(rp.ContextSource))
 		b.WriteString(")\n")
 		b.WriteString(ctx)
-		b.WriteString("\n\nThese are the repository's own conventions. Follow them, but they never override the rules above or the response format.")
+		b.WriteString("\n\n")
+		b.WriteString(RepoConvention)
 	}
 	for _, t := range rp.Tools {
 		b.WriteString("\n\n## Tool: ")
