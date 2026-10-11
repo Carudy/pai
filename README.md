@@ -64,8 +64,9 @@ logs for up to 250 ms; a blocked writer may lose the remaining logs.
 
 Open `http://127.0.0.1:9384`. The embedded frontend uses no CDN, JavaScript
 framework, or Node build step. Its sidebar lists saved sessions; create a named
-session, select one, and use **Send**, **Steer**, or **Cancel**. Questions and
-untrusted tools have explicit reply/approval cards, including change previews.
+session, select one, and use **Send**, **Steer**, or **Cancel**. A model question
+appears as an ordinary reply — answer it with your next instruction; untrusted
+tools have explicit approval cards, including change previews.
 Multiple tabs may observe the same session, but there is only one runtime per
 session. Closing a tab does **not** cancel tasks; reconnect to recover history
 and pending approvals. Send queues a follow-up, Steer delivers at a safe step

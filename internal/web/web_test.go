@@ -170,7 +170,7 @@ func (b *modelBackend) History(name string, offset, limit int) (runner.History, 
 }
 
 func TestModelsAPI(t *testing.T) {
-	b := &modelBackend{}
+	b := &modelBackend{backend: backend{confirm: true}}
 	m := runner.New(context.Background(), b, 1)
 	defer m.Close()
 	h := New(m, Options{})
@@ -835,7 +835,9 @@ func wait(t *testing.T, m *runner.Manager, match func(runner.Snapshot) bool) run
 	return runner.Snapshot{}
 }
 func TestCancelPendingAndSSECleanup(t *testing.T) {
-	h, m := setup(t, "")
+	m := runner.New(context.Background(), backend{confirm: true}, 2)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
 	w := request(h, "POST", "/api/send", `{"name":"one","text":"hello"}`, nil, "http://pai.test")
 	if w.Code != 202 {
 		t.Fatal(w.Body.String())
@@ -869,7 +871,9 @@ func (*failedDeadlineWriter) SetWriteDeadline(time.Time) error {
 }
 
 func TestActionsAndSSEReconnect(t *testing.T) {
-	h, m := setup(t, "")
+	m := runner.New(context.Background(), backend{confirm: true}, 2)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
 	post := func(path, body string, status int) {
 		t.Helper()
 		w := request(h, "POST", "/api/"+path, body, nil, "http://pai.test")

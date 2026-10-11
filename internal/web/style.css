@@ -359,29 +359,33 @@ header p {
     overflow-wrap: anywhere;
 }
 
-/* Role and Model sit side by side, each an aligned label/control/Apply row, so
-   their controls are the same width and the header stays one compact line. */
+/* Role and Model side by side: a fixed, equal control width with Apply right
+   after it, so neither stretches across the header. */
 .session-config {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 4px 16px;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    gap: 4px 20px;
     margin: 6px 0 2px;
 }
 
 #role-form,
 #model-form {
-    display: grid;
-    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    display: flex;
     align-items: center;
     gap: 6px;
     min-width: 0;
 }
 
-#model-form input,
-#role-form select {
+#role-form select,
+#model-form .model-field {
+    width: 200px;
     min-width: 0;
-    width: auto;
+}
+
+#model-form input {
+    min-width: 0;
+    width: 100%;
 }
 
 #model-form input,
@@ -400,7 +404,7 @@ header p {
 /* Combobox: the input plus an always-visible suggestion dropdown. */
 .model-field {
     position: relative;
-    flex: 1;
+    flex: 0 0 auto;
     min-width: 0;
 }
 
@@ -711,6 +715,12 @@ header p {
     margin: 12px 0;
 }
 
+/* The reason is context, not the answer: quieter than the main content. */
+.reason-text {
+    font-style: italic;
+    color: var(--muted);
+}
+
 .diff-line {
     display: block;
     min-height: 1.7em;
@@ -948,12 +958,11 @@ header p {
     margin: 8px 8px 0 0;
 }
 
-/* Confirmation choices share one aligned row with equal widths and a distinct
-   colour per role (go / trust / caution). */
+/* Confirmation choices share an aligned grid: equal widths, two per row, with a
+   distinct colour per role (go / trust / caution). */
 .pending-actions {
     display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     margin-top: 12px;
 }
@@ -1368,6 +1377,10 @@ header p {
 }
 
 :root[data-theme="dark"] #send {
+    color: #141927;
+}
+
+:root[data-theme="dark"] #new-session button {
     color: #141927;
 }
 

@@ -134,7 +134,8 @@ func (p *fakeProvider) Completion(ctx context.Context, _ provider.CompletionPara
 	p.calls++
 	text := `{"action":"done","payload":"finished","reason":"ok"}`
 	if p.question && p.calls == 1 {
-		text = `{"action":"ask","payload":"Which target?","reason":"clarify"}`
+		// Pause on a confirmation prompt (the ask action no longer blocks).
+		text = `{"action":"tool","toolname":"execute","payload":"printf not-trusted","reason":"needs approval"}`
 	}
 	return &provider.ChatCompletion{Choices: []provider.Choice{{Message: provider.Message{Role: "assistant", Content: text}}}}, nil
 }
@@ -248,7 +249,7 @@ func TestQuestionQueueReconnectAndCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
-	if s.Pending.Kind != "ask" {
+	if s.Pending.Kind != "confirm" {
 		t.Fatal(s)
 	}
 	if err := m.Send("two", "task"); !errors.Is(err, ErrCapacity) {
@@ -291,15 +292,12 @@ func TestQuestionQueueReconnectAndCapacity(t *testing.T) {
 	h, _ := m.History("one", 0, 100)
 	found := false
 	for _, turn := range h.Turns {
-		if turn.Kind == core.KindUserAnswer {
+		if turn.Kind == core.KindToolResult {
 			found = true
-			if turn.Content != "[user answer]\ntarget" {
-				t.Fatalf("queue answered question: %+v", turn)
-			}
 		}
 	}
 	if !found {
-		t.Fatal("missing answer")
+		t.Fatal("missing tool result after the queued reply")
 	}
 	if err := m.Cancel("one"); err != nil {
 		t.Fatal(err)

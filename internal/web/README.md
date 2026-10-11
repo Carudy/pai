@@ -162,13 +162,13 @@ rejected; there is no URL authentication.
   event; heartbeat comments. No Last-Event-ID replay. 404 for no live worker.
 - `POST /api/send`, `/api/steer`: `{ "name": "...", "text": "..." }`.
 - `POST /api/cancel`: `{ "name": "..." }`.
-- `POST /api/reply`: `{ "name": "...", "prompt_id": "...", "text": "...",
-  "choice": "once"|"deny"|"session"|"always" }`; text answers questions and
-  choice answers confirmations (an omitted choice defaults to deny). A
-  confirmation whose `pending.untrusted` is non-empty additionally offers
-  trusting those command names — or the containing directory when
-  `pending.trust_target` is `path` — for the run (`session`) or for good
-  (`always`).
+- `POST /api/reply`: `{ "name": "...", "prompt_id": "...", "choice":
+  "once"|"deny"|"session"|"always" }`; answers the pending confirmation (an
+  omitted choice defaults to deny; a leftover `text` field is accepted but
+  unused, since the `ask` action no longer creates a prompt). A confirmation
+  whose `pending.untrusted` is non-empty additionally offers trusting those
+  command names — or the containing directory when `pending.trust_target` is
+  `path` — for the run (`session`) or for good (`always`).
 
 Send/steer/cancel/reply success is 202 (login/model 200), not a promise that the task completed. Stale
 prompt IDs are 409, missing live workers 404, full capacity/queues 429, closed

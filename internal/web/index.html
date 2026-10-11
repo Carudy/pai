@@ -32,13 +32,9 @@
                     <span>Personal workspace</span>
                 </div>
                 <form id="new-session">
-                    <label
-                        >New named session<input
-                            id="session-name"
-                            maxlength="256"
-                            placeholder="Session name"
-                            required /></label
-                    ><label for="session-cwd">Working directory (optional)</label>
+                    <label for="session-name">New named session</label>
+                    <input id="session-name" maxlength="256" placeholder="Session name" required />
+                    <label for="session-cwd">Working directory (optional)</label>
                     <input id="session-cwd" placeholder="PAI serving DIR" aria-describedby="cwd-hint" />
                     <p id="cwd-hint">The server checks that this directory exists.</p>
                     <label for="session-role">Role</label>

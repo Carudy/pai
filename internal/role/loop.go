@@ -428,25 +428,11 @@ func step(
 		return false, history, nil
 
 	case chat.ActionAsk:
+		// The question is shown and recorded like any other reply; control returns
+		// to the user's normal input path instead of a separate blocking prompt. The
+		// answer arrives as the next instruction, which the model reads in history.
 		rt.Observer.Ask(resp.GetPayload())
-
-		answer, err := rt.Prompter.Ask("Your answer:")
-		if err != nil {
-			if errors.Is(err, core.ErrAborted) {
-				// User cancelled the question: end this turn and let the loop
-				// decide (prompt again if interactive).
-				return false, history, nil
-			}
-			return false, nil, fmt.Errorf("user input error: %w", err)
-		}
-		if answer != "" {
-			rt.Observer.User(answer)
-		} else {
-			answer = "[user cancelled / no answer]"
-		}
-		answerTurn := "[user answer]\n" + answer
-		rt.record(core.Turn{Role: "user", Kind: core.KindUserAnswer, Content: answerTurn})
-		history = append(history, provider.Message{Role: provider.RoleUser, Content: answerTurn, Kind: core.KindUserAnswer})
+		return false, history, nil
 
 	case chat.ActionTool:
 		rt.Logger.Debugf("toolname: %s\n", resp.ToolName)

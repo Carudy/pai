@@ -277,10 +277,6 @@ async function sessions(reset = false) {
   let page;
   try { page = await api('sessions?offset=' + sessionOffset + '&limit=100'); }
   catch (e) { $('sessions-status').textContent = 'Could not load sessions. Please retry or reload.'; throw e; }
-  // Prefill the working-directory field with the server's launch dir when empty.
-  if (typeof page.default_cwd === 'string' && page.default_cwd && !$('session-cwd').value) {
-    $('session-cwd').value = page.default_cwd;
-  }
   for (const meta of page.sessions || []) {
     const row = text('div', '', 'session-row');
     row.dataset.name = meta.name;
@@ -392,7 +388,10 @@ function rawDetails(node, value, limit = Infinity) {
 function response(node, data) {
   const tool = data.action === 'tool';
   node.append(text('div', (tool ? (icons[data.toolname] || '⚙') + ' ' + (data.toolname || 'Tool') : ({done:'✓ Complete',ask:'? Question',terminate:'■ Stopped'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
-  if (data.reason) node.append(text('div', 'Reason', 'field-label'), prose(data.reason), text('hr', '', 'response-divider'));
+  if (data.reason) {
+    const reason = prose(data.reason); reason.className += ' reason-text';
+    node.append(text('div', 'Reason', 'field-label'), reason, text('hr', '', 'response-divider'));
+  }
   if (tool) { node.className += ' tool-card'; if (typeof data.payload === 'string') node.append(text('div', data.toolname === 'execute' ? 'CMD' : 'Query', 'field-label')); payload(node, data.payload); }
   else if (typeof data.payload === 'string') node.append(data.action === 'done' ? completeProse(data.payload) : prose(data.payload));
   else payload(node, data.payload);
@@ -602,10 +601,6 @@ function snapshot(s) {
       yes.className = 'primary'; no.className = 'caution';
       yes.onclick = () => reply('', 'once'); no.onclick = () => reply('', 'deny'); $('pending').append(actionRow([yes, no]));
     }
-  } else {
-    const form = document.createElement('form'), input = document.createElement('textarea'), button = text('button', 'Reply');
-    input.setAttribute('aria-label', 'Answer'); input.required = true;
-    form.append(input, button); form.onsubmit = e => { e.preventDefault(); reply(input.value, 'once'); }; $('pending').append(form);
   }
 }
 async function loadSnapshot() {

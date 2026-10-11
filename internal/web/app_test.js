@@ -157,17 +157,14 @@ for (const phase of ['awaiting','stopped']) {
 }
 
 const page = browser();
-page.run("selected = 'one'; snapshot({state:'busy',queued:0,pending:{id:'1',kind:'ask',title:'Question'}})");
-const form = descendants(page.pending()).find(node => node.tag === 'form'), input = descendants(form).find(node => node.tag === 'textarea');
-input.value = 'unfinished answer';
+page.run("selected = 'one'; snapshot({state:'busy',queued:0,pending:{id:'1',kind:'confirm',title:'Proceed?',tool:{Name:'edit',Target:'/f',Detail:'d',Reason:'r'}}})");
+const promptTitle = page.pending().children[0];
 for (let i = 0; i < 5; i++) {
-  page.run("snapshot({state:'busy',queued:2,pending:{id:'1',kind:'ask',title:'Question'}})");
-  assert.equal(descendants(page.pending()).find(node => node.tag === 'form'), form, 'same prompt must preserve form identity/focus');
-  assert.equal(input.value, 'unfinished answer', 'same prompt must preserve draft');
+  page.run("snapshot({state:'busy',queued:2,pending:{id:'1',kind:'confirm',title:'Proceed?',tool:{Name:'edit',Target:'/f',Detail:'d',Reason:'r'}}})");
+  assert.equal(page.pending().children[0], promptTitle, 'same prompt keeps its card (focus/draft preserved)');
 }
-page.run("snapshot({state:'busy',queued:0,pending:{id:'2',kind:'ask',title:'Next question'}})");
-assert.notEqual(descendants(page.pending()).find(node => node.tag === 'form'), form);
-assert.equal(descendants(page.pending()).find(node => node.tag === 'form').children[0].value, '');
+page.run("snapshot({state:'busy',queued:0,pending:{id:'2',kind:'confirm',title:'Next?',tool:{Name:'edit',Target:'/f',Detail:'d',Reason:'r'}}})");
+assert.notEqual(page.pending().children[0], promptTitle, 'a new prompt rebuilds the card');
 page.run("snapshot({state:'awaiting',queued:0})");
 assert.equal(page.pending().children.length, 0);
 const confirmation = {state:'busy',queued:0,pending:{id:'3',kind:'confirm',title:'Review edit',tool:{Name:'edit',Target:'/fixed/file',Detail:'replace text',Reason:'fix',Diff:'-old\n+new'}}};
