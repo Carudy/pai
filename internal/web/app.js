@@ -86,6 +86,10 @@ async function applyModel(e) {
 let durable = [], liveSteps = [], currentStep = null, thinking = '';
 let liveCard = null, liveType = '', liveText = '';
 const liveTextLimit = 16000;
+// A confirming card's choices share one aligned row.
+const activityLimit = 60;
+// Cap the in-memory conversation window (older turns reload from the store).
+const historyLimit = 200;
 let runTimer = null, runStarted = 0, runState = '', runLabel = '';
 function paintRunProgress() {
   const seconds = Math.max(0, Math.floor((Date.now() - runStarted) / 1000));
@@ -227,6 +231,7 @@ function initPendingDrag() { initDraggable($('pending'), '#pending-title'); }
 function initReasoningDrag() { initDraggable($('reasoning-preview'), '#reasoning-preview h3', REASONING_POS_KEY); }
 function showReasoning() { restorePosition($('reasoning-preview'), REASONING_POS_KEY); $('reasoning-preview').hidden = false; }
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
+function actionRow(buttons) { const row = text('div', '', 'pending-actions'); row.append(...buttons); return row; }
 function error(e) { $('error').textContent = e.message || String(e); }
 // A transient notice, layered over the workspace so a reason (e.g. why "Always"
 // became session-only, or that a directory is now trusted) is not lost in the
@@ -481,7 +486,11 @@ async function history(reset = false, forceBottom = false) {
   const initial = !$('history').children.length;
   const top = scroller.scrollTop, height = scroller.scrollHeight;
   const follow = height - scroller.clientHeight - top <= 80;
-  durable = next; historyOffset = offset; historyTotal = meta.total;
+  // Bound the window when the reader is at the bottom; older turns reload from
+  // the store on scroll-up, so a very long session does not grow without limit.
+  let trimmed = 0;
+  if (next.length > historyLimit && follow) { trimmed = next.length - historyLimit; next.splice(0, trimmed); }
+  durable = next; historyOffset = offset + trimmed; historyTotal = meta.total;
   if (changed || initial) paintConversation();
   $('workspace').textContent = 'Workspace: ' + (meta.cwd || 'server working directory');
   $('workspace').title = $('workspace').textContent;
@@ -587,11 +596,11 @@ function snapshot(s) {
       once.className = 'primary'; session.className = 'secondary'; always.className = 'secondary'; no.className = 'caution';
       once.onclick = () => reply('', 'once'); session.onclick = () => reply('', 'session');
       always.onclick = () => reply('', 'always'); no.onclick = () => reply('', 'deny');
-      $('pending').append(once, session, always, no);
+      $('pending').append(actionRow([once, session, always, no]));
     } else {
       const yes = text('button', 'Approve'), no = text('button', 'Decline');
       yes.className = 'primary'; no.className = 'caution';
-      yes.onclick = () => reply('', 'once'); no.onclick = () => reply('', 'deny'); $('pending').append(yes, no);
+      yes.onclick = () => reply('', 'once'); no.onclick = () => reply('', 'deny'); $('pending').append(actionRow([yes, no]));
     }
   } else {
     const form = document.createElement('form'), input = document.createElement('textarea'), button = text('button', 'Reply');
@@ -759,7 +768,7 @@ function activity(event) {
     liveCard = text('article', '', 'activity-card');
     liveCard.append(text('div', type.replaceAll('_', ' '), 'card-heading'), text('pre', ''));
     $('live-progress').append(liveCard); liveText = ''; liveType = type;
-    while ($('live-progress').children.length > 100) $('live-progress').firstElementChild.remove();
+    while ($('live-progress').children.length > activityLimit) $('live-progress').firstElementChild.remove();
   }
   liveText = (liveText + (typeof data === 'string' ? data : JSON.stringify(data, null, 2))).slice(-liveTextLimit);
   liveCard.lastElementChild.textContent = liveText;
@@ -804,7 +813,7 @@ function flushReasoning() {
     const card = text('article', '', 'activity-card');
     card.append(text('div', 'reasoning', 'card-heading'), text('pre', thinking));
     $('live-progress').append(card);
-    while ($('live-progress').children.length > 100) $('live-progress').firstElementChild.remove();
+    while ($('live-progress').children.length > activityLimit) $('live-progress').firstElementChild.remove();
     activityScroll();
   }
   clearReasoning();

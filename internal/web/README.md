@@ -80,13 +80,18 @@ focusing the field shows every suggestion, typing filters it, and choosing one
 fills the field. The field still accepts any configured `provider:model`, with
 spaces around the colon normalized; suggestions are not an allowlist.
 
-The header keeps a compact settings grid (Role and Model, each with Apply), a
-Rename button, and a light/dark theme switch (remembered in `localStorage`; light
-is the default, seeded from the system preference on a first visit). The status
-bar is a fixed height and truncates, so the header does not reflow as the state
-text changes. The conversation loads only the most recent turns and appends older
-ones as the reader scrolls to the top (there is no "More history" button); a
-floating up-arrow jumps to the previous user instruction.
+The header keeps a compact settings grid (Role and Model side by side, each with
+Apply), a Rename button, and a light/dark theme switch (remembered in
+`localStorage`; light is the default, seeded from the system preference on a
+first visit). The status bar is a fixed height and truncates, so the header does
+not reflow as the state text changes; the workspace and token usage share one
+line. The conversation loads only the most recent turns and appends older ones as
+the reader scrolls to the top (there is no "More history" button); a floating
+up-arrow jumps to the previous user instruction. Both panels are bounded: the
+activity log keeps the last 60 cards and the in-memory conversation window is
+capped (older turns reload from the store) so a long session does not grow
+without limit. Confirmation choices render as one aligned row of equal-width
+buttons.
 
 Snapshots also recover the current reasoning tail (at most 64 KiB); ordinary
 reasoning events carry deltas, not repeated full text. Reasoning is transient

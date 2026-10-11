@@ -175,14 +175,14 @@ main {
 }
 
 main > header {
-    padding: 20px 28px;
+    padding: 14px 22px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
 }
 
 main > header h2,
 #activity > header h2 {
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 750;
 }
 
@@ -232,21 +232,29 @@ header p {
     color: var(--muted);
 }
 
+#new-session {
+    display: flex;
+    flex-direction: column;
+}
+
 #new-session input,
 #new-session select {
     margin: 6px 0 8px;
 }
 
 #new-session button {
-    background: #d8f4df;
-    border-color: #99d7ab;
-    color: #195c33;
-    font-weight: 700;
+    align-self: flex-end;
+    width: auto;
+    padding: 4px 14px;
+    font-size: 12px;
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
 }
 
 #new-session button:hover {
-    background: #c2ebce;
-    border-color: #6bbd84;
+    background: var(--accent);
+    filter: brightness(0.94);
 }
 
 #cwd-hint {
@@ -351,20 +359,23 @@ header p {
     overflow-wrap: anywhere;
 }
 
-#model-form,
-#role-form {
-    display: contents;
+/* Role and Model sit side by side, each an aligned label/control/Apply row, so
+   their controls are the same width and the header stays one compact line. */
+.session-config {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 16px;
+    align-items: center;
+    margin: 6px 0 2px;
 }
 
-/* The settings grid aligns each label/control/Apply column, so role and model
-   read as one compact table instead of a wrapping row of forms. */
-.session-config {
+#role-form,
+#model-form {
     display: grid;
     grid-template-columns: max-content minmax(0, 1fr) max-content;
     align-items: center;
-    gap: 6px 8px;
-    margin: 10px 0 4px;
-    max-width: 620px;
+    gap: 6px;
+    min-width: 0;
 }
 
 #model-form input,
@@ -478,15 +489,25 @@ header p {
     text-overflow: ellipsis;
 }
 
-#workspace {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.workspace-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    min-width: 0;
     margin: 4px 0 2px;
 }
 
+#workspace {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 #token-usage {
-    margin-top: 2px;
+    flex: 0 0 auto;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     color: var(--muted);
@@ -558,8 +579,12 @@ header p {
     right: 16px;
     bottom: 16px;
     z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 32px;
     height: 32px;
+    padding: 0;
     border-radius: 50%;
     border: 1px solid var(--border);
     background: var(--panel);
@@ -921,6 +946,21 @@ header p {
 
 #pending button {
     margin: 8px 8px 0 0;
+}
+
+/* Confirmation choices share one aligned row with equal widths and a distinct
+   colour per role (go / trust / caution). */
+.pending-actions {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.pending-actions button {
+    width: 100%;
+    margin: 0;
 }
 
 /* Drag the confirmation card aside by its title. */
@@ -1329,16 +1369,6 @@ header p {
 
 :root[data-theme="dark"] #send {
     color: #141927;
-}
-
-:root[data-theme="dark"] #new-session button {
-    background: #c2ebce;
-    border-color: #83c797;
-    color: #174d2a;
-}
-
-:root[data-theme="dark"] #new-session button:hover {
-    background: #d8f4df;
 }
 
 :root[data-theme="dark"] #sessions button {
