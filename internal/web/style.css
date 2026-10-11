@@ -1139,10 +1139,9 @@ header p {
 
 /* ── Overlays ──────────────────────────────────────────────── */
 
-#error:empty {
-    display: none;
-}
-
+/* One top-center stack shared by errors and notices: a transient message looks
+   and behaves the same wherever it originates, and each card self-dismisses
+   (see notify() in app.js). */
 #error {
     position: fixed;
     top: 8px;
@@ -1150,38 +1149,26 @@ header p {
     transform: translateX(-50%);
     z-index: 10;
     max-width: 90vw;
-    background: var(--panel);
-    border: 1px solid var(--red);
-    border-radius: 8px;
-    padding: 10px;
-    color: var(--red);
-}
-
-/* Transient notices, stacked above the composer so a passing reason is seen
-   without being lost in the activity log. */
-.toasts {
-    position: fixed;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 11;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: 8px;
-    max-width: 90vw;
-    pointer-events: none;
+}
+
+#error:empty {
+    display: none;
 }
 
 .toast {
     max-width: 90vw;
     background: var(--panel);
-    border: 1px solid var(--accent);
+    border: 1px solid var(--red);
     border-radius: 8px;
     padding: 8px 12px;
-    color: var(--ink);
+    color: var(--red);
     box-shadow: var(--shadow);
     animation: toast-in 0.18s ease-out;
+    cursor: pointer;
 }
 
 /* Rewind confirmation: a small centered card offering backup vs a plain

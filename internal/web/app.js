@@ -232,18 +232,22 @@ function initReasoningDrag() { initDraggable($('reasoning-preview'), '#reasoning
 function showReasoning() { restorePosition($('reasoning-preview'), REASONING_POS_KEY); $('reasoning-preview').hidden = false; }
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
 function actionRow(buttons) { const row = text('div', '', 'pending-actions'); row.append(...buttons); return row; }
-function error(e) { $('error').textContent = e.message || String(e); }
-// A transient notice, layered over the workspace so a reason (e.g. why "Always"
-// became session-only, or that a directory is now trusted) is not lost in the
-// activity log. At most three are shown; each fades on its own.
-function toast(message) {
-  if (!document.body) return;
-  if (!toastHost) { toastHost = text('div', '', 'toasts'); document.body.append(toastHost); }
+// Errors and notices share one top-center stack, so a transient message always
+// looks and behaves the same wherever it originates. Each card self-dismisses on
+// a timer (or on click); at most three are kept so a burst cannot bury the
+// workspace.
+function notify(message) {
+  const host = $('error');
+  if (!host) return;
+  toastHost = host;
   const node = text('div', message, 'toast');
-  toastHost.append(node);
-  while (toastHost.children.length > 3) toastHost.firstElementChild.remove();
-  setTimeout(() => node.remove(), 6000);
+  node.onclick = () => node.remove();
+  host.append(node);
+  while (host.children.length > 3) host.firstElementChild.remove();
+  setTimeout(() => node.remove(), 8000);
 }
+function error(e) { notify(e.message || String(e)); }
+function toast(message) { notify(message); }
 function loginNeeded() { $('login').hidden = false; $('app').hidden = true; disconnect(); }
 // ── Theme ───────────────────────────────────────────────────
 // Light is the default; the switch sets data-theme on <html> and remembers the
