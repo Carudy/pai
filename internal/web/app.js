@@ -9,12 +9,13 @@ let selected = '', generation = 0, stream = null, retry = null, refreshTimer = n
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
 let pendingID = null, pendingSession = null;
 let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
+let modelList = [];
 // The browser remembers the open session in localStorage, never a cookie: it is
 // only needed after the page loads, so it need not travel on every request, and
 // it needs no server state. A cleared store just leaves the workspace empty.
 const SESSION_KEY = 'pai.session';
 let toastHost = null;
-let savedRole = '';
+let savedRole = '', roleDirty = false;
 // ── Model controls ──────────────────────────────────────────
 function normalizeModel(value) { return value.trim().replace(/\s*:\s*/, ':'); }
 function modelControls() {
@@ -30,9 +31,38 @@ function modelMetadata(model) {
 async function models() {
   const data = await api('models');
   defaultModel = data.default_model || '';
-  $('model-options').replaceChildren(...data.models.map(model => { const option = text('option', model); option.value = model; return option; }));
+  modelList = Array.isArray(data.models) ? data.models.slice() : [];
+  renderModelOptions('');
   if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
   modelControls();
+}
+// A datalist filters its suggestions by the field's current value, which hides
+// the other presets whenever a model is already set. Render our own dropdown so
+// every suggestion is visible on focus, while the field still accepts free text.
+function renderModelOptions(filter) {
+  const list = $('model-options'), input = $('session-model');
+  const query = String(filter || '').trim().toLowerCase();
+  const matches = modelList.filter(model => !query || model.toLowerCase().includes(query));
+  list.replaceChildren(...matches.map(model => {
+    const option = text('li', model, 'model-option');
+    option.setAttribute('role', 'option');
+    // Mousedown (not click) so preventDefault keeps the input from blurring first.
+    option.onmousedown = event => { event.preventDefault(); chooseModel(model); };
+    return option;
+  }));
+  const open = matches.length > 0 && !input.disabled;
+  list.hidden = !open;
+  input.setAttribute('aria-expanded', String(open));
+}
+function chooseModel(value) {
+  $('session-model').value = value;
+  modelDirty = true;
+  closeModelOptions();
+  modelControls();
+}
+function closeModelOptions() {
+  $('model-options').hidden = true;
+  $('session-model').setAttribute('aria-expanded', 'false');
 }
 async function applyModel(e) {
   e.preventDefault(); if ($('apply-model').disabled) return;
@@ -118,7 +148,53 @@ function parsedResponse(content) {
   return null;
 }
 // ── API and small DOM helpers ───────────────────────────────
-function clearPending() { $('pending').replaceChildren(); pendingID = null; pendingSession = null; }
+function clearPending() {
+  const node = $('pending');
+  node.replaceChildren();
+  // A dragged card keeps its offset, so re-center before the next prompt.
+  node.style.left = ''; node.style.top = ''; node.style.bottom = ''; node.style.transform = '';
+  node.classList.remove('dragging');
+  pendingID = null; pendingSession = null;
+}
+// The confirmation card floats over the conversation; let the user drag it by its
+// title out of the way. It stays clamped inside the conversation panel, and its
+// position resets whenever the prompt changes. Bound once (by delegation) so it
+// survives the card being rebuilt for each prompt.
+function initPendingDrag() {
+  const pending = $('pending');
+  let drag = null;
+  const clamp = (value, max) => Math.min(Math.max(0, max), Math.max(0, value));
+  pending.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || !event.target || event.target.id !== 'pending-title') return;
+    const wrapper = pending.parentElement;
+    if (!wrapper) return;
+    // Freeze the centered card at its current pixels before switching to an
+    // explicit offset, so it does not jump when the drag begins.
+    const frame = wrapper.getBoundingClientRect(), card = pending.getBoundingClientRect();
+    const left = card.left - frame.left, top = card.top - frame.top;
+    pending.style.transform = 'none';
+    pending.style.left = left + 'px';
+    pending.style.top = top + 'px';
+    drag = {id: event.pointerId, x: event.clientX, y: event.clientY, left, top, width: card.width, height: card.height};
+    pending.classList.add('dragging');
+    try { pending.setPointerCapture(event.pointerId); } catch (_) {}
+    event.preventDefault();
+  });
+  pending.addEventListener('pointermove', event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    const frame = pending.parentElement.getBoundingClientRect();
+    pending.style.left = clamp(drag.left + event.clientX - drag.x, frame.width - drag.width) + 'px';
+    pending.style.top = clamp(drag.top + event.clientY - drag.y, frame.height - drag.height) + 'px';
+  });
+  const end = event => {
+    if (!drag || event.pointerId !== drag.id) return;
+    drag = null;
+    pending.classList.remove('dragging');
+    try { pending.releasePointerCapture(event.pointerId); } catch (_) {}
+  };
+  pending.addEventListener('pointerup', end);
+  pending.addEventListener('pointercancel', end);
+}
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
 function error(e) { $('error').textContent = e.message || String(e); }
 // A transient notice, layered over the workspace so a reason (e.g. why "Always"
@@ -152,9 +228,20 @@ async function sessions(reset = false) {
     $('session-cwd').value = page.default_cwd;
   }
   for (const meta of page.sessions || []) {
-    const button = text('button', meta.name); button.classList.toggle('selected', meta.name === selected);
+    const row = text('div', '', 'session-row');
+    row.dataset.name = meta.name;
+    row.classList.toggle('selected', meta.name === selected);
+    const button = text('button', meta.name, 'session-open');
+    button.type = 'button';
     button.setAttribute('aria-current', meta.name === selected ? 'page' : 'false');
-    button.onclick = () => select(meta.name, meta.cwd); $('sessions').append(button);
+    button.onclick = () => select(meta.name, meta.cwd);
+    const remove = text('button', '🗑', 'session-delete');
+    remove.type = 'button';
+    remove.title = 'Delete this session';
+    remove.setAttribute('aria-label', 'Delete session ' + meta.name);
+    remove.onclick = event => { event.stopPropagation(); return deleteSession(meta.name); };
+    row.append(button, remove);
+    $('sessions').append(row);
   }
   sessionOffset += (page.sessions || []).length; $('more-sessions').hidden = sessionOffset >= page.total;
   $('sessions-status').textContent = sessionOffset ? '' : 'No saved sessions yet. Create a named session above.';
@@ -314,7 +401,9 @@ function sessionMetadata(meta = {}) {
   modelMetadata(meta.model);
   savedRole = typeof meta.role === 'string' ? meta.role.trim() : '';
   const roleSelect = $('session-role-select');
-  roleSelect.value = [...roleSelect.children].some(option => option.value === savedRole) ? savedRole : '';
+  // Preserve an unsaved role choice across the frequent history/snapshot
+  // refreshes, exactly as model drafts are kept.
+  if (!roleDirty) roleSelect.value = [...roleSelect.children].some(option => option.value === savedRole) ? savedRole : '';
   for (const field of ['role', 'model']) {
     const node = $('session-' + field + '-info');
     const value = typeof meta[field] === 'string' ? meta[field].trim() : '';
@@ -494,13 +583,13 @@ function connect() {
 async function select(name, cwd) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
   try { localStorage.setItem(SESSION_KEY, name); } catch {}
-  clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; modelBlocked = true; sessionMetadata();
+  clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('workspace').textContent = 'Workspace: ' + (cwd || 'server working directory');
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
     $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   $('conversation').scrollTop = 0; controls();
-  for (const button of $('sessions').children) { const active = button.textContent === name; button.classList.toggle('selected', active); button.setAttribute('aria-current', active ? 'page' : 'false'); }
+  for (const row of $('sessions').children) { const active = row.dataset?.name === name; row.classList.toggle('selected', active); const open = row.firstElementChild; if (open) open.setAttribute('aria-current', active ? 'page' : 'false'); }
   $('app').classList.remove('sessions-open'); $('toggle-sessions').setAttribute('aria-expanded', 'false');
   try { await history(true, true); } catch (e) { if (e.status !== 404) error(e); }
   if (version !== generation) return;
@@ -543,6 +632,34 @@ async function action(kind) {
     if (selected === name) { await loadSnapshot(); if (!stream) connect(); scheduleHistory(); }
     await sessions(true);
   } catch (e) { error(e); }
+}
+// Delete a stored session after confirmation. Deleting the open session also
+// returns the workspace to its unselected state.
+async function deleteSession(name) {
+  if (!name) return;
+  if (!confirm('Delete session "' + name + '"? Its saved history is removed and cannot be recovered.')) return;
+  try {
+    await api('delete', {name});
+  } catch (e) { error(e); sessions(true).catch(() => {}); return; }
+  if (selected === name) clearWorkspace();
+  await sessions(true).catch(error);
+}
+// Return the workspace to its pre-selection state once the open session is gone.
+function clearWorkspace() {
+  disconnect(); generation++; selected = '';
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
+  durable = []; liveSteps = []; currentStep = null; thinking = '';
+  liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0;
+  sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; modelBlocked = false;
+  $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
+  clearReasoning(); usageSnapshot({});
+  $('title').textContent = 'Select or create a session';
+  $('workspace').textContent = 'Workspace — select a session';
+  sessionMetadata();
+  const empty = text('div', '', 'empty');
+  empty.append(text('h3', 'Best partner, PAI!'), text('p', 'Open a named session to start working with PAI.'));
+  $('history').append(empty);
+  controls();
 }
 // ── Activity feed ───────────────────────────────────────────
 function activity(event) {
@@ -633,8 +750,9 @@ async function roles() {
   dropdown.value = data.roles.includes(previous) ? previous : data.default_role;
   // The header role control switches an existing session's role.
   const header = $('session-role-select');
+  const draft = roleDirty ? header.value : '';
   header.replaceChildren(...data.roles.map(option));
-  header.value = data.roles.includes(savedRole) ? savedRole : '';
+  header.value = data.roles.includes(draft || savedRole) ? (draft || savedRole) : '';
   controls();
 }
 async function applyRole(e) {
@@ -643,10 +761,11 @@ async function applyRole(e) {
   if (!selected || !role || role === savedRole) return;
   const name = selected;
   try {
-    await api('role', {name, role});
-    if (selected !== name) return;
-    await loadSnapshot();
-    await refreshHistory();
+    	await api('role', {name, role});
+    	if (selected !== name) return;
+    	roleDirty = false;
+    	await loadSnapshot();
+    	await refreshHistory();
   } catch (err) { error(err); }
 }
 async function renameSession() {
@@ -683,7 +802,11 @@ $('login-form').onsubmit = async e => { e.preventDefault(); try { await api('log
 $('model-form').onsubmit = applyModel;
 $('role-form').onsubmit = applyRole;
 $('rename-session').onclick = renameSession;
-$('session-model').oninput = () => { modelDirty = true; modelControls(); };
+$('session-model').oninput = () => { modelDirty = true; renderModelOptions($('session-model').value); modelControls(); };
+$('session-model').onfocus = () => renderModelOptions($('session-model').value);
+$('session-model').onblur = () => setTimeout(closeModelOptions, 120);
+$('session-model').onkeydown = event => { if (event.key === 'Escape') closeModelOptions(); };
+$('session-role-select').onchange = () => { roleDirty = true; controls(); };
 $('new-session').onsubmit = createSession;
 $('composer').onsubmit = e => { e.preventDefault(); action('send'); };
 $('steer').onclick = () => action('steer'); $('cancel').onclick = () => action('cancel');
@@ -704,6 +827,7 @@ $('toggle-activity').onclick = () => {
 };
 
 controls();
+initPendingDrag();
 sessions(true).then(restoreSession).catch(error);
 roles().catch(error);
 models().catch(error);

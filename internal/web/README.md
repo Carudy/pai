@@ -73,8 +73,11 @@ renders snapshots rather than adding SSE events, so reconnects cannot double
 count. “This run” means the worker runtime, including subsequent instructions;
 resuming a retired worker starts fresh, not session-lifetime totals.
 
-Model suggestions come from the configured default and saved sessions, not a
-provider/model catalog. The input accepts any configured `provider:model`, with
+Model suggestions come from the configured default, `preset_models`, and saved
+sessions, not a provider/model catalog. They render in a dropdown (not a
+`<datalist>`, which hides non-matching entries once the field has a value):
+focusing the field shows every suggestion, typing filters it, and choosing one
+fills the field. The field still accepts any configured `provider:model`, with
 spaces around the colon normalized; suggestions are not an allowlist.
 
 Snapshots also recover the current reasoning tail (at most 64 KiB); ordinary
@@ -113,9 +116,10 @@ rejected; there is no URL authentication.
   `{ "ok": true }`. Requires an idle session; busy/starting, queued work or
   pending prompts return 409. Custom models for configured providers are accepted.
   Saves the model without changing history or the global default; future sends
-  use it. Retiring the old runtime closes SSE, so snapshot/events 404 is normal
+  Retiring the old runtime closes SSE, so snapshot/events 404 is normal
   until the next send. The browser reloads saved metadata and preserves unsaved
-  model drafts across history refreshes, but resets them on selection or Apply.
+  model and role drafts across history refreshes, but resets them on selection or
+  Apply.
 - `POST /api/role`: `{ "name": "...", "role": "..." }`; 202 `{ "ok": true }`.
   Requires an idle session (else 409) and a known role (else 400). Saves the role
   without changing history; the next send rebuilds the prompt and tool set.
@@ -123,6 +127,10 @@ rejected; there is no URL authentication.
   `{ "name": "<new>" }`. Requires an idle session; a taken name is 400 and a
   missing session 404. The old runtime is retired and its entry dropped, so the
   browser re-selects the new name.
+- `POST /api/delete`: `{ "name": "..." }`; 200 `{ "ok": true }`. Requires an idle
+  session (else 409); a missing session is 404. The idle runtime is retired and
+  its entry dropped, and the stored history is removed. The browser confirms
+  before deleting and, when the open session is deleted, clears the workspace.
 - `POST /api/rewind`: `{ "name": "...", "keep": N }`; 202 `{ "ok": true }`.
   Requires an idle session (else 409); `keep < 0` is 400. Keeps the first `keep`
   turns and drops the rest, retiring the runtime. With `[session] rewind_backup`
@@ -172,7 +180,8 @@ keys `Name`, `Target`, `Detail`, `Reason`, `Diff`) on reconnect, page reload, an
 session switch, together with `pending.untrusted` (what a confirmation can
 trust) and `pending.trust_target` (`command` or `path`, so the card words it
 correctly). Approval cards render only this retained tool, not a transient
-last tool event. Repeated snapshots for the same session/pending ID preserve
+last tool event. The floating prompt card can be dragged aside by its title
+(clamped to the conversation panel; its position resets when the prompt changes). Repeated snapshots for the same session/pending ID preserve
 the existing question form, focus, and draft; a new ID or cleared prompt resets
 the card. Drafts are not persisted across page reloads or session switches. Selecting
 another session closes its subscription but never calls Cancel. New named

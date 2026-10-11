@@ -8,6 +8,7 @@ class Element {
   constructor(tag) {
     this.tag = tag; this.tagName = tag.toUpperCase(); this.children = []; this._text = ''; this.value = ''; this.dataset = {}; this.attributes = {};
     this.scrollTop = 0; this.scrollHeight = 1000; this.clientHeight = 400; this.offsetHeight = 20;
+    this.style = {};
     this.classes = new Set();
     this.classList = {toggle: (name, force) => { const on = force === undefined ? !this.classes.has(name) : force; if (on) this.classes.add(name); else this.classes.delete(name); return on; }, remove: name => this.classes.delete(name)};
   }
@@ -433,7 +434,8 @@ for (const match of markup.matchAll(/<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi)) {
 }
 assert.deepEqual(stack, []);
 assert.match(markup, /Apply<\/button>\s*<\/form>/);
-assert.match(markup, /<input id="session-model"[^>]*list="model-options"[^>]*placeholder="provider:model"/);
+assert.match(markup, /<input id="session-model"[^>]*placeholder="provider:model"/);
+assert.match(markup, /<ul id="model-options"[^>]*role="listbox"/);
 assert.match(markup, /Suggestions are the configured default and saved session models/);
 assert.match(markup, /Type any configured provider:model/);
 const usagePage = browser();
@@ -501,14 +503,64 @@ async function verifyRole() {
   const p = browser();
   p.run("selected='one'; modelBlocked=false; savedRole='devops'; $('session-role-select').replaceChildren(...['devops','coder'].map(r=>{const o=document.createElement('option');o.value=r;o.textContent=r;return o;})); $('session-role-select').value='devops'; api=async(path,body)=>{globalThis.roleCall=[path,body];return {ok:true};}; loadSnapshot=async()=>{}; refreshHistory=async()=>{}; controls()");
   assert.equal(p.get('apply-role').disabled, true, 'the unchanged role cannot be applied');
-  p.run("$('session-role-select').value='coder'; controls()");
+  p.run("$('session-role-select').value='coder'; roleDirty=true; controls()");
   assert.equal(p.get('apply-role').disabled, false, 'a new role can be applied');
+  // A background refresh must not roll the unsent choice back before Apply.
+  p.run("sessionMetadata({role:'devops'})");
+  assert.equal(p.get('session-role-select').value, 'coder', 'a refresh keeps the unsent role');
   await p.run("applyRole({preventDefault(){}})");
   assert.equal(p.run('roleCall[0]'), 'role');
   assert.equal(p.run('roleCall[1].role'), 'coder');
   assert.equal(p.run('roleCall[1].name'), 'one');
+  assert.equal(p.run('roleDirty'), false, 'applying the role clears the draft flag');
   assert.equal(p.run("selected='one'; controls(); $('rename-session').hidden"), false, 'rename is offered for a selected session');
   assert.equal(p.run("selected=''; controls(); $('rename-session').hidden"), true, 'rename is hidden without a session');
 }
+// The sidebar lists each session with a delete affordance, guarded by a prompt.
+async function verifySessionList() {
+  const p = browser();
+  p.run("selected='one'; globalThis.calls=[]; api=async()=>({sessions:[{name:'one',cwd:'/a'},{name:'two',cwd:'/b'}],total:2,default_cwd:'/a'})");
+  await p.run('sessions(true)');
+  const rows = p.get('sessions').children;
+  assert.equal(rows.length, 2, 'each saved session renders a row');
+  assert.ok(rows[0].classes.has('selected'), 'the open session row is marked selected');
+  assert.ok(!rows[1].classes.has('selected'));
+  assert.deepEqual(rows[0].children.map(node => node.textContent), ['one', '🗑']);
+  assert.equal(rows[0].children[1].title, 'Delete this session');
+  p.run("globalThis.del=[]; api=async(path,body)=>{del.push([path,body]);return {ok:true};}; sessions=async()=>{}; confirm=()=>false");
+  await rows[1].children[1].onclick({stopPropagation(){}});
+  assert.equal(p.run('del.length'), 0, 'declining the prompt deletes nothing');
+  p.run('confirm=()=>true');
+  await rows[1].children[1].onclick({stopPropagation(){}});
+  assert.deepEqual(JSON.parse(p.run('JSON.stringify(del)')), [['delete', {name:'two'}]], 'a confirmed delete removes the right session');
+  assert.equal(p.run('selected'), 'one', 'deleting another session keeps the open one');
+}
+// The model field is a combobox: focus shows every suggestion, typing filters,
+// and choosing one fills the field (free text is still allowed).
+function verifyModelOptions() {
+  const p = browser();
+  p.run("modelList=['deepseek:deepseek-v4-flash','openai:gpt-4o','llama:spark']; selected='one'; $('session-model').disabled=false; renderModelOptions('')");
+  let list = p.get('model-options');
+  assert.equal(list.hidden, false, 'focus opens the suggestion list');
+  assert.deepEqual(list.children.map(node => node.textContent), ['deepseek:deepseek-v4-flash', 'openai:gpt-4o', 'llama:spark']);
+  p.run("renderModelOptions('openai')");
+  assert.deepEqual(p.get('model-options').children.map(node => node.textContent), ['openai:gpt-4o'], 'typing filters the list');
+  p.run("renderModelOptions('nope')");
+  assert.equal(p.get('model-options').hidden, true, 'no matches closes the list');
+  p.run("renderModelOptions(''); chooseModel('llama:spark')");
+  assert.equal(p.get('session-model').value, 'llama:spark', 'choosing a suggestion fills the field');
+  assert.equal(p.get('model-options').hidden, true, 'choosing closes the list');
+  assert.equal(p.run('modelDirty'), true, 'a chosen suggestion is an unsaved edit');
+}
+// Deleting the open session returns the workspace to its unselected state.
+async function verifyDeleteOpen() {
+  const p = browser();
+  p.run("selected='one'; globalThis.calls=[]; api=async(path,body)=>{calls.push([path,body]);return {ok:true};}; sessions=async reset=>calls.push(['sessions',reset]); disconnect=()=>{}; confirm=()=>true; localStorage.setItem('pai.session','one')");
+  await p.run("deleteSession('one')");
+  assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [['delete', {name:'one'}], ['sessions', true]], 'delete then reload the list');
+  assert.equal(p.run('selected'), '', 'the workspace is cleared');
+  assert.equal(p.get('title').textContent, 'Select or create a session');
+  assert.equal(p.run("localStorage.getItem('pai.session')"), null, 'the remembered session is forgotten');
+}
 
-Promise.all([verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

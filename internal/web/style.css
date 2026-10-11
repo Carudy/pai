@@ -200,6 +200,14 @@ main > header h2,
 #state {
     margin-top: 6px;
     color: var(--accent);
+    /* Status text changes on every phase tick; keep it on one ellipsized line so
+       the auto-height header never reflows as the wording grows and shrinks. The
+       full text stays available via the title tooltip. */
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* ── Sidebar ───────────────────────────────────────────────── */
@@ -271,15 +279,46 @@ header p {
     flex: 1;
 }
 
-#sessions button {
+.session-row {
+    display: flex;
+    align-items: stretch;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.session-row button {
     text-align: left;
     overflow-wrap: anywhere;
-    flex-shrink: 0;
     font-style: italic;
     color: #247b80;
 }
 
-#sessions button.selected {
+.session-row .session-open {
+    flex: 1;
+    min-width: 0;
+}
+
+.session-row .session-delete {
+    flex: 0 0 auto;
+    padding: 0 8px;
+    font-style: normal;
+    color: var(--muted);
+}
+
+/* Reveal the delete control on hover for pointer devices; touch devices, which
+   have no hover, keep it visible. */
+@media (hover: hover) {
+    .session-row .session-delete {
+        opacity: 0;
+        transition: opacity 0.1s ease-in-out;
+    }
+    .session-row:hover .session-delete,
+    .session-row:focus-within .session-delete {
+        opacity: 1;
+    }
+}
+
+.session-row.selected .session-open {
     background: #e2f2f1;
     border-color: #75b7b4;
     color: #145e63;
@@ -348,6 +387,42 @@ header p {
     flex-shrink: 0;
 }
 
+/* Combobox: the input plus an always-visible suggestion dropdown. */
+.model-field {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+}
+
+#model-options {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    right: 0;
+    z-index: 5;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    max-height: 240px;
+    overflow: auto;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px #0003;
+}
+
+.model-option {
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.model-option:hover {
+    background: var(--soft);
+}
+
 #rename-session {
     flex-shrink: 0;
     padding: 2px 8px;
@@ -371,12 +446,15 @@ header p {
 .status-row {
     display: flex;
     align-items: baseline;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 4px 12px;
+    min-width: 0;
 }
 
 /* The compact run-status slot keeps its height even while idle. */
 .run-progress-slot {
+    flex: 0 1 auto;
+    min-width: 0;
     min-height: 26px;
     padding-top: 4px;
 }
@@ -388,10 +466,15 @@ header p {
     color: var(--accent);
     font-size: 12px;
     line-height: 22px;
+    min-width: 0;
 }
 
 #run-elapsed {
     font-variant-numeric: tabular-nums;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 #token-usage {
@@ -800,6 +883,24 @@ header p {
     margin: 8px 8px 0 0;
 }
 
+/* Drag the confirmation card aside by its title. */
+#pending-title {
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+}
+
+#pending-title::after {
+    content: " ⠿";
+    color: var(--muted);
+    font-weight: 400;
+}
+
+#pending.dragging,
+#pending.dragging #pending-title {
+    cursor: grabbing;
+}
+
 .confirmation-heading {
     font-weight: 750;
     font-size: 14px;
@@ -1155,7 +1256,10 @@ header p {
     #sessions button {
         color: #8cd4d2;
     }
-    #sessions button.selected {
+    #sessions .session-delete {
+        color: var(--muted);
+    }
+    .session-row.selected .session-open {
         background: #223d40;
         color: #b2e9e4;
         border-color: #579c99;

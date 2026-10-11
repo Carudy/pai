@@ -16,6 +16,36 @@ import (
 	"github.com/Carudy/pai/internal/session"
 )
 
+func TestServeModelsIncludePresets(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	if err := os.MkdirAll(filepath.Join(cfgDir, "pai"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	body := "[app]\ndefault_model = 'deepseek:first'\npreset_models = ['openai:gpt-4o', 'deepseek:first']\n[providers.deepseek]\napi_key = ''\n"
+	if err := os.WriteFile(filepath.Join(cfgDir, "pai", "config.toml"), []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	b := &serveBackend{store: store, cwd: t.TempDir()}
+	models, def, err := b.Models()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def != "deepseek:first" {
+		t.Fatalf("default = %q", def)
+	}
+	// The default is de-duplicated against the preset of the same name.
+	if strings.Join(models, ",") != "deepseek:first,openai:gpt-4o" {
+		t.Fatalf("models = %v", models)
+	}
+}
+
 func TestServeFlags(t *testing.T) {
 	for _, args := range [][]string{{}, {"--ip", "127.0.0.1", "--port", "9384", "--max-active-sessions", "2"}, {"-ip", "127.0.0.1", "-p", "9384"}} {
 		f, err := parseServeFlags(args)

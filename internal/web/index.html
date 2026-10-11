@@ -77,8 +77,10 @@
                         <span id="session-model-info" class="session-meta" title="Saved model" hidden></span>
                     <form id="model-form" aria-label="Session model">
                         <label for="session-model">Model</label>
-                        <input id="session-model" list="model-options" placeholder="provider:model" autocomplete="off" disabled />
-                        <datalist id="model-options"></datalist>
+                        <div class="model-field">
+                            <input id="session-model" placeholder="provider:model" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="model-options" aria-autocomplete="list" disabled />
+                            <ul id="model-options" role="listbox" aria-label="Model suggestions" hidden></ul>
+                        </div>
                         <button id="apply-model" type="submit" disabled>Apply</button>
                     </form>
                     <form id="role-form" aria-label="Session role">

@@ -179,6 +179,12 @@ type RenameBackend interface {
 	Rename(name, newName string) error
 }
 
+// DeleteBackend is optional; deleting a session must not require a backend that
+// cannot persist.
+type DeleteBackend interface {
+	Delete(name string) error
+}
+
 var ErrBusy = errors.New("session is busy; wait for pending prompts and queued instructions before changing model")
 
 func (m *Manager) Models() ([]string, string, error) {
@@ -273,6 +279,25 @@ func (m *Manager) Rename(name, newName string) error {
 	}
 	defer finish()
 	if err := b.Rename(name, newName); err != nil {
+		return err
+	}
+	delete(m.entries, name)
+	return nil
+}
+
+// Delete retires the idle runtime before removing the session from storage, so no
+// live worker keeps serving a deleted session, and drops the orphaned entry.
+func (m *Manager) Delete(name string) error {
+	b, ok := m.backend.(DeleteBackend)
+	if !ok {
+		return errors.New("backend does not support deleting")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.Delete(name); err != nil {
 		return err
 	}
 	delete(m.entries, name)

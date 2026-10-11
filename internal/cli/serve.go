@@ -399,6 +399,11 @@ func (b *serveBackend) Models() ([]string, string, error) {
 		return nil, "", fmt.Errorf("list session models: %w", err)
 	}
 	seen := map[string]bool{cfg.DefaultModel: true}
+	for _, model := range cfg.PresetModels {
+		if model != "" {
+			seen[model] = true
+		}
+	}
 	for _, meta := range metas {
 		if meta.Model != "" {
 			seen[meta.Model] = true
@@ -581,6 +586,23 @@ func (b *serveBackend) Rename(name, newName string) error {
 			return errors.New("a session with that name already exists")
 		}
 		return fmt.Errorf("rename session: %w", err)
+	}
+	return nil
+}
+
+// Delete removes a session and its stored history. The manager retires the idle
+// runtime before this runs, so nothing is left serving a deleted session.
+func (b *serveBackend) Delete(name string) error {
+	if !session.ValidName(name) {
+		return errors.New("invalid session name")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := b.store.Delete(name); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return runner.ErrNotFound
+		}
+		return fmt.Errorf("delete session: %w", err)
 	}
 	return nil
 }

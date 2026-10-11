@@ -123,6 +123,7 @@ type modelBackend struct {
 	model   string
 	role    string
 	renamed string
+	deleted string
 }
 
 func (*modelBackend) Models() ([]string, string, error) {
@@ -153,6 +154,13 @@ func (b *modelBackend) Rename(name, newName string) error {
 		return errors.New("a session with that name already exists")
 	}
 	b.renamed = newName
+	return nil
+}
+func (b *modelBackend) Delete(name string) error {
+	if name != "one" {
+		return runner.ErrNotFound
+	}
+	b.deleted = name
 	return nil
 }
 func (b *modelBackend) History(name string, offset, limit int) (runner.History, error) {
@@ -221,6 +229,33 @@ func TestModelsAPI(t *testing.T) {
 	var history runner.History
 	if err := json.Unmarshal(w.Body.Bytes(), &history); err != nil || history.Model != "test:custom" || history.Total != 2 {
 		t.Fatalf("persisted: %s", w.Body.String())
+	}
+}
+
+func TestDeleteAPI(t *testing.T) {
+	b := &modelBackend{}
+	m := runner.New(context.Background(), b, 1)
+	defer m.Close()
+	h := New(m, Options{})
+	if w := request(h, "POST", "/api/delete", `{"name":"one"}`, nil, "http://pai.test"); w.Code != 200 {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if b.deleted != "one" {
+		t.Fatalf("backend deleted = %q, want one", b.deleted)
+	}
+	for _, tc := range []struct {
+		method, body, origin string
+		status               int
+	}{
+		{"GET", "", "", 405},
+		{"POST", `{"name":""}`, "http://pai.test", 400},
+		{"POST", `{"name":"one"}`, "", 403},
+		{"POST", `{"name":"one","extra":1}`, "http://pai.test", 400},
+		{"POST", `{"name":"ghost"}`, "http://pai.test", 404},
+	} {
+		if w := request(h, tc.method, "/api/delete", tc.body, nil, tc.origin); w.Code != tc.status {
+			t.Fatalf("%s %s: %d %s", tc.method, tc.body, w.Code, w.Body.String())
+		}
 	}
 }
 
