@@ -52,17 +52,11 @@ func TestOpenFailureReleasesOwnership(t *testing.T) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	var obstacle string
-	if Backend() == "file" {
-		obstacle = filepath.Join(dir, "sessions")
-		if err := os.WriteFile(obstacle, nil, 0600); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		obstacle = filepath.Join(dir, "sessions.db")
-		if err := os.Mkdir(obstacle, 0700); err != nil {
-			t.Fatal(err)
-		}
+	// A directory where the database file belongs makes the backend fail after
+	// the data-directory lock has already been acquired.
+	obstacle := filepath.Join(dir, "sessions.db")
+	if err := os.Mkdir(obstacle, 0700); err != nil {
+		t.Fatal(err)
 	}
 	if store, err := Open(); err == nil {
 		store.Close()

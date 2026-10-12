@@ -33,5 +33,4 @@ Suggested validation from the repository root:
 
 ```sh
 go test ./internal/role
-go test -tags filestore ./internal/role
 ```

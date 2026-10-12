@@ -36,5 +36,4 @@ Suggested validation from the repository root:
 
 ```sh
 go test ./internal/provider
-go test -tags filestore ./internal/provider
 ```

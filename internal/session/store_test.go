@@ -11,7 +11,7 @@ import (
 )
 
 // SetRole rewrites only the role, leaves history untouched, and reports a
-// missing session. It runs against whichever backend the build selects.
+// missing session. It exercises the real store end to end.
 func TestStoreSetRole(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	store, err := Open()
@@ -111,7 +111,7 @@ func TestStoreSetWorkingDir(t *testing.T) {
 }
 
 // Truncate keeps a prefix and drops the tail; a later append continues after the
-// kept turns, so the file/row layout stays consistent.
+// kept turns, so the stored layout stays consistent.
 func TestStoreTruncate(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	store, err := Open()

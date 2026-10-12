@@ -249,7 +249,7 @@ Without that variable the dependency-free harness tests URL policy, renderer
 wiring and literal fallbacks, and explicitly skips actual DOM sanitization tests.
 It does not claim its minimal fake DOM validates DOMPurify.
 
-Validation: `go test ./internal/web` and `go test -tags filestore ./internal/web`.
+Validation: `go test ./internal/web`.
 Security/action tests use httptest and a local fake provider, never real API
 keys, config, storage, or external network. `TestPendingPromptUI` runs the
 no-dependency DOM regression harness when Node is available; otherwise it

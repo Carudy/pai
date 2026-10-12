@@ -37,5 +37,4 @@ Suggested validation from the repository root (not a live provider call):
 
 ```sh
 go test ./internal/chat
-go test -tags filestore ./internal/chat
 ```

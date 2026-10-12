@@ -8,8 +8,7 @@ per-worker preparation, while snapshots and subscriptions expose live state.
 The composition root owns adapters and shutdown; runner does not import them.
 See the [module map](../organization.md) for layering.
 
-Suggested validation from the repository root: `go test ./internal/runner` and
-`go test -tags filestore ./internal/runner`.
+Suggested validation from the repository root: `go test ./internal/runner`.
 
 ## Integration contract
 

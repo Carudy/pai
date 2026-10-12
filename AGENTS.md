@@ -38,10 +38,9 @@ report something sensible.
 ## Commands
 
 ```bash
-make build        # SQLite backend (default)
-make build-file   # JSONL backend (-tags filestore), ~4 MB smaller
-make test         # both tag sets
-make vet          # both tag sets
+make build        # build the stripped binary
+make test         # run the test suite
+make vet          # run go vet
 make fmt          # gofmt
 make deps         # pre-fill the module cache
 make install      # go install ./cmd/pai
@@ -60,25 +59,23 @@ merging their work rather than repeating identical suites.
 | CSS/layout/copy only | Relevant web asset/HTML regression tests (`go test ./internal/web -run 'TestPage|TestHTML'`) and a browser check if available; no full Go build, vet, or race suite |
 | Browser JavaScript | `node internal/web/app_test.js` when Node is available, plus relevant `internal/web` tests; report unavailable JS/browser validation explicitly |
 | Isolated Go implementation | `gofmt` changed Go files and targeted package tests, initially with `-run` for the changed behavior; broaden to that package as needed |
-| Shared interfaces, runtime lifecycle, or cross-package wiring | Tests for affected packages and direct consumers; build both tag sets once at the integration checkpoint |
-| Storage/build tags/platform code | Test affected packages on **both** default and `filestore` tags; cross-compile affected targets when platform behavior changed |
+| Shared interfaces, runtime lifecycle, or cross-package wiring | Tests for affected packages and direct consumers; build once at the integration checkpoint |
+| Storage/platform code | Test affected packages; cross-compile affected targets when platform behavior changed |
 | Concurrency/cancellation/events | Add targeted `go test -race` for affected packages, not the entire repository |
 
-For backend-independent edits, one tag set is enough for the first scoped
-check. Run the **full dual-backend matrix once before finalizing a substantial
+Run the **full build/vet/test matrix once before finalizing a substantial
 feature, release, or broad refactor** (or when the user requests it):
 
 ```bash
-go build ./... && go build -tags filestore ./...
+go build ./...
 make vet
 make test
 ```
 
-A change that compiles under one backend may not under the other; retain
-both-backend coverage at these checkpoints. Do not repeat an unchanged check
-merely because another small presentation edit followed it. Go tests compile
-the packages they exercise, so a separate build adds little for isolated tests.
-Always state exactly what was checked and what remains unverified.
+Do not repeat an unchanged check merely because another small presentation edit
+followed it. Go tests compile the packages they exercise, so a separate build
+adds little for isolated tests. Always state exactly what was checked and what
+remains unverified.
 
 ## How to test
 
@@ -150,7 +147,7 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 | New **config key** | `internal/config/types.go` (struct + default), the `configKeys` table in `internal/cli/config.go` (so `pai config set` knows it), and `internal/config/template.go` (so `config init --merge` surfaces it). An optional key belongs in the template commented out; merge adds it as a comment, never as an active value |
 | New **subcommand** | add to the table in `internal/cli/command.go`; put handlers in a sibling file (`config.go`, `role.go`, …) |
 | New **in-session `/command`** | add to `commandSpecs` in `internal/role/command.go` — arity and an optional `check` hook are declared there, and `/help` is generated from it. Storage-touching commands use the `core.Sessions` port |
-| New **session backend** | implement `session.Store` and select it by build tag in `session.Open` |
+| New **session backend** | implement `session.Store` and select it in `session.Open` |
 
 ## Pitfalls
 
@@ -182,14 +179,12 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
   confirmation display both use it, so the count shown can't disagree with what
   trust saw. A quoted operator is data (`grep 'a|b' f` is one command), while a
   bare `&` separates, because backgrounding runs what follows.
-- **Two session backends use different on-disk formats**; a session written by
-  one isn't visible to the other.
 
 ## Dependency & binary policy
 
 - **Pure Go, cgo-free.** `go install github.com/Carudy/pai/cmd/pai@latest` must
-  keep working, and the stripped binary stays small (~13 MB SQLite / ~9 MB JSONL).
-  The SQLite backend uses `modernc.org/sqlite` precisely because it's pure Go.
+  keep working, and the stripped binary stays small (~13 MB). SQLite uses
+  `modernc.org/sqlite` precisely because it's pure Go.
 - **Prefer existing dependencies.** Before adding one, prefer what's already
   used (`BurntSushi/toml`, the Charm stack) or the standard library. New
   dependencies need a clear justification against the size/complexity budget.

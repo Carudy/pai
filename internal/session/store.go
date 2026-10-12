@@ -2,7 +2,7 @@ package session
 
 import "github.com/Carudy/pai/internal/core"
 
-// Store persists sessions. Exactly one backend is compiled in; see Open.
+// Store persists sessions. SQLite is the only implementation; see Open.
 type Store interface {
 	// Create stores a new session. It returns ErrExists if the name is taken.
 	Create(meta Meta) (*Session, error)

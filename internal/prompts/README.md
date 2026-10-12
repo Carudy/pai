@@ -35,5 +35,4 @@ Suggested consumer validation from the repository root:
 
 ```sh
 go test ./internal/chat ./internal/role
-go test -tags filestore ./internal/chat ./internal/role
 ```

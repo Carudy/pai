@@ -39,5 +39,4 @@ Suggested validation from the repository root:
 
 ```sh
 go test ./internal/tool
-go test -tags filestore ./internal/tool
 ```

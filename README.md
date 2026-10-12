@@ -650,17 +650,14 @@ Resuming prints a short recap of the last few exchanges so you have context
 ### Storage backend
 
 Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, or
-`~/.local/share/pai/`). Two backends implement the same interface:
+`~/.local/share/pai/`). Storage uses pure-Go SQLite (`modernc.org/sqlite`) —
+cgo-free, so `go install` keeps working. `make build` produces a stripped binary
+(~13 MB).
 
-| Backend | Build | Binary (stripped) |
-|---|---|---|
-| SQLite (default) | `go build ./cmd/pai` | ~13 MB |
-| JSONL files | `go build -tags filestore ./cmd/pai` | ~9 MB |
-
-The default uses pure-Go SQLite (`modernc.org/sqlite`) — cgo-free, so `go
-install` keeps working. Pass `-tags filestore` for a ~4 MB smaller binary with no
-SQLite dependency. `make build` / `make build-file` produce stripped binaries.
-Note the two backends use different on-disk formats.
+SQLite is the only backend. Earlier releases could be built with `-tags filestore`
+to keep sessions as JSONL files instead; that build option is gone, so a
+`sessions/` directory of `.jsonl` files from such a build is left on disk but no
+longer read.
 
 ## 🌐 Browser / server mode
 
@@ -735,11 +732,11 @@ are normalized to absolute paths; they are not security sandboxes, and no reques
 changes the process cwd. Use separate worktrees when concurrent tasks could
 modify the same files.
 
-While serving, PAI exclusively owns the session store across processes, for
-both SQLite and JSONL. Other PAI processes cannot open that store until the
-server stops. Do not delete `sessions.lock` while PAI is running. Tasks survive
-browser disconnections, **not server restarts**; use a service manager such as
-systemd for hosting. Shutdown cancels active work and releases store ownership.
+While serving, PAI exclusively owns the session store across processes. Other
+PAI processes cannot open that store until the server stops. Do not delete
+`sessions.lock` while PAI is running. Tasks survive browser disconnections,
+**not server restarts**; use a service manager such as systemd for hosting.
+Shutdown cancels active work and releases store ownership.
 
 ### Activity log
 

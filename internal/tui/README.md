@@ -24,5 +24,4 @@ Suggested validation from the repository root:
 
 ```sh
 go test ./internal/tui
-go test -tags filestore ./internal/tui
 ```

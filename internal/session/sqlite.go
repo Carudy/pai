@@ -1,5 +1,3 @@
-//go:build !filestore
-
 package session
 
 import (
@@ -33,6 +31,8 @@ func openBackend(dir string) (Store, error) {
 }
 
 type sqliteStore struct{ db *sql.DB }
+
+var _ Store = (*sqliteStore)(nil)
 
 func (s *sqliteStore) migrate() error {
 	_, err := s.db.Exec(`
@@ -119,10 +119,12 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 }
 
 func (s *sqliteStore) Latest(cwd string) (*Session, error) {
-	query := `SELECT name FROM sessions ORDER BY updated_at DESC LIMIT 1`
+	// Timestamps have one-second resolution, so ties are common; name breaks them
+	// so "latest" and list order do not depend on row insertion order.
+	query := `SELECT name FROM sessions ORDER BY updated_at DESC, name LIMIT 1`
 	args := []any{}
 	if cwd != "" {
-		query = `SELECT name FROM sessions WHERE cwd = ? ORDER BY updated_at DESC LIMIT 1`
+		query = `SELECT name FROM sessions WHERE cwd = ? ORDER BY updated_at DESC, name LIMIT 1`
 		args = append(args, cwd)
 	}
 	var name string
@@ -140,7 +142,7 @@ func (s *sqliteStore) List() ([]Meta, error) {
 	rows, err := s.db.Query(`
 SELECT s.name, s.role, s.model, s.cwd, s.title, s.created_at, s.updated_at,
        (SELECT COUNT(1) FROM turns t WHERE t.name = s.name)
-FROM sessions s ORDER BY s.updated_at DESC`)
+FROM sessions s ORDER BY s.updated_at DESC, s.name`)
 	if err != nil {
 		return nil, err
 	}
@@ -262,6 +264,9 @@ func (s *sqliteStore) setField(name, column, value string) error {
 	return nil
 }
 
+// Rename renames a session in one transaction, including its turns. A name that
+// is already taken is ErrExists rather than a raw UNIQUE-constraint error, which
+// is what Store promises and what callers translate into a user-facing message.
 func (s *sqliteStore) Rename(oldName, newName string) error {
 	if err := validate(newName); err != nil {
 		return err
@@ -271,6 +276,16 @@ func (s *sqliteStore) Rename(oldName, newName string) error {
 		return err
 	}
 	defer tx.Rollback()
+
+	// Renaming onto the session's own name stays a successful no-op, so only a
+	// different, already-taken name is a conflict.
+	var taken int
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM sessions WHERE name = ?`, newName).Scan(&taken); err != nil {
+		return err
+	}
+	if taken > 0 && newName != oldName {
+		return fmt.Errorf("%w: %s", ErrExists, newName)
+	}
 
 	res, err := tx.Exec(`UPDATE sessions SET name = ? WHERE name = ?`, newName, oldName)
 	if err != nil {

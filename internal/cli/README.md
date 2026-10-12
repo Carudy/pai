@@ -25,5 +25,4 @@ Suggested validation from the repository root:
 
 ```sh
 go test ./internal/cli
-go test -tags filestore ./internal/cli
 ```

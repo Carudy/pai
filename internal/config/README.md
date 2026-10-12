@@ -31,5 +31,4 @@ Suggested validation from the repository root:
 
 ```sh
 go test ./internal/config
-go test -tags filestore ./internal/config
 ```
