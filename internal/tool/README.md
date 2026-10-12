@@ -14,7 +14,14 @@ See the [module map](../organization.md) for the execution/approval split.
 - `IsTrustedPath` / `IsTrustedPathAt` evaluate configured workspace roots.
 - `RemoteManager` manages SSH execution; `NewRemoteManager` configures the
   optional remote-shell wrapper.
-- `Search` returns web-search results using the supplied search API key.
+- `Search` returns Tavily web-search results using the supplied search API key.
+- `PaperSearch` searches fixed public arXiv/Crossref APIs without keys, normalizes
+  metadata and original abstracts, and shares cancellable provider throttles
+  across sessions in one process. Optional contact identifies Crossref requests.
+- `PaperSearchRequest.Normalize` validates/defaults the object payload;
+  `PaperSearchResult.Format` bounds UTF-8 output by complete records, preserving
+  identifiers and marking unavailable/truncated abstracts and omitted records.
+  It does not retrieve full text, infer peer review, or generate AI summaries.
 
 ## Boundaries
 

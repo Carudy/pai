@@ -17,6 +17,9 @@ See the [module map](../organization.md) for its near-leaf position.
 - `Template`, `WriteTemplate`, `MergeTemplate`, and `ResetTemplate` support
   configuration initialization and maintenance.
 - `UserConfig.Redacted` masks credentials for diagnostic output.
+- Paper search defaults to arXiv (`[tool] papersearch_source`); optional
+  `papersearch_email` identifies Crossref polite-pool requests. No key is needed.
+  `[context] paper_limit` defaults to 16384 bytes, separate from `search_limit`.
 
 ## Boundaries
 

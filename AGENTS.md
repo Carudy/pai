@@ -152,7 +152,8 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 ## Pitfalls
 
 - **Tool payload shapes must match the handlers.** `execute` and `websearch`
-  take a **string** payload; `remote` (`{"host":..., "cmd":...}`), `read`
+  take a **string** payload; `papersearch`
+    (`{"source":..., "query":..., "limit":..., "year_from":..., "year_to":..., "sort":...}`), `remote` (`{"host":..., "cmd":...}`), `read`
   (`{"path":..., "offset":..., "limit":...}`), `edit`
   (`{"path":..., "old_string":..., "new_string":..., "replace_all":...}`) and
   `write` (`{"path":..., "content":...}`) take an **object**. Getting this wrong

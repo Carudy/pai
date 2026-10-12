@@ -147,12 +147,13 @@ type toolHandler func(ctx context.Context, cfg *config.UserConfig, rt *Runtime, 
 // files in internal/prompts/tools/*.toml; checkToolCoverage enforces that a role
 // can never declare a tool that has no handler here.
 var toolHandlers = map[string]toolHandler{
-	"execute":   runExecute,
-	"remote":    runRemote,
-	"websearch": runWebsearch,
-	"read":      runRead,
-	"edit":      runEdit,
-	"write":     runWrite,
+	"execute":     runExecute,
+	"remote":      runRemote,
+	"websearch":   runWebsearch,
+	"papersearch": runPapersearch,
+	"read":        runRead,
+	"edit":        runEdit,
+	"write":       runWrite,
 }
 
 // checkToolCoverage fails fast when a role declares a tool with no handler.
@@ -333,6 +334,41 @@ func runWebsearch(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reas
 	observation := fmt.Sprintf("SEARCH QUERY: %s\nRESULTS:\n%s",
 		query, searchTruncate(cfg).Apply(sr.Format()))
 	return "[search result]\n" + observation, nil
+}
+
+// Paper metadata stays in complete records rather than using command-style
+// head/tail truncation, which can separate an abstract from its identifier.
+func runPapersearch(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
+	return runPapersearchWith(ctx, cfg, rt, reason, payload, tool.PaperSearch)
+}
+
+func runPapersearchWith(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage,
+	search func(context.Context, tool.PaperSearchRequest, string) (*tool.PaperSearchResult, error)) (string, error) {
+	var req tool.PaperSearchRequest
+	err := json.Unmarshal(payload, &req)
+	if err == nil {
+		err = req.Normalize(cfg.PaperSearchSource)
+	}
+	rt.Observer.ToolCall(core.ToolCall{Name: "papersearch", Target: req.Source, Detail: req.Query, Reason: reason})
+	if err != nil {
+		rt.Observer.ToolResult(core.ToolResult{Message: fmt.Sprintf("Paper search failed: %v", err)})
+		return fmt.Sprintf("[tool error]\nTOOL: papersearch\nERROR: %v", err), nil
+	}
+
+	sr, err := search(ctx, req, cfg.PaperSearchEmail)
+	if err != nil {
+		rt.Observer.ToolResult(core.ToolResult{Message: fmt.Sprintf("Paper search failed: %v", err)})
+		return fmt.Sprintf("[papersearch error]\nSOURCE: %s\nQUERY: %s\nERROR: %v", req.Source, req.Query, err), nil
+	}
+	var preview strings.Builder
+	for i, p := range sr.Papers {
+		fmt.Fprintf(&preview, "%d. %s\n", i+1, p.Title)
+	}
+	rt.Observer.ToolResult(core.ToolResult{
+		OK: true, Message: fmt.Sprintf("%d papers from %s", len(sr.Papers), sr.Source),
+		Detail: strings.TrimSpace(preview.String()),
+	})
+	return "[papersearch result]\n" + sr.Format(cfg.Context.PaperLimit), nil
 }
 
 // observation formats the history entry fed back to the model.

@@ -7,7 +7,7 @@
 name        = "coder"
 description = "Software-engineering assistant for reading, writing, and testing code"
 
-tools = ["read", "edit", "write", "execute", "websearch"]
+tools = ["read", "edit", "write", "execute", "websearch", "papersearch"]
 
 # Project instruction files folded into the system prompt, searched from the
 # working directory upwards (nearest match wins). AGENTS.md is the cross-tool
@@ -35,6 +35,8 @@ Working style:
 - Prefer the project's existing conventions and dependencies over inventing new ones.
 - Never guess at APIs or file contents — read them.
 - Use "websearch" for unfamiliar libraries, error messages, or API documentation.
+- Use "papersearch" for academic papers and research abstracts; cite returned IDs/URLs,
+  and do not imply that an abstract is the full paper or evidence of peer review.
 
 Working in a large repo or a long file:
 - Locate before you read. Use `rg -n <symbol>` to find the exact file and line,

@@ -40,6 +40,8 @@ var configKeys = map[string]configKey{
 	"session.recap_turns":   {section: "session", key: "recap_turns", kind: "int"},
 	"session.rewind_backup": {section: "session", key: "rewind_backup", kind: "bool"},
 	"tavily_api_key":        {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
+	"papersearch_source":    {section: "tool", key: "papersearch_source", kind: "paper_source"},
+	"papersearch_email":     {section: "tool", key: "papersearch_email", kind: "string"},
 	"remote_shell":          {section: "tool", key: "remote_shell", kind: "string"},
 	"cmd_timeout_seconds":   {section: "tool", key: "cmd_timeout_seconds", kind: "int"},
 	"confirm_read":          {section: "tool", key: "confirm_read", kind: "bool"},
@@ -48,6 +50,7 @@ var configKeys = map[string]configKey{
 	"truncate_search_limit":          {section: "app", key: "truncate_search_limit", kind: "int"},
 	"context.exec_limit":             {section: "context", key: "exec_limit", kind: "int"},
 	"context.search_limit":           {section: "context", key: "search_limit", kind: "int"},
+	"context.paper_limit":            {section: "context", key: "paper_limit", kind: "int"},
 	"context.head_lines":             {section: "context", key: "head_lines", kind: "int"},
 	"context.tail_lines":             {section: "context", key: "tail_lines", kind: "int"},
 	"context.keep_turns":             {section: "context", key: "keep_turns", kind: "int"},
@@ -323,6 +326,8 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return strconv.Itoa(cfg.Context.ExecLimit)
 	case "context.search_limit":
 		return strconv.Itoa(cfg.Context.SearchLimit)
+	case "context.paper_limit":
+		return strconv.Itoa(cfg.Context.PaperLimit)
 	case "context.head_lines":
 		return strconv.Itoa(cfg.Context.HeadLines)
 	case "context.tail_lines":
@@ -350,6 +355,10 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 			return cfg.TavilyAPIKey
 		}
 		return maskSecret(cfg.TavilyAPIKey)
+	case "papersearch_source":
+		return cfg.PaperSearchSource
+	case "papersearch_email":
+		return cfg.PaperSearchEmail
 	case "remote_shell":
 		return cfg.RemoteShell
 	case "cmd_timeout_seconds":
@@ -386,6 +395,12 @@ func formatConfigValue(kind, raw string) (string, error) {
 			}
 		}
 		return "", fmt.Errorf("unknown role %q; available: %s", raw, strings.Join(prompts.RoleNames(), ", "))
+	case "paper_source":
+		raw = strings.ToLower(strings.TrimSpace(raw))
+		if raw != "arxiv" && raw != "crossref" {
+			return "", fmt.Errorf("expected arxiv or crossref, got %q", raw)
+		}
+		return strconv.Quote(raw), nil
 	case "string":
 		return strconv.Quote(raw), nil
 	case "bool":

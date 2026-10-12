@@ -12,8 +12,11 @@ See the [module map](../organization.md) for the loop's dependencies and ports.
   It scopes local tools and project instructions; empty preserves process cwd.
   Separate runtimes can use separate workspaces without changing process cwd.
 - `Runtime.Interrupt` cancels the current step rather than the entire runtime.
-- `tools.go` owns tool dispatch and capability coverage; `filetools.go` handles
-  file operations. `command.go` declares in-session commands and generated help.
+- `tools.go` owns tool dispatch and capability coverage, including `papersearch`
+  object validation, provider errors as observations, and complete-record output
+  budgeting. The `coder` and `latex` roles enable keyless academic discovery;
+  `devops` does not.
+  `filetools.go` handles file operations. `command.go` declares in-session commands and generated help.
 
 ## Boundaries
 

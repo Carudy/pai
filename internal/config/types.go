@@ -35,6 +35,7 @@ type ContextConfig struct {
 	// Byte budgets for one observation fed back to the model.
 	ExecLimit   int // execute/remote output
 	SearchLimit int // websearch result
+	PaperLimit  int // papersearch result, preserving complete records
 
 	// Lines kept from the head and tail of an observation that must be shortened.
 	// The tail matters: errors and summaries land at the end of command output.
@@ -76,6 +77,7 @@ type tomlConfig struct {
 	Context struct {
 		ExecLimit            int `toml:"exec_limit"`
 		SearchLimit          int `toml:"search_limit"`
+		PaperLimit           int `toml:"paper_limit"`
 		HeadLines            int `toml:"head_lines"`
 		TailLines            int `toml:"tail_lines"`
 		KeepTurns            int `toml:"keep_turns"`
@@ -85,8 +87,10 @@ type tomlConfig struct {
 		SummarizeAfterTokens int `toml:"summarize_after_tokens"`
 	} `toml:"context"`
 	Tool struct {
-		TavilyAPIKey string   `toml:"tavily_api_key"`
-		TrustedCmds  []string `toml:"trusted_cmds"`
+		TavilyAPIKey      string   `toml:"tavily_api_key"`
+		PaperSearchSource string   `toml:"papersearch_source"`
+		PaperSearchEmail  string   `toml:"papersearch_email"`
+		TrustedCmds       []string `toml:"trusted_cmds"`
 		// TrustedPaths are directories inside which the file tools (edit, write,
 		// and read when ConfirmRead is set) need no confirmation — the "trusted
 		// working place". Empty trusts nothing.
@@ -124,13 +128,16 @@ type tomlConfig struct {
 // session is interactive — deliberately does NOT live here; see role.Session.
 // Keeping that separation is what lets config stay a near-leaf package.
 type UserConfig struct {
-	ProvidersConfigs map[string]ProviderConfig
-	DefaultModel     string
-	DefaultRole      string
-	Streaming        bool
-	ReasoningEffort  provider.ReasoningEffort
-	Interactive      bool
-	TavilyAPIKey     string
+	ProvidersConfigs  map[string]ProviderConfig
+	DefaultModel      string
+	DefaultRole       string
+	Streaming         bool
+	ReasoningEffort   provider.ReasoningEffort
+	Interactive       bool
+	TavilyAPIKey      string
+	PaperSearchSource string
+	// PaperSearchEmail optionally identifies Crossref requests for its polite pool.
+	PaperSearchEmail string
 	TrustedCmds      []string
 
 	// TrustedPaths are directories inside which file edits/creates (and reads,
@@ -220,14 +227,16 @@ func maskSecret(s string) string {
 
 func defaultConfig() *UserConfig {
 	return &UserConfig{
-		DefaultModel:     "deepseek:deepseek-v4-flash",
-		DefaultRole:      "devops",
-		Streaming:        true,
-		ProvidersConfigs: make(map[string]ProviderConfig),
-		CustomPrompt:     CustomPrompt{},
+		DefaultModel:      "deepseek:deepseek-v4-flash",
+		DefaultRole:       "devops",
+		PaperSearchSource: "arxiv",
+		Streaming:         true,
+		ProvidersConfigs:  make(map[string]ProviderConfig),
+		CustomPrompt:      CustomPrompt{},
 		Context: ContextConfig{
 			ExecLimit:       8000,
 			SearchLimit:     8000,
+			PaperLimit:      16384,
 			HeadLines:       80,
 			TailLines:       40,
 			KeepTurns:       8,
@@ -262,6 +271,10 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	cfg.ReasoningEffort = raw.App.ReasoningEffort
 	cfg.Interactive = raw.App.Interactive
 	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey
+	if raw.Tool.PaperSearchSource != "" {
+		cfg.PaperSearchSource = strings.ToLower(strings.TrimSpace(raw.Tool.PaperSearchSource))
+	}
+	cfg.PaperSearchEmail = strings.TrimSpace(raw.Tool.PaperSearchEmail)
 	cfg.TrustedCmds = raw.Tool.TrustedCmds
 	cfg.TrustedPaths = raw.Tool.TrustedPaths
 	cfg.ConfirmRead = raw.Tool.ConfirmRead
@@ -290,6 +303,9 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	}
 	if ctx.SearchLimit > 0 {
 		cfg.Context.SearchLimit = ctx.SearchLimit
+	}
+	if ctx.PaperLimit > 0 {
+		cfg.Context.PaperLimit = ctx.PaperLimit
 	}
 	if ctx.HeadLines > 0 {
 		cfg.Context.HeadLines = ctx.HeadLines

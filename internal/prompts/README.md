@@ -13,6 +13,10 @@ See the [module map](../organization.md) for how the loop consumes them.
 - `ReadTool` tries source-checkout definitions before embedded tools.
 - `roles/*.toml` define intros, capabilities, and project-context files;
   `tools/*.toml` describe tool behavior and payload shapes.
+- The built-in `latex` role handles scientific editing, bibliography evidence,
+  and non-interactive LaTeX validation. It enables `papersearch` alongside
+  `websearch`; `devops` deliberately excludes academic search. A user's
+  `roles/latex.toml` still overrides the built-in definition.
 
 ## Boundaries
 

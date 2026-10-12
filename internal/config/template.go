@@ -60,6 +60,8 @@ persist = false
 # errors and summaries land at the end of command output.
 exec_limit   = 8000
 search_limit = 8000
+# Paper metadata/abstracts use complete-record truncation (default 16384 bytes).
+# paper_limit = 16384
 head_lines   = 80
 tail_lines   = 40
 
@@ -78,6 +80,11 @@ elide_head_lines  = 8
 # summarize_after_tokens = 32000
 
 [tool]
+# Keyless academic search: arxiv (default) or crossref.
+# papersearch_source = "arxiv"
+# Optional contact sent to Crossref's polite pool; not an API key.
+# papersearch_email = "you@example.org"
+
 # Commands that run without confirmation. An array cannot be set from the CLI —
 # edit this file by hand.
 # trusted_cmds = ["ls", "cat", "git status"]

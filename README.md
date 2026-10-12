@@ -189,6 +189,8 @@ interactive   = false       # if true, auto-enables -i mode
 # from its head and tail (the tail holds errors and summaries).
 exec_limit   = 8000
 search_limit = 8000
+# Academic metadata/abstracts: separate complete-record budget (bytes).
+# paper_limit = 16384
 head_lines   = 80
 tail_lines   = 40
 # Long conversations: replay the last keep_turns messages in full, and elide
@@ -204,6 +206,9 @@ summarize_after_tokens = 0
 
 [tool]
 tavily_api_key = "your-tavily-key"  # for web search (env TAVILY_API_KEY as fallback)
+# Paper search needs no API key. Optional default source and Crossref contact:
+# papersearch_source = "arxiv"      # arxiv | crossref
+# papersearch_email = "you@example.org"
 trusted_cmds = [
     "ls", "cat", "grep", "pwd", "which",
 ]
@@ -292,6 +297,7 @@ Autonomous reason→act→observe loop for multi-step sysadmin tasks. Tools:
 - **write** — Create a new file (never overwrites) without a shell here-doc
 - **websearch** — Search the web for current information (config `tavily_api_key` or `TAVILY_API_KEY` env)
 
+
 ```bash
 pai "deploy my app to staging"
 pai -i                        # Interactive: keep loop alive for follow-ups
@@ -332,6 +338,7 @@ Helps read, write, refactor, and test code in the current repository. Tools:
 - **edit** — Replace exact text in a file, reviewed as a diff before it is written
 - **write** — Create a new file from data, not a shell here-doc (never overwrites)
 - **websearch** — Look up libraries, APIs, and error messages
+- **papersearch** — Find research papers, original abstracts, and identifiers
 
 It deliberately has no **remote** tool: a role's tool list is its capability
 boundary, not just a prompt hint.
@@ -344,6 +351,75 @@ and to the response format. See `context_files` under Custom roles.
 ```bash
 pai -r coder "why does the build fail, and fix it"
 ```
+
+### `latex` — Scientific writing and LaTeX
+
+Drafts, polishes, restructures, and debugs manuscripts while preserving scientific
+meaning, equations, labels, citation keys, and existing project conventions.
+Tools: **read**, **edit**, **write**, **execute**, **websearch**, **papersearch**;
+no remote execution. It reads project instructions from `AGENTS.md`.
+
+```bash
+pai -r latex "polish the introduction without changing the scientific claims"
+pai -r latex "fix undefined citations using the project's existing build"
+```
+
+The role distinguishes verified bibliography metadata from missing information,
+never invents evidence, and does not equate abstracts with full-text reading.
+Builds follow the project's engine/tooling and run non-interactively. Missing TeX
+tools and pre-existing warnings are reported, not hidden; successful compilation
+is not a visual PDF check. Shell escape requires explicit user authorization.
+
+A local `~/.config/pai/roles/latex.toml` **overrides** this built-in role, including
+its tool list. Keep it for customization; to use the built-in role instead, move
+it out of the roles directory or rename it without the `.toml` extension.
+
+### Paper Search
+
+The `coder` and `latex` roles can discover academic papers without a search API
+key; `devops` deliberately does not include this tool:
+
+```bash
+pai -r latex "find recent arXiv papers about retrieval augmented generation evaluation"
+pai -r coder "find Crossref papers on distributed consensus and cite their DOIs"
+pai config set papersearch_source crossref  # default when the model omits source
+pai config set papersearch_email you@example.org  # optional Crossref polite pool
+pai config set context.paper_limit 16384   # bytes of formatted paper results
+```
+
+`papersearch` takes an object, unlike `websearch`'s string query:
+
+```json
+{"source":"arxiv","query":"retrieval augmented generation evaluation","limit":5,"year_from":2023,"sort":"relevance"}
+```
+
+- **Sources:** arXiv is strongest for CS/math/physics preprints; Crossref searches
+  DOI/bibliographic metadata across disciplines, but abstracts are often absent.
+  One provider is queried per call; neither is a comprehensive scholarly index.
+- **Options:** `source` is optional (default `arxiv`, configurable); `query` is
+  required plain-text keywords, not provider syntax. `limit` defaults to 5
+  (maximum 20), `year_from`/`year_to` are inclusive, and `sort` is `relevance`
+  or `newest`. arXiv dates refer to first submission; Crossref dates refer to
+  publication. arXiv combines keywords with AND, so shorter queries may help.
+- **Output:** original titles, authors, dates, identifiers, URLs, and available
+  abstracts—not an extra AI summary. Abstracts are capped at 2,000 characters
+  with a truncation marker. The separate 16,384-byte default budget omits whole
+  records with a notice rather than severing their identifiers. No pagination,
+  full-text/PDF reading, file downloads, or citation-graph traversal yet.
+- **Network/privacy:** the explicit query goes to the selected public API;
+  an optional contact email goes only to Crossref. No local files are included.
+  Tool observations may be retained in persisted sessions. Keyless does not
+  mean unlimited: requests share process-wide throttles (arXiv: one connection,
+  starts at least three seconds apart; Crossref: one start per second), a
+  45-second deadline, and one bounded retry for HTTP 429/503. Separate PAI
+  processes do not share these throttles; coordinate them when using arXiv.
+- **Evidence:** metadata/abstracts are untrusted source material, not instructions;
+  missing abstracts are explicit. Preprints, DOIs, and publication types do not
+  establish peer review or paper quality. The tool does not claim full-text access.
+
+User role overrides must add `"papersearch"` to their `tools` list to enable it.
+The existing Tavily-backed `websearch` remains unchanged.
+
 
 ### Custom roles
 
@@ -366,7 +442,7 @@ Then run it with `pai -r writer`. A user role with the same name as a built-in
 one **overrides** it — handy for retuning `devops` without editing the source.
 
 `tools` may only reference built-in tools (`execute`, `remote`, `websearch`,
-`read`, `edit`, `write`): tool *implementations* live in Go, so new tools require
+`papersearch`, `read`, `edit`, `write`): tool *implementations* live in Go, so new tools require
 code — new roles do not.
 
 `context_files` folds project instruction files into the system prompt, searched
