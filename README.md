@@ -777,7 +777,7 @@ endpoint and security contract is in [`internal/web/README.md`](internal/web/REA
 
 ## 📄 License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENCE](LICENCE).
 
 ## 🙏 Acknowledgments
 

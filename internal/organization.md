@@ -81,7 +81,7 @@ the only package that knows about all of them.
   chat    -> config core hostinfo prompts provider
   session -> core paths            (+ golang.org/x/sys/unix for the lock)
   tui     -> core tool
-  tool    -> paths
+  tool    -> paths                 (+ mvdan.cc/sh/v3/syntax for command parsing)
   config  -> paths provider
   prompts -> paths                 (+ BurntSushi/toml for the file format)
   core, paths, provider, hostinfo -> (nothing internal)

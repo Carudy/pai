@@ -18,7 +18,9 @@ See the [module map](../organization.md) for the chat layer above this package.
   model requests, complete replies, and streaming deltas.
 - `ReasoningEffort` and `Usage` carry reasoning controls and token accounting.
 - `openai.go` implements the chat completions transport (HTTP + `data:` SSE),
-  including provider-specific request enrichment for built-in providers.
+  including provider-specific request enrichment for built-in providers. Streamed
+  requests opt into the final usage chunk (`stream_options.include_usage`) so token
+  accounting — and the `summarize_after_tokens` budget it drives — survives streaming.
 - `responses.go` implements OpenAI's Responses API (`POST /responses`), whose
   named SSE events and reasoning-summary shape are flattened into the same
   `ChatCompletion`/`ChatCompletionChunk` types. Requests are stateless
