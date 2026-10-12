@@ -80,10 +80,16 @@ func TestChatCompletion(t *testing.T) {
 	if gotBody["stream"] != false {
 		t.Errorf("stream = %v, want false", gotBody["stream"])
 	}
+	if _, ok := gotBody["stream_options"]; ok {
+		t.Errorf("stream_options sent on a non-streaming request: %v", gotBody["stream_options"])
+	}
 }
 
 func TestChatCompletionStream(t *testing.T) {
+	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
 		w.Header().Set("Content-Type", "text/event-stream")
 		io.WriteString(w, "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n")
 		io.WriteString(w, "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hel\"}}]}\n\n")
@@ -103,6 +109,11 @@ func TestChatCompletionStream(t *testing.T) {
 	}
 	if reasoning != "think" {
 		t.Errorf("reasoning = %q", reasoning)
+	}
+	// The stream must ask for usage, or PAI has no prompt size to compare against
+	// summarize_after_tokens and compaction never triggers.
+	if opts, ok := gotBody["stream_options"].(map[string]any); !ok || opts["include_usage"] != true {
+		t.Errorf("stream_options = %v, want include_usage true", gotBody["stream_options"])
 	}
 }
 

@@ -375,7 +375,8 @@ func runCompact(c *cmdCtx, _ []string) (cmdOutcome, string) {
 		c.output("nothing to compact yet")
 		return cmdHandled, ""
 	}
+	kept := len(c.history) - 1 // everything after the summary
 	c.output(fmt.Sprintf("compacted %d messages into a summary (%d kept verbatim)",
-		before-len(c.history)+1, len(c.history)))
+		before-kept, kept))
 	return cmdHandled, ""
 }

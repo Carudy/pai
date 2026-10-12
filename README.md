@@ -69,7 +69,7 @@ Subcommands and their flags accept short forms, e.g. `pai session ls`,
 pai config list                 # effective settings + the keys you can set
 pai config get default_model    # print one value
 pai config set default_role coder
-pai config set context.keep_turns 12
+pai config set context.keep_turns 6
 pai config unset default_role   # revert to the built-in default
 pai config path                 # where config.toml lives
 pai config init                 # write/merge a starter config.toml (asks first)
@@ -193,11 +193,13 @@ search_limit = 8000
 # paper_limit = 16384
 head_lines   = 80
 tail_lines   = 40
-# Long conversations: replay the last keep_turns messages in full, and elide
+# Long conversations: replay the last keep_turns user turns in full, and elide
 # older command output down to its header once the conversation exceeds
-# elide_after_turns messages. See "What gets sent to the model".
-keep_turns        = 8
-elide_after_turns = 16
+# elide_after_turns turns. One turn is a user instruction plus every tool call
+# the model makes to answer it, so a whole turn is always kept. See "What gets
+# sent to the model".
+keep_turns        = 4
+elide_after_turns = 8
 elide_min_bytes   = 1000
 elide_head_lines  = 8
 # Opt-in second layer: summarize the oldest turns once the prompt exceeds this
@@ -613,8 +615,10 @@ section's `exec_limit` / `search_limit` cap the bytes, while `head_lines` /
 purpose — errors, exit codes and summaries land at the end of command output.
 
 Long conversations are compacted in two layers. The first is deterministic:
-the last `keep_turns` messages are replayed verbatim; once the conversation
-exceeds `elide_after_turns` messages, older command output larger than
+the last `keep_turns` **turns** are replayed verbatim — a turn is one user
+instruction plus everything the model does to answer it (each assistant reply and
+tool observation), so a long turn is never cut mid-task. Once the conversation
+exceeds `elide_after_turns` turns, older command output larger than
 `elide_min_bytes` is reduced to its header (label, command, exit status) with a
 visible marker, so the model knows it was omitted and can re-run the command if
 it needs the result.
@@ -622,7 +626,7 @@ it needs the result.
 The second layer is optional and costs one extra model call: with
 `summarize_after_tokens` set, once the prompt exceeds that token budget the
 oldest turns are summarized into a single message and only the last `keep_turns`
-messages are kept verbatim. Summarization uses a plain call — no streaming, no
+turns are kept verbatim. Summarization uses a plain call — no streaming, no
 reasoning, no JSON mode. Trigger it on demand in-session with `/compact`.
 
 In both layers user input, assistant replies and answers are never dropped, and

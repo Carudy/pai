@@ -62,48 +62,63 @@ func toolResult(content string) provider.Message {
 	return provider.Message{Role: provider.RoleUser, Kind: core.KindToolResult, Content: content}
 }
 
-func TestCompactHistoryElidesOldToolResults(t *testing.T) {
-	c := config.ContextConfig{KeepTurns: 2, ElideAfterTurns: 0, ElideMinBytes: 10, ElideHeadLines: 3}
+// Turns, not messages, decide the verbatim window: an old turn's large
+// observation is elided, but the whole current turn is kept however many tool
+// calls it took, so the model never loses the task it is in the middle of.
+func TestCompactHistoryElidesOnlyOldTurns(t *testing.T) {
+	c := config.ContextConfig{KeepTurns: 1, ElideAfterTurns: 0, ElideMinBytes: 10, ElideHeadLines: 3}
 	big := "[cmd result]\nCOMMAND: df -h\nEXIT_ERROR: <nil>\nOUTPUT:\n" + strings.Repeat("row\n", 100)
 
 	history := []provider.Message{
-		toolResult(big), // old, large -> elided
-		{Role: provider.RoleUser, Kind: core.KindInput, Content: "please do it"}, // old, but the user's words
-		toolResult("[cmd result]\nCOMMAND: ls\nOUTPUT:\nok"),                     // newest -> verbatim
-		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "done"},   // newest
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"}, // turn 1 (old)
+		toolResult(big), // turn 1, large -> elided
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "still old"}, // turn 1
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "now fix it"},      // turn 2 (current)
+		toolResult(big), // turn 2, large -> kept whole
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "done"}, // turn 2
 	}
 
 	out := CompactHistory(history, c)
 	if len(out) != len(history) {
 		t.Fatalf("length changed: %d", len(out))
 	}
-	if strings.Contains(out[0].Content, "row") {
-		t.Errorf("old tool result not elided: %q", out[0].Content)
+	if strings.Contains(out[1].Content, "row") {
+		t.Errorf("old tool result not elided: %q", out[1].Content)
 	}
-	if !strings.Contains(out[0].Content, "COMMAND: df -h") {
-		t.Errorf("elision dropped the command header: %q", out[0].Content)
+	if !strings.Contains(out[1].Content, "COMMAND: df -h") {
+		t.Errorf("elision dropped the command header: %q", out[1].Content)
 	}
-	if !strings.Contains(out[0].Content, "elided") {
-		t.Errorf("elision marker missing: %q", out[0].Content)
+	if !strings.Contains(out[1].Content, "elided") {
+		t.Errorf("elision marker missing: %q", out[1].Content)
 	}
-	if out[1].Content != "please do it" {
-		t.Errorf("user input was touched: %q", out[1].Content)
+	if out[0].Content != "check disk" || out[3].Content != "now fix it" {
+		t.Errorf("a user instruction was touched: %q / %q", out[0].Content, out[3].Content)
 	}
-	if strings.Contains(out[2].Content, "elided") {
-		t.Errorf("most recent tool result must be kept: %q", out[2].Content)
+	if out[4].Content != big {
+		t.Error("the current turn's observation must be kept verbatim")
 	}
-	if history[0].Content != big {
+	if history[1].Content != big {
 		t.Error("CompactHistory mutated its input")
 	}
 }
 
-// Nothing happens until the conversation is long enough to matter.
+// Nothing happens until the conversation has more turns than the trigger.
 func TestCompactHistoryRespectsTrigger(t *testing.T) {
-	c := config.ContextConfig{KeepTurns: 1, ElideAfterTurns: 10, ElideMinBytes: 1, ElideHeadLines: 3}
+	c := config.ContextConfig{KeepTurns: 1, ElideAfterTurns: 2, ElideMinBytes: 1, ElideHeadLines: 3}
 	big := strings.Repeat("x\n", 50)
-	out := CompactHistory([]provider.Message{toolResult(big)}, c)
-	if out[0].Content != big {
-		t.Error("compaction ran below the trigger")
+	turn := func(name string) []provider.Message {
+		return []provider.Message{
+			{Role: provider.RoleUser, Kind: core.KindInput, Content: name},
+			toolResult(big),
+		}
+	}
+	two := append(turn("one"), turn("two")...)
+	if out := CompactHistory(two, c); out[1].Content != big {
+		t.Error("compaction ran at the trigger instead of above it")
+	}
+	three := append(two, turn("three")...)
+	if out := CompactHistory(three, c); out[1].Content == big {
+		t.Error("a turn beyond the trigger was not elided")
 	}
 }
 

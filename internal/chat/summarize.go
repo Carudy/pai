@@ -22,21 +22,22 @@ func ShouldSummarize(c config.ContextConfig, promptTokens int) bool {
 }
 
 // SplitForSummary divides history into the span to summarize and the recent
-// messages to keep. An empty span means there is nothing old enough.
-func SplitForSummary(history []provider.Message, keep int) (span, recent []provider.Message) {
-	if keep < 0 {
-		keep = 0
-	}
-	if len(history) <= keep {
+// messages to keep, keeping the last keepTurns user turns verbatim (a whole turn,
+// not a message count, so a long single turn is not truncated mid-task). An empty
+// span means there is nothing old enough.
+func SplitForSummary(history []provider.Message, keepTurns int) (span, recent []provider.Message) {
+	cut := keepFrom(history, keepTurns)
+	if cut <= 0 {
 		return nil, history
 	}
-	cut := len(history) - keep
 	return history[:cut], history[cut:]
 }
 
-// EstimateTokens is a rough size for a message list, used only to decide whether
-// to summarize before the model has reported real usage (e.g. on resume). Roughly
-// four bytes per token; it deliberately overestimates, erring toward compacting.
+// EstimateTokens is a rough size for a message list, used only when the provider
+// has not reported real usage (on resume, or a stream without usage). Four bytes
+// per token is a coarse approximation: close for prose, but it can undercount code
+// or non-Latin text, so callers pass the composed prompt (system head and tail
+// included) rather than the bare history.
 func EstimateTokens(msgs []provider.Message) int {
 	total := 0
 	for _, m := range msgs {

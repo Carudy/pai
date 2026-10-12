@@ -251,7 +251,9 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 	}
 
 	// Seed the budget check for a resumed session, before any real usage is known.
-	rt.promptTokens = chat.EstimateTokens(cc.history)
+	// Size the composed prompt (system head and tail included), not the bare
+	// history, so the role and tool block is counted too.
+	rt.promptTokens = chat.EstimateTokens(cc.rp.Messages(cc.history))
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -323,7 +325,7 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 }
 
 // compactHistory replaces the oldest turns with a model-written summary, keeping
-// the last Context.KeepTurns messages verbatim. It mutates cc.history; the
+// the last Context.KeepTurns user turns verbatim. It mutates cc.history; the
 // recorded transcript and any stored session are untouched. It reports whether
 // anything was compacted.
 func compactHistory(ctx context.Context, rt *Runtime, cfg *config.UserConfig, cc *cmdCtx) (bool, error) {
@@ -394,6 +396,10 @@ func step(
 			Completion: usage.CompletionTokens,
 			Total:      usage.Total(),
 		})
+	} else {
+		// A provider that reports no usage would otherwise freeze the budget at the
+		// seed estimate; size the prompt we just sent instead.
+		rt.promptTokens = chat.EstimateTokens(rp.Messages(history))
 	}
 
 	resp, history, err := chat.ParseResponseWithRetry(ctx, cfg, rp, ports, content, history)

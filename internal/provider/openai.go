@@ -148,6 +148,13 @@ func buildRequestBody(params CompletionParams, stream bool, spec providerSpec) m
 		"stream":   stream,
 	}
 
+	if stream {
+		// Ask for the usage chunk that ends the stream. OpenAI-compatible servers
+		// omit it otherwise, which would leave PAI with no prompt size to compare
+		// against summarize_after_tokens — silently disabling compaction.
+		body["stream_options"] = map[string]any{"include_usage": true}
+	}
+
 	if params.ResponseFormat != nil {
 		body["response_format"] = params.ResponseFormat
 	}

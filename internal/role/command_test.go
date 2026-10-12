@@ -119,6 +119,8 @@ func TestCompactCommandSummarizesOldTurns(t *testing.T) {
 		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"},
 		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: `{"action":"tool","toolname":"execute","payload":"df -h","reason":"r"}`},
 		{Role: provider.RoleUser, Kind: core.KindToolResult, Content: "[cmd result]\nCOMMAND: df -h\nOUTPUT:\nok"},
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "now do more"},
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: `{"action":"done","payload":"ok","reason":"r"}`},
 	}
 
 	if outcome, _ := dispatch(cc, "/compact"); outcome != cmdHandled {
@@ -127,8 +129,8 @@ func TestCompactCommandSummarizesOldTurns(t *testing.T) {
 	if fp.calls != 1 {
 		t.Errorf("summarizer called %d times, want 1", fp.calls)
 	}
-	if len(cc.history) != 2 {
-		t.Fatalf("history = %d messages, want summary + 1 kept", len(cc.history))
+	if len(cc.history) != 3 {
+		t.Fatalf("history = %d messages, want summary + 2 kept", len(cc.history))
 	}
 	if cc.history[0].Kind != core.KindSummary {
 		t.Errorf("first message kind = %q, want summary", cc.history[0].Kind)
@@ -136,8 +138,10 @@ func TestCompactCommandSummarizesOldTurns(t *testing.T) {
 	if !strings.Contains(cc.history[0].Content, "disk is fine") {
 		t.Errorf("summary text missing: %q", cc.history[0].Content)
 	}
-	if cc.history[1].Kind != core.KindToolResult {
-		t.Errorf("the most recent turn was not kept verbatim: %q", cc.history[1].Kind)
+	// The last whole turn (a user instruction plus its reply) is kept, not a
+	// message count.
+	if cc.history[1].Kind != core.KindInput || cc.history[1].Content != "now do more" {
+		t.Errorf("the most recent turn was not kept verbatim: %+v", cc.history[1])
 	}
 	if obs.lastOutput() == "" {
 		t.Error("expected a confirmation line")

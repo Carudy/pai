@@ -18,7 +18,10 @@ See the [module map](../organization.md) for the surrounding layers.
   respecting configured streaming and reporting token usage.
 - `ParseResponse` / `ParseResponseWithRetry` validate model actions.
 - `Truncate`, `CompactHistory`, and `summarize.go` bound model context;
-  shortening replay does not replace durable session history.
+  shortening replay does not replace durable session history. Both compaction
+  layers window by **user turn** (a user instruction plus every tool call it
+  takes to answer it), never mid-turn by message count, so the model always keeps
+  the whole of the task it is in the middle of.
 
 ## Boundaries
 

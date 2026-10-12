@@ -68,11 +68,54 @@ func cutBytes(s string, max int) string {
 	return s[:max]
 }
 
+// A turn is one user instruction plus everything the model does to answer it:
+// the assistant replies and tool observations that follow, up to the next user
+// instruction. Assistant replies and tool results both ride the user role on the
+// wire, so a turn is recognised by its kind, not by its role.
+func isTurnStart(m provider.Message) bool {
+	return m.Kind == core.KindInput || m.Kind == core.KindUserAnswer
+}
+
+// userTurns counts the user turns in history.
+func userTurns(history []provider.Message) int {
+	n := 0
+	for _, m := range history {
+		if isTurnStart(m) {
+			n++
+		}
+	}
+	return n
+}
+
+// keepFrom returns the index where the oldest turn to keep verbatim begins: the
+// start of the turns-th user turn from the end. The whole turn is kept, however
+// many tool calls it took, so the model never loses the observations of the task
+// it is in the middle of. When history has fewer than turns user turns it returns
+// 0 (nothing is old enough), and with turns <= 0 it returns len(history) (the
+// verbatim window is empty).
+func keepFrom(history []provider.Message, turns int) int {
+	if turns <= 0 {
+		return len(history)
+	}
+	seen := 0
+	for i := len(history) - 1; i >= 0; i-- {
+		if !isTurnStart(history[i]) {
+			continue
+		}
+		seen++
+		if seen >= turns {
+			return i
+		}
+	}
+	return 0
+}
+
 // CompactHistory returns a copy of history in which old tool observations are
 // elided down to their header, so a long session does not resend stale command
-// output on every turn. The most recent KeepTurns messages are replayed
-// verbatim, and nothing is elided until the conversation exceeds ElideAfterTurns
-// messages — a short session is never rewritten.
+// output on every request. The most recent KeepTurns user turns are replayed
+// verbatim — a whole turn, so the model keeps every observation of the task it is
+// currently on — and nothing is elided until the conversation exceeds
+// ElideAfterTurns user turns, so a short session is never rewritten.
 //
 // Only tool results are candidates. User input, assistant replies and user
 // answers carry the task and its decisions, so they are never dropped. The full
@@ -82,11 +125,11 @@ func CompactHistory(history []provider.Message, c config.ContextConfig) []provid
 	if len(history) == 0 {
 		return history
 	}
-	if c.ElideAfterTurns > 0 && len(history) <= c.ElideAfterTurns {
+	if c.ElideAfterTurns > 0 && userTurns(history) <= c.ElideAfterTurns {
 		return history
 	}
 
-	cutoff := len(history) - max(c.KeepTurns, 0)
+	cutoff := keepFrom(history, c.KeepTurns)
 	if cutoff <= 0 {
 		return history
 	}

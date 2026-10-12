@@ -42,11 +42,13 @@ type ContextConfig struct {
 	HeadLines int
 	TailLines int
 
-	// Compaction of older history. The last KeepTurns messages are replayed
-	// verbatim; tool observations older than that are elided to their header. No
-	// elision happens until the conversation exceeds ElideAfterTurns messages, and
-	// observations smaller than ElideMinBytes are left alone. ElideHeadLines is how
-	// much of an elided observation survives.
+	// Compaction of older history. The last KeepTurns user turns are replayed
+	// verbatim (a turn is one user instruction plus every tool call the model makes
+	// to answer it, so a long turn is never cut mid-task); tool observations older
+	// than that are elided to their header. No elision happens until the
+	// conversation exceeds ElideAfterTurns user turns, and observations smaller than
+	// ElideMinBytes are left alone. ElideHeadLines is how much of an elided
+	// observation survives.
 	KeepTurns       int
 	ElideAfterTurns int
 	ElideMinBytes   int
@@ -54,7 +56,7 @@ type ContextConfig struct {
 
 	// SummarizeAfterTokens turns on the second compression layer: when the last
 	// prompt exceeded this many tokens, the oldest turns are summarized by the
-	// model into one message and only the last KeepTurns messages are kept. Zero
+	// model into one message and only the last KeepTurns turns are kept. Zero
 	// (the default) disables it — it costs an extra model call, so it is opt-in.
 	SummarizeAfterTokens int
 }
@@ -253,8 +255,8 @@ func defaultConfig() *UserConfig {
 			PaperLimit:      16384,
 			HeadLines:       80,
 			TailLines:       40,
-			KeepTurns:       8,
-			ElideAfterTurns: 16,
+			KeepTurns:       4,
+			ElideAfterTurns: 8,
 			ElideMinBytes:   1000,
 			ElideHeadLines:  8,
 		},

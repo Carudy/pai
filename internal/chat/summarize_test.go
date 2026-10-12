@@ -25,22 +25,36 @@ func TestShouldSummarize(t *testing.T) {
 }
 
 func TestSplitForSummary(t *testing.T) {
-	msgs := make([]provider.Message, 5)
-	for i := range msgs {
-		msgs[i] = provider.Message{Role: provider.RoleUser, Content: string(rune('a' + i))}
+	user := func(s string) provider.Message {
+		return provider.Message{Role: provider.RoleUser, Kind: core.KindInput, Content: s}
 	}
+	result := func(s string) provider.Message {
+		return provider.Message{Role: provider.RoleUser, Kind: core.KindToolResult, Content: s}
+	}
+	// Three turns of two messages each: a user instruction and its tool result.
+	msgs := []provider.Message{user("a"), result("oa"), user("b"), result("ob"), user("c"), result("oc")}
 
-	span, recent := SplitForSummary(msgs, 2)
-	if len(span) != 3 || len(recent) != 2 {
-		t.Fatalf("got span=%d recent=%d, want 3/2", len(span), len(recent))
+	span, recent := SplitForSummary(msgs, 1)
+	if len(span) != 4 || len(recent) != 2 {
+		t.Fatalf("got span=%d recent=%d, want 4/2", len(span), len(recent))
 	}
-	if span[0].Content != "a" || recent[0].Content != "d" {
+	if span[0].Content != "a" || recent[0].Content != "c" {
 		t.Errorf("split in the wrong place: span[0]=%q recent[0]=%q", span[0].Content, recent[0].Content)
 	}
 
+	// Keeping two turns keeps both whole, not a message count.
+	if _, recent := SplitForSummary(msgs, 2); len(recent) != 4 {
+		t.Errorf("keep 2 turns kept %d messages, want 4", len(recent))
+	}
+
 	// Nothing old enough to summarize.
-	if span, _ := SplitForSummary(msgs, 5); span != nil {
+	if span, _ := SplitForSummary(msgs, 3); span != nil {
 		t.Errorf("expected an empty span, got %d", len(span))
+	}
+
+	// keep 0 keeps no turn, so everything is a candidate for the summary.
+	if span, recent := SplitForSummary(msgs, 0); len(span) != 6 || len(recent) != 0 {
+		t.Errorf("keep 0: span=%d recent=%d, want 6/0", len(span), len(recent))
 	}
 }
 

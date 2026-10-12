@@ -171,8 +171,11 @@ func TestMergeTemplate(t *testing.T) {
 	if raw.App.DefaultRole != "coder" {
 		t.Errorf("default_role = %q, want coder", raw.App.DefaultRole)
 	}
-	if raw.Context.KeepTurns != 8 {
-		t.Errorf("keep_turns = %d, want the default 8", raw.Context.KeepTurns)
+	if raw.Context.KeepTurns != 4 {
+		t.Errorf("keep_turns = %d, want the default 4", raw.Context.KeepTurns)
+	}
+	if raw.Context.ElideAfterTurns != 8 {
+		t.Errorf("elide_after_turns = %d, want the default 8", raw.Context.ElideAfterTurns)
 	}
 
 	// Merging again is a no-op.

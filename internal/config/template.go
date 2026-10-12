@@ -65,12 +65,14 @@ search_limit = 8000
 head_lines   = 80
 tail_lines   = 40
 
-# Compaction of long conversations. The last keep_turns messages are replayed
-# in full; older command output is elided to its header so stale results are not
-# resent every turn. Nothing is compressed until the conversation exceeds
-# elide_after_turns messages; observations smaller than elide_min_bytes are kept.
-keep_turns        = 8
-elide_after_turns = 16
+# Compaction of long conversations. A turn is one user instruction plus every
+# tool call the model makes to answer it, so keep_turns counts whole turns and a
+# long turn is never cut mid-task. The last keep_turns turns are replayed in full;
+# older command output is elided to its header so stale results are not resent
+# every turn. Nothing is compressed until the conversation exceeds
+# elide_after_turns turns; observations smaller than elide_min_bytes are kept.
+keep_turns        = 4
+elide_after_turns = 8
 elide_min_bytes   = 1000
 elide_head_lines  = 8
 
