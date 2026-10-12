@@ -351,8 +351,8 @@ header p {
     margin-top: 0;
 }
 
-/* Role and Model side by side: a fixed, equal control width with Apply right
-   after it, so neither stretches across the header. */
+/* Session settings wrap together on narrow screens, keeping Apply next to
+   each field rather than stretching controls across the header. */
 .session-config {
     display: flex;
     flex-wrap: wrap;
@@ -362,7 +362,8 @@ header p {
 }
 
 #role-form,
-#model-form {
+#model-form,
+#working-dir-form {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -370,7 +371,8 @@ header p {
 }
 
 #role-form select,
-#model-form .model-field {
+#model-form .model-field,
+#working-dir-form input {
     width: 200px;
     min-width: 0;
 }
@@ -382,13 +384,16 @@ header p {
 #model-form input,
 #model-form button,
 #role-form select,
-#role-form button {
+#role-form button,
+#working-dir-form input,
+#working-dir-form button {
     padding: 4px 8px;
     font-size: 12px;
 }
 
 #model-form label,
-#role-form label {
+#role-form label,
+#working-dir-form label {
     flex-shrink: 0;
 }
 

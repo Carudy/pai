@@ -51,8 +51,9 @@ validation error return or panic. Cookie Secure is true when `r.TLS` is nonnil
 `Forwarded` or any `X-Forwarded-*` headers. Host must be validated against the configured public
 host/listener by the composition root if DNS rebinding is a concern, especially
 in unauthenticated loopback mode. Origin validation is not a Host allowlist.
-The backend fixes the workspace; no API can change cwd. Run only for trusted
-users: authenticated clients can invoke agent tools with the process's rights.
+Each session uses its saved workspace; `/api/working-dir` changes it only while
+idle, without changing process cwd. Workspaces are not sandboxes. Run only for
+trusted users: authenticated clients can invoke agent tools with the process's rights.
 
 Set header/idle timeouts and a header size limit on the server. The handler sets
 10-second body read and 15-second response write deadlines, caps JSON requests
@@ -80,8 +81,8 @@ focusing the field shows every suggestion, typing filters it, and choosing one
 fills the field. The field still accepts any configured `provider:model`, with
 spaces around the colon normalized; suggestions are not an allowlist.
 
-The header keeps a compact settings grid (Role and Model side by side, each with
-Apply), a Rename button, and a light/dark theme switch (remembered in
+The header keeps a compact settings grid (Role, Model, and Working dir, each with
+Apply; wrapping on narrow screens), a Rename button, and a light/dark theme switch (remembered in
 `localStorage`; light is the default, seeded from the system preference on a
 first visit). The status bar is a fixed height and truncates, so the header does
 not reflow as the state text changes; the workspace and token usage share one
@@ -129,13 +130,24 @@ rejected; there is no URL authentication.
   `{ "ok": true }`. Requires an idle session; busy/starting, queued work or
   pending prompts return 409. Custom models for configured providers are accepted.
   Saves the model without changing history or the global default; future sends
-  Retiring the old runtime closes SSE, so snapshot/events 404 is normal
+  use it. Retiring the old runtime closes SSE, so snapshot/events 404 is normal
   until the next send. The browser reloads saved metadata and preserves unsaved
-  model and role drafts across history refreshes, but resets them on selection or
-  Apply.
+  model, role, and working-directory drafts across history refreshes, but resets
+  the corresponding draft on Apply and all drafts on session selection.
+- `GET /api/roles`: `{ "roles": ["name"], "default_role": "name" }`; the role
+  names the header control offers (built-in plus user roles).
 - `POST /api/role`: `{ "name": "...", "role": "..." }`; 202 `{ "ok": true }`.
   Requires an idle session (else 409) and a known role (else 400). Saves the role
   without changing history; the next send rebuilds the prompt and tool set.
+- `POST /api/working-dir`: `{ "name": "...", "working_dir": "/path/to/project" }`;
+  200 `{ "ok": true }`. Requires an idle session (busy/starting, queued work, or
+  pending approvals return 409). The directory must be nonblank, exist on the
+  server, and be a directory; relative paths resolve against the server's launch
+  directory and are stored as absolute paths. Invalid paths return 400, a missing
+  session 404. Saves only the workspace, preserving role, model, and history;
+  files are not moved. Retires the runtime and clears retained failure diagnostics,
+  so the next send reloads project instructions and scopes tools to the new path.
+  No request calls `os.Chdir`; directories are checked again when starting work.
 - `POST /api/rename`: `{ "name": "...", "new_name": "..." }`; 200
   `{ "name": "<new>" }`. Requires an idle session; a taken name is 400 and a
   missing session 404. The old runtime is retired and its entry dropped, so the
@@ -157,10 +169,24 @@ rejected; there is no URL authentication.
   field.
 - `GET /api/history?name=...&offset=0&limit=100`: `runner.History` (native core
   turn keys `Role`, `Kind`, `Content`, `At`; metadata uses runner's JSON tags).
-- `GET /api/snapshot?name=...`: `runner.Snapshot`; 404 for no live worker.
+- `GET /api/snapshot?name=...`: `runner.Snapshot`; live state, or a retained
+  stopped/error snapshot after a failure (including initialization failures that
+  happened before SSE subscribed). The manager retains at most 32 failed-session
+  snapshots in memory; an accepted send or successful session mutation clears
+  that session's failure. Returns 404 when neither live nor retained state exists.
 - `GET /api/events?name=...`: SSE `data: <runner.Event>` frames, default message
   event; heartbeat comments. No Last-Event-ID replay. 404 for no live worker.
-- `POST /api/send`, `/api/steer`: `{ "name": "...", "text": "..." }`.
+- `POST /api/create`: `{ "name": "...", "working_dir": "/path" }`; 201 with
+  direct metadata fields `name`, `role`, `model`, `cwd`, `updated_at`. Saves an
+  empty session before any message; it starts no runtime and constructs no
+  provider.
+- `POST /api/send`: `{ "name": "...", "text": "...", "working_dir": "..." }`.
+  Omit `working_dir` to use the saved directory; a first send can also create the
+  session. A supplied directory must exist, is normalized to an absolute path,
+  must match an existing session's saved workspace, and is re-checked when a
+  runtime starts. No request changes the process cwd; workspaces are not
+  security sandboxes.
+- `POST /api/steer`: `{ "name": "...", "text": "..." }`.
 - `POST /api/cancel`: `{ "name": "..." }`.
 - `POST /api/reply`: `{ "name": "...", "prompt_id": "...", "choice":
   "once"|"deny"|"session"|"always" }`; answers the pending confirmation (an
@@ -170,13 +196,16 @@ rejected; there is no URL authentication.
   command names — or the containing directory when `pending.trust_target` is
   `path` — for the run (`session`) or for good (`always`).
 
-Send/steer/cancel/reply success is 202 (login/model 200), not a promise that the task completed. Stale
+Send/steer/cancel/reply success is 202 (login/model/working-dir/rename/delete 200, create 201), not a promise that the task completed. Stale
 prompt IDs are 409, missing live workers 404, full capacity/queues 429, closed
 manager 503, malformed/invalid actions 400. JSON must be a single object with
 known fields and application/json content type. Pagination defaults to offset
 0/limit 100, accepts offsets up to 1,000,000 and limits 1–200.
 
-Completed assistant replies use locally bundled Marked and DOMPurify (see
+## Browser UI behavior
+
+Completed assistant replies — the `done` payload and every action's `reason` —
+use locally bundled Marked and DOMPurify (see
 `vendor/README.md` for pinned versions, provenance, and licenses). Raw HTML is
 escaped and Markdown images become alt text before DOM parsing. DOMPurify returns
 a DOM fragment with a strict Markdown tag/attribute allowlist; the UI appends it
@@ -206,6 +235,8 @@ loads, so it need not travel on every request and needs no server state) and
 reopens it on reload if it still exists. Transient `notice` events (a trust
 downgrade, a newly trusted directory) surface as short-lived toasts above the
 composer in addition to the activity log.
+
+## Scripts and validation
 
 Load `/vendor/marked.min.js`, then `/vendor/purify.min.js`, then `/app.js` using
 local script tags (ordered scripts, not async). No Node or CDN is needed at

@@ -571,6 +571,30 @@ func (b *serveBackend) SetRole(name, role string) error {
 	return nil
 }
 
+// SetWorkingDir changes the workspace used by the next instruction without
+// changing process cwd or the session's conversation.
+func (b *serveBackend) SetWorkingDir(name, cwd string) error {
+	if !session.ValidName(name) {
+		return errors.New("invalid session name")
+	}
+	if strings.TrimSpace(cwd) == "" {
+		return errors.New("working directory must not be blank")
+	}
+	dir, err := runner.ResolveWorkingDir(cwd)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := b.store.SetWorkingDir(name, dir); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return runner.ErrNotFound
+		}
+		return fmt.Errorf("set session working directory: %w", err)
+	}
+	return nil
+}
+
 // Rename changes a session's name. The next instruction starts a worker under
 // the new name.
 func (b *serveBackend) Rename(name, newName string) error {
@@ -744,3 +768,4 @@ func (r *serveRecorder) AppendTurn(t core.Turn) error {
 
 var _ runner.Backend = (*serveBackend)(nil)
 var _ runner.ModelBackend = (*serveBackend)(nil)
+var _ runner.WorkingDirSetter = (*serveBackend)(nil)

@@ -207,6 +207,9 @@ func (s *sqliteStore) Append(name string, turns ...core.Turn) error {
 
 func (s *sqliteStore) SetModel(name, model string) error { return s.setField(name, "model", model) }
 func (s *sqliteStore) SetRole(name, role string) error   { return s.setField(name, "role", role) }
+func (s *sqliteStore) SetWorkingDir(name, cwd string) error {
+	return s.setField(name, "cwd", cwd)
+}
 
 // Truncate keeps the first keep turns and drops the rest. seq is dense and
 // 1-based and only the tail is removed, so keep is the last surviving seq.

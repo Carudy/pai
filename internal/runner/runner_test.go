@@ -3,6 +3,9 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -107,6 +110,240 @@ func TestWorkspacePlumbing(t *testing.T) {
 	}
 	if _, err := legacy.Create("one", dir); err == nil {
 		t.Fatal("legacy creation accepted")
+	}
+}
+
+type workingDirBackend struct {
+	failureBackend
+	dir string
+}
+
+func (b *workingDirBackend) SetWorkingDir(name, cwd string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if name != "one" {
+		return ErrNotFound
+	}
+	if b.mutationErr != nil {
+		return b.mutationErr
+	}
+	b.dir = cwd
+	return nil
+}
+
+func (b *workingDirBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), string, error) {
+	b.mu.Lock()
+	dir := b.dir
+	b.mu.Unlock()
+	dir, err := ResolveWorkingDir(dir)
+	if err != nil {
+		return nil, nil, nil, nil, nil, "", err
+	}
+	cfg, p, rec, history, cleanup, err := b.Prepare(name)
+	return cfg, p, rec, history, cleanup, dir, err
+}
+
+func TestWorkingDirSwitch(t *testing.T) {
+	before, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &workingDirBackend{dir: t.TempDir()}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatal(err)
+	}
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" })
+	history, err := m.History("one", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := m.SetWorkingDir("one", dir+string(os.PathSeparator)+"."); err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	starts, cleanups, gotDir := b.starts, b.cleanups, b.dir
+	b.mu.Unlock()
+	if starts != 1 || cleanups != 1 || gotDir != dir {
+		t.Fatalf("switch: starts=%d cleanups=%d dir=%q", starts, cleanups, gotDir)
+	}
+	if _, err := m.Snapshot("one"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("retired runtime: %v", err)
+	}
+	gotHistory, err := m.History("one", 0, 100)
+	if err != nil || !reflect.DeepEqual(gotHistory, history) {
+		t.Fatalf("history changed: %+v %v", gotHistory, err)
+	}
+	if err := m.Send("one", "again"); err != nil {
+		t.Fatal(err)
+	}
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" })
+	m.mu.Lock()
+	runtimeDir := m.entries["one"].rt.WorkingDir
+	m.mu.Unlock()
+	b.mu.Lock()
+	starts = b.starts
+	b.mu.Unlock()
+	if runtimeDir != dir || starts != 2 {
+		t.Fatalf("rebuilt runtime: cwd=%q starts=%d", runtimeDir, starts)
+	}
+	if after, err := os.Getwd(); err != nil || after != before {
+		t.Fatalf("process cwd changed: %q %v", after, err)
+	}
+}
+
+func TestWorkingDirValidation(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	b := &workingDirBackend{dir: dir}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	for _, cwd := range []string{"", " \t", filepath.Join(dir, "missing"), file} {
+		if err := m.SetWorkingDir("one", cwd); err == nil {
+			t.Fatalf("accepted invalid cwd %q", cwd)
+		}
+	}
+	if err := m.SetWorkingDir("missing", dir); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing session: %v", err)
+	}
+	relative, err := filepath.Rel(mustWorkingDir(t), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetWorkingDir("one", relative); err != nil {
+		t.Fatal(err)
+	}
+	if b.dir != dir {
+		t.Fatalf("relative cwd not normalized: %q", b.dir)
+	}
+	legacy := New(context.Background(), &fakeBackend{}, 1)
+	defer legacy.Close()
+	if err := legacy.SetWorkingDir("one", dir); err == nil {
+		t.Fatal("unsupported backend accepted switch")
+	}
+	m.Close()
+	if err := m.SetWorkingDir("one", dir); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed switch: %v", err)
+	}
+}
+
+func mustWorkingDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestWorkingDirSwitchRejectsBusy(t *testing.T) {
+	for _, state := range []string{"starting", "busy", "pending", "queued", "steering", "reserved"} {
+		t.Run(state, func(t *testing.T) {
+			dir := t.TempDir()
+			b := &workingDirBackend{dir: dir}
+			m := New(context.Background(), b, 1)
+			defer m.Close()
+			w := &worker{state: "awaiting", tasks: make(chan string, 1), steering: make(chan string, 1)}
+			switch state {
+			case "starting", "busy":
+				w.state = state
+			case "pending":
+				w.pending = &Prompt{ID: "pending"}
+			case "queued":
+				w.tasks <- "task"
+			case "steering":
+				w.steering <- "task"
+			case "reserved":
+				m.changing = map[string]bool{"one": true}
+			}
+			m.entries["one"] = w
+			err := m.SetWorkingDir("one", t.TempDir())
+			delete(m.entries, "one")
+			if !errors.Is(err, ErrBusy) || b.dir != dir {
+				t.Fatalf("busy switch: %v dir=%q", err, b.dir)
+			}
+		})
+	}
+}
+
+func TestWorkingDirSwitchReservation(t *testing.T) {
+	b := &workingDirBackend{dir: t.TempDir()}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	wctx, cancel := context.WithCancel(m.ctx)
+	w := &worker{m: m, name: "one", ctx: wctx, cancel: cancel, state: "awaiting", done: make(chan struct{}), tasks: make(chan string, 1), steering: make(chan string, 1)}
+	m.entries["one"] = w
+	dir := t.TempDir()
+	result := make(chan error, 1)
+	go func() { result <- m.SetWorkingDir("one", dir) }()
+	<-wctx.Done()
+	// Keep the retirement join open while testing all competing mutations.
+	release := sync.OnceFunc(func() {
+		m.mu.Lock()
+		delete(m.entries, "one")
+		close(w.done)
+		m.mu.Unlock()
+	})
+	defer release()
+	if err := m.Send("one", "task"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("send during retirement: %v", err)
+	}
+	if err := m.SetWorkingDir("one", dir); !errors.Is(err, ErrBusy) {
+		t.Fatalf("switch during retirement: %v", err)
+	}
+	if err := m.SetModel("one", "test:next"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("model switch during retirement: %v", err)
+	}
+	release()
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Send("one", "again"); err != nil {
+		t.Fatalf("reservation not released: %v", err)
+	}
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" })
+}
+
+func TestWorkingDirSwitchClearsFailure(t *testing.T) {
+	b := &workingDirBackend{dir: filepath.Join(t.TempDir(), "missing")}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	s := sendAndWaitFailure(t, m, "one")
+	dir := t.TempDir()
+	b.mutationErr = errors.New("persist workspace failed")
+	if err := m.SetWorkingDir("one", dir); !errors.Is(err, b.mutationErr) {
+		t.Fatalf("failed persistence: %v", err)
+	}
+	if got, err := m.Snapshot("one"); err != nil || !reflect.DeepEqual(got, s) {
+		t.Fatalf("failed switch lost failure: %+v %v", got, err)
+	}
+	if err := m.SetWorkingDir("one", " "); err == nil {
+		t.Fatal("blank workspace accepted")
+	}
+	if got, err := m.Snapshot("one"); err != nil || !reflect.DeepEqual(got, s) {
+		t.Fatalf("invalid switch lost failure: %+v %v", got, err)
+	}
+	b.mutationErr = nil
+	if err := m.SetWorkingDir("one", dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Snapshot("one"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("successful switch retained failure: %v", err)
+	}
+	if err := m.Send("one", "retry"); err != nil {
+		t.Fatal(err)
+	}
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" && s.Error == "" })
+	m.mu.Lock()
+	got := m.entries["one"].rt.WorkingDir
+	m.mu.Unlock()
+	if got != dir {
+		t.Fatalf("retry workspace: %q", got)
 	}
 }
 
@@ -681,6 +918,300 @@ func TestActivitiesBoundAndPayloadIsolation(t *testing.T) {
 	}
 	if _, _, err := m.SubscribeActivities(); !errors.Is(err, ErrCapacity) {
 		t.Fatal(err)
+	}
+}
+
+type failureBackend struct {
+	fakeBackend
+	prepareErr     error
+	prepareStarted chan struct{}
+	prepareGate    chan struct{}
+	mutationErr    error
+}
+
+func (b *failureBackend) Prepare(name string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), error) {
+	b.mu.Lock()
+	err, started, gate := b.prepareErr, b.prepareStarted, b.prepareGate
+	b.mu.Unlock()
+	if started != nil {
+		close(started)
+	}
+	if gate != nil {
+		<-gate
+	}
+	if err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
+	return b.fakeBackend.Prepare(name)
+}
+
+func (b *failureBackend) Models() ([]string, string, error) {
+	return []string{"test:model"}, "test:model", nil
+}
+func (b *failureBackend) SetModel(string, string) error   { return b.mutationErr }
+func (b *failureBackend) SetRole(string, string) error    { return b.mutationErr }
+func (b *failureBackend) Rename(string, string) error     { return b.mutationErr }
+func (b *failureBackend) Delete(string) error             { return b.mutationErr }
+func (b *failureBackend) Rewind(string, int, *bool) error { return b.mutationErr }
+func (b *failureBackend) Roles() ([]string, string, error) {
+	return []string{"devops"}, "devops", nil
+}
+func (b *failureBackend) Create(name, cwd string) (Meta, error) {
+	return Meta{Name: name, Cwd: cwd}, b.mutationErr
+}
+func (b *failureBackend) CreateWithRole(name, cwd, role string) (Meta, error) {
+	return Meta{Name: name, Cwd: cwd, Role: role}, b.mutationErr
+}
+
+func sendAndWaitFailure(t *testing.T, m *Manager, name string) Snapshot {
+	t.Helper()
+	events, unsubscribe, err := m.SubscribeActivities()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+	if err := m.Send(name, "task"); err != nil {
+		t.Fatal(err)
+	}
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case a := <-events:
+			if a.Name != name || a.Event.Type != "stopped" {
+				continue
+			}
+			// Snapshot acquires the teardown lock, so worker removal is complete.
+			s, err := m.Snapshot(name)
+			if err != nil || s.State != "stopped" || s.Phase != "stopped" || s.Error == "" {
+				t.Fatalf("failure snapshot: %+v %v", s, err)
+			}
+			m.mu.Lock()
+			live := m.entries[name] != nil
+			m.mu.Unlock()
+			if live {
+				t.Fatal("failed worker still occupies a runtime slot")
+			}
+			return s
+		case <-timer.C:
+			t.Fatal("timed out waiting for failed worker teardown")
+		}
+	}
+}
+
+func TestFailureSnapshotRecoveryAndRetry(t *testing.T) {
+	failure := errors.New("stat working directory: no such file or directory")
+	b := &failureBackend{prepareErr: failure}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	s := sendAndWaitFailure(t, m, "one")
+	if s.Name != "one" || s.Error != failure.Error() || s.Queued != 0 || s.Pending != nil || s.ActiveTool != nil {
+		t.Fatalf("stopped snapshot: %+v", s)
+	}
+	if _, _, err := m.Subscribe("one"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("subscribe to removed worker: %v", err)
+	}
+	if err := m.Cancel("one"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cancel removed worker: %v", err)
+	}
+	if err := m.Send("one", " "); err == nil {
+		t.Fatal("empty retry accepted")
+	}
+	if got, err := m.Snapshot("one"); err != nil || !reflect.DeepEqual(got, s) {
+		t.Fatalf("rejected retry changed failure: %+v %v", got, err)
+	}
+	m.mu.Lock()
+	m.changing = map[string]bool{"one": true}
+	m.mu.Unlock()
+	if err := m.Send("one", "retry"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("reserved retry: %v", err)
+	}
+	if got, err := m.Snapshot("one"); err != nil || !reflect.DeepEqual(got, s) {
+		t.Fatalf("busy rejection changed failure: %+v %v", got, err)
+	}
+	m.mu.Lock()
+	delete(m.changing, "one")
+	m.mu.Unlock()
+
+	started, gate := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	defer release()
+	b.mu.Lock()
+	b.prepareErr, b.prepareStarted, b.prepareGate = nil, started, gate
+	b.mu.Unlock()
+	if err := m.Send("one", "retry"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retry did not start")
+	}
+	if got, err := m.Snapshot("one"); err != nil || got.State != "starting" || got.Error != "" {
+		t.Fatalf("accepted retry snapshot: %+v %v", got, err)
+	}
+	m.mu.Lock()
+	cached := len(m.failures)
+	m.mu.Unlock()
+	if cached != 0 {
+		t.Fatal("accepted retry retained old failure")
+	}
+	release()
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" && s.Error == "" })
+	m.Close()
+	if _, err := m.Snapshot("one"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("successful retry resurrected old failure: %v", err)
+	}
+}
+
+func TestFailureSnapshotRejectedCapacity(t *testing.T) {
+	b := &failureBackend{prepareErr: errors.New("preparation failed")}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	s := sendAndWaitFailure(t, m, "one")
+	b.mu.Lock()
+	b.prepareErr = nil
+	b.question = true
+	b.mu.Unlock()
+	if err := m.Send("blocker", "task"); err != nil {
+		t.Fatal(err)
+	}
+	waitSnapshot(t, m, "blocker", func(s Snapshot) bool { return s.Pending != nil })
+	if err := m.Send("one", "retry"); !errors.Is(err, ErrCapacity) {
+		t.Fatalf("retry at capacity: %v", err)
+	}
+	if got, err := m.Snapshot("one"); err != nil || !reflect.DeepEqual(got, s) {
+		t.Fatalf("capacity rejection changed failure: %+v %v", got, err)
+	}
+	m.Close()
+	if err := m.Send("one", "retry"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("closed retry: %v", err)
+	}
+	if got, err := m.Snapshot("one"); err != nil || !reflect.DeepEqual(got, s) {
+		t.Fatalf("closed rejection changed failure: %+v %v", got, err)
+	}
+}
+
+func TestFailureSnapshotBoundedFIFO(t *testing.T) {
+	b := &failureBackend{prepareErr: errors.New("preparation failed")}
+	m := New(context.Background(), b, 1)
+	defer m.Close()
+	for i := 0; i < failureSnapshotLimit+2; i++ {
+		sendAndWaitFailure(t, m, fmt.Sprintf("failed-%02d", i))
+	}
+	m.mu.Lock()
+	cached, live := len(m.failures), len(m.entries)
+	m.mu.Unlock()
+	if cached != failureSnapshotLimit || live != 0 {
+		t.Fatalf("cached=%d live=%d", cached, live)
+	}
+	for i := 0; i < failureSnapshotLimit+2; i++ {
+		_, err := m.Snapshot(fmt.Sprintf("failed-%02d", i))
+		if i < 2 && !errors.Is(err, ErrNotFound) || i >= 2 && err != nil {
+			t.Fatalf("FIFO entry %d: %v", i, err)
+		}
+	}
+	// Snapshot reads do not refresh FIFO order; a new failure for a name does.
+	sendAndWaitFailure(t, m, "failed-02")
+	if _, err := m.Snapshot("failed-03"); err != nil {
+		t.Fatal(err)
+	}
+	sendAndWaitFailure(t, m, "another")
+	if _, err := m.Snapshot("failed-03"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("oldest failure was not evicted: %v", err)
+	}
+	if _, err := m.Snapshot("failed-02"); err != nil {
+		t.Fatalf("latest failure for repeated name was evicted: %v", err)
+	}
+	b.mu.Lock()
+	b.prepareErr = nil
+	b.mu.Unlock()
+	if err := m.Send("success", "task"); err != nil {
+		t.Fatalf("failure cache consumed capacity: %v", err)
+	}
+	waitSnapshot(t, m, "success", func(s Snapshot) bool { return s.State == "awaiting" })
+}
+
+func TestFailureSnapshotMutationInvalidation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*Manager) error
+	}{
+		{"model", func(m *Manager) error { return m.SetModel("one", "test:next") }},
+		{"role", func(m *Manager) error { return m.SetRole("one", "devops") }},
+		{"rewind", func(m *Manager) error { return m.Rewind("one", 0, nil) }},
+		{"rename", func(m *Manager) error { return m.Rename("one", "two") }},
+		{"delete", func(m *Manager) error { return m.Delete("one") }},
+		{"create", func(m *Manager) error { _, err := m.Create("one", ""); return err }},
+		{"create-fallback", func(m *Manager) error { _, err := m.Create("one", ""); return err }},
+		{"create-role", func(m *Manager) error { _, err := m.CreateWithRole("one", "", "devops"); return err }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &failureBackend{prepareErr: errors.New("preparation failed")}
+			var backend Backend = b
+			if tc.name == "create-fallback" {
+				backend = struct {
+					Backend
+					CreationBackend
+				}{b, b}
+			}
+			m := New(context.Background(), backend, 1)
+			defer m.Close()
+			s := sendAndWaitFailure(t, m, "one")
+			if tc.name == "rename" {
+				sendAndWaitFailure(t, m, "two")
+			}
+			b.mutationErr = errors.New("mutation failed")
+			if err := tc.mutate(m); !errors.Is(err, b.mutationErr) {
+				t.Fatalf("rejected mutation: %v", err)
+			}
+			if got, err := m.Snapshot("one"); err != nil || !reflect.DeepEqual(got, s) {
+				t.Fatalf("rejected mutation changed failure: %+v %v", got, err)
+			}
+			b.mutationErr = nil
+			if err := tc.mutate(m); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.Snapshot("one"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("successful mutation retained failure: %v", err)
+			}
+			if tc.name == "rename" {
+				if _, err := m.Snapshot("two"); !errors.Is(err, ErrNotFound) {
+					t.Fatalf("rename retained destination failure: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestFailureSnapshotCopies(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{}, 1)
+	defer m.Close()
+	s := Snapshot{Name: "one", State: "stopped", Phase: "stopped", Error: "failed",
+		ActiveTool: &core.ToolCall{CommandSegments: []string{"original"}, UntrustedSegments: []int{1}},
+		Pending:    &Prompt{Untrusted: []string{"original"}, Tool: &core.ToolCall{CommandSegments: []string{"original"}}},
+	}
+	m.mu.Lock()
+	m.rememberFailureLocked(s)
+	m.mu.Unlock()
+	s.ActiveTool.CommandSegments[0] = "changed"
+	s.ActiveTool.UntrustedSegments[0] = 2
+	s.Pending.Untrusted[0] = "changed"
+	s.Pending.Tool.CommandSegments[0] = "changed"
+	first, err := m.Snapshot("one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ActiveTool.CommandSegments[0] != "original" || first.ActiveTool.UntrustedSegments[0] != 1 || first.Pending.Untrusted[0] != "original" || first.Pending.Tool.CommandSegments[0] != "original" {
+		t.Fatalf("cache aliases source: %+v", first)
+	}
+	want := cloneSnapshot(first)
+	first.ActiveTool.CommandSegments[0] = "changed"
+	first.ActiveTool.UntrustedSegments[0] = 2
+	first.Pending.Untrusted[0] = "changed"
+	first.Pending.Tool.CommandSegments[0] = "changed"
+	if second, err := m.Snapshot("one"); err != nil || !reflect.DeepEqual(second, want) {
+		t.Fatalf("snapshot aliases cache: %+v %v", second, err)
 	}
 }
 

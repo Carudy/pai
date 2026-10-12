@@ -43,109 +43,10 @@ pai -i
 
 # DevOps with web search
 pai "what's the latest Kubernetes LTS version and what CVEs affect it"
+
+# Browser UI for named sessions
+pai serve
 ```
-
-## Browser / server mode
-
-```bash
-# Serve the current directory (localhost only by default).
-pai serve --port 9384 --max-active-sessions 2
-```
-
-Optional `pai serve --activity-log` prints concise stdout activity, for example
-`[my-session]: tool_exec execute /bin/sh ls -la`, plus lifecycle and prompt labels.
-It is off by default and works without any browser connected. `tool_exec` announces
-a tool call, which may still require approval; it does not guarantee execution.
-Logs omit reasoning, answers, configuration, diffs, and raw tool output. **Commands
-and targets may contain sensitive data**, including credentials: enable this only
-when appropriate for your stdout destination. Events use a bounded 128-event queue;
-slow output drops new events rather than blocking agents. Shutdown drains queued
-logs for up to 250 ms; a blocked writer may lose the remaining logs.
-
-Open `http://127.0.0.1:9384`. The embedded frontend uses no CDN, JavaScript
-framework, or Node build step. Its sidebar lists saved sessions; create a named
-session, select one, and use **Send**, **Steer**, or **Cancel**. A model question
-appears as an ordinary reply — answer it with your next instruction; untrusted
-tools have explicit approval cards, including change previews.
-Multiple tabs may observe the same session, but there is only one runtime per
-session. Closing a tab does **not** cancel tasks; reconnect to recover history
-and pending approvals. Send queues a follow-up, Steer delivers at a safe step
-boundary, and Cancel interrupts current work without discarding queued tasks.
-Cancellation cannot undo completed side effects.
-
-For a VPS, prefer an SSH tunnel or VPN. Non-loopback binds require a token of
-at least 32 characters, supplied through `--token-file` or `PAI_SERVE_TOKEN`.
-Use a private token file rather than putting credentials in URLs or arguments.
-For an HTTPS reverse proxy:
-
-```bash
-pai serve --token-file /path/to/private-token \
-  --public-origin https://pai.example.com
-```
-
-The proxy should preserve `Host` and support SSE without response buffering.
-`--public-origin` explicitly configures browser origin validation and Secure
-cookies; forwarded headers are not trusted. Do not expose plain HTTP carrying
-a token to an untrusted network. The login authenticates access to tools that
-can execute commands and modify files; this is a single-user service, not a
-multi-tenant sandbox.
-
-The concurrency limit bounds live runtimes; idle runtimes can be evicted to
-make room. Full busy capacity rejects new work rather than growing an unbounded
-queue. Sessions execute in their persisted working directory, defaulting to the
-server's launch directory for new sessions. Use separate worktrees when concurrent
-tasks could modify the same files. Browser mode does not support in-session
-slash commands; create/select sessions in the sidebar and act on the selected
-session from the header controls instead.
-
-A session keeps its role, so the header role control switches it: pick a role and
-click **Apply** while the session is idle. The change is saved (like the CLI's
-`/role`) and the next instruction rebuilds its prompt and tools. **Rename** opens
-a prompt for a new session name (also idle-only). Change a selected session's model
-in the header and click **Apply** while it is
-idle (no running work, queued instructions, or pending prompts). Suggestions
-include the configured default, `preset_models`, and models saved in sessions;
-you can also type `provider:model` for a configured provider. Switching preserves
-history and uses the new model on future sends; it does not change the global
-default.
-
-`POST /api/model` and `/api/role` take `{"name","model"}` or `{"name","role"}`
-to switch settings, `/api/rename` takes `{"name","new_name"}` (200, echoing the
-new `name`), and `/api/rewind` takes `{"name","keep"}` to keep the first `keep`
-turns and drop the rest. Each acts on an idle session and retires its runtime, so
-the next send rebuilds against the current settings and history.
-
-Every user instruction in the conversation carries an **↩ from here** button: it
-rewinds the session to just before that instruction, drops the turns after it,
-and returns the instruction to the composer. The confirmation offers **Rewind +
-backup** (copies the dropped turns into a single rolling `<name>.rewind-backup`
-session first, so nothing is lost) or **Rewind** (truncate directly);
-`[session] rewind_backup` only sets the default when an API client omits the
-choice.
-
-The browser also has a light/dark theme switch (remembered locally), a compact
-Role/Model settings grid, and loads history lazily as you scroll up.
-
-API clients can create a saved, empty session before sending any message:
-`POST /api/create` with JSON `{"name":"work","working_dir":"/path/to/project"}`
-returns HTTP 201 with direct metadata fields `name`, `role`, `model`, `cwd`, and
-`updated_at`. Creation does not start a runtime or construct a provider.
-`POST /api/send` accepts `{"name":"work","text":"...","working_dir":"..."}`;
-omit `working_dir` to use the saved directory. A first send can also create a
-session. Directories must already exist, are normalized to absolute paths, and
-are checked again when starting a runtime. A supplied directory must match an
-existing session's saved workspace. No request changes the process cwd; these
-workspaces are not security sandboxes. Mutating API requests require JSON and a
-same-origin `Origin` header, plus the login cookie when authentication is enabled.
-
-While serving, PAI exclusively owns the session store across processes, for
-both SQLite and JSONL. Other PAI processes cannot open that store until the
-server stops. Do not delete `sessions.lock` while PAI is running. Tasks survive
-browser disconnections, **not server restarts**; use a service manager such as
-systemd for hosting. Shutdown cancels active work and releases store ownership.
-
-See `pai serve --help` for bind address, port, authentication, and concurrency
-options.
 
 ## 🧭 Commands
 
@@ -158,6 +59,7 @@ Each command has a short alias, and every command has its own `--help`:
 | `pai session` | `sess` | List, show, rename, delete saved sessions |
 | `pai config` | `cfg` | Inspect and edit `config.toml` |
 | `pai role` | `roles` | List and inspect available roles |
+| `pai serve` | — | Serve the browser UI and HTTP API (see [Browser / server mode](#-browser--server-mode)) |
 | `pai help [cmd]` | — | Show help |
 
 Subcommands and their flags accept short forms, e.g. `pai session ls`,
@@ -317,11 +219,17 @@ confirm_read = false
 # Kill a single command (local or remote) after this many seconds. 0 (default)
 # = no timeout: Ctrl+C stops a running command, so long builds are not cut off.
 cmd_timeout_seconds = 0
+# Run remote commands through a login shell so the remote PATH/env loads, e.g.
+# "bash" -> bash -lc '<cmd>'. Empty (default) = plain ssh. See Remote Host Management.
+# remote_shell = "bash"
 
 [session]
 persist     = false  # true = save every run to an auto-named session
 max_turns   = 0      # cap on turns replayed when resuming (0 = all)
 recap_turns = 3      # recent exchanges echoed when resuming (0 = no recap)
+# Snapshot a session into <name>.rewind-backup before a rewind truncates it
+# (web "from here"). Default true.
+# rewind_backup = true
 ```
 
 The older `[app] truncate_exec_limit` / `truncate_search_limit` keys still work
@@ -417,58 +325,6 @@ export TAVILY_API_KEY="your-key"
 pai "what's the latest Kubernetes CVE and how do I patch it"
 ```
 
-#### Trusted Commands
-Commands matching the `trusted_cmds` list skip confirmation:
-```toml
-[tool]
-trusted_cmds = ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
-```
-
-A chain (`aa && bb`) is confirmed as a whole, but the printed list marks only the
-parts that are *not* trusted (`⚠`), and the header counts them (`3 commands (2
-need approval):`). The prompt offers more than yes/no:
-
-| Key | Does |
-|---|---|
-| `y` | run this once |
-| `n` | skip |
-| `s` | run, and trust the flagged commands for this run |
-| `a` | run, and trust them from now on (written to `trusted_cmds`) |
-| `Ctrl+C` | abort |
-
-Trust is by command **name** (the first word), so `a` on `sudo rm -rf /x` would
-trust `sudo`. To blunt that, `a` is silently downgraded to "this session" for
-interpreters and wrappers (`sudo`, `sh`, `bash`, `env`, `xargs`, …). Session
-trust is in-memory: it lasts for the run and is not persisted, so a restart
-re-confirms.
-
-#### Trusted Paths (file tools)
-By default every `edit` and `write` asks for approval. List the directories you
-work in and changes under them apply straight away — the diff is still shown, so
-the change stays visible, but you aren't asked each time:
-```toml
-[tool]
-trusted_paths = ["~/work/myproject"]
-```
-Paths are resolved (symlinks included) before matching, so a `..` or a symlink
-cannot escape a trusted directory. An empty list (the default) confirms
-everything; `~` expands, and a relative path resolves against the working
-directory. Prefer an absolute path — `["."]` trusts wherever you happen to run
-pai, which is rarely what you want.
-
-When a change is outside those paths, the prompt offers the same trust choices as
-a command (in the terminal `s`/`a`, in the browser **Trust session**/**Always**):
-trust the file's directory for this run, or from now on (added to
-`trusted_paths`). Trusting the filesystem root for every session is refused.
-
-This covers the file tools only. Shell commands are still governed by
-`trusted_cmds`, so an untrusted `sed -i`/`tee` still prompts even inside a
-trusted path.
-
-Reads are not confirmed by default. Set `confirm_read = true` to also require
-approval before a file *outside* `trusted_paths` is read — the one place where
-content could leave your workspace without a prompt.
-
 ### `coder` — Software engineering
 Helps read, write, refactor, and test code in the current repository. Tools:
 - **execute** — Inspect and modify the repo, run builds and tests
@@ -523,7 +379,65 @@ context_files = ["AGENTS.md", "CLAUDE.md"]
 PAI prints a one-line notice whenever it uses one, so repository content
 influencing the model is never silent.
 
-See [examples/](examples/) for detailed walkthroughs.
+See [examples/](examples/) for detailed walkthroughs, and
+[Trust and approvals](#-trust-and-approvals) for how tool calls are confirmed.
+
+## 🔐 Trust and approvals
+
+Tools that change things ask first. The terminal prompt and the browser approval
+card offer the same choices; what is auto-approved is controlled by the lists below.
+
+### Trusted commands
+Commands matching the `trusted_cmds` list skip confirmation:
+```toml
+[tool]
+trusted_cmds = ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
+```
+
+A chain (`aa && bb`) is confirmed as a whole, but the printed list marks only the
+parts that are *not* trusted (`⚠`), and the header counts them (`3 commands (2
+need approval):`). The prompt offers more than yes/no:
+
+| Key | Does |
+|---|---|
+| `y` | run this once |
+| `n` | skip |
+| `s` | run, and trust the flagged commands for this run |
+| `a` | run, and trust them from now on (written to `trusted_cmds`) |
+| `Ctrl+C` | abort |
+
+Trust is by command **name** (the first word), so `a` on `sudo rm -rf /x` would
+trust `sudo`. To blunt that, `a` is silently downgraded to "this session" for
+interpreters and wrappers (`sudo`, `sh`, `bash`, `env`, `xargs`, …). Session
+trust is in-memory: it lasts for the run and is not persisted, so a restart
+re-confirms.
+
+### Trusted paths (file tools)
+By default every `edit` and `write` asks for approval. List the directories you
+work in and changes under them apply straight away — the diff is still shown, so
+the change stays visible, but you aren't asked each time:
+```toml
+[tool]
+trusted_paths = ["~/work/myproject"]
+```
+Paths are resolved (symlinks included) before matching, so a `..` or a symlink
+cannot escape a trusted directory. An empty list (the default) confirms
+everything; `~` expands, and a relative path resolves against the working
+directory. Prefer an absolute path — `["."]` trusts wherever you happen to run
+pai, which is rarely what you want.
+
+When a change is outside those paths, the prompt offers the same trust choices as
+a command (in the terminal `s`/`a`, in the browser **Trust session**/**Always**):
+trust the file's directory for this run, or from now on (added to
+`trusted_paths`). Trusting the filesystem root for every session is refused.
+
+This covers the file tools only. Shell commands are still governed by
+`trusted_cmds`, so an untrusted `sed -i`/`tee` still prompts even inside a
+trusted path.
+
+Reads are not confirmed by default. Set `confirm_read = true` to also require
+approval before a file *outside* `trusted_paths` is read — the one place where
+content could leave your workspace without a prompt.
 
 ## 🧠 What gets sent to the model
 
@@ -620,6 +534,105 @@ The default uses pure-Go SQLite (`modernc.org/sqlite`) — cgo-free, so `go
 install` keeps working. Pass `-tags filestore` for a ~4 MB smaller binary with no
 SQLite dependency. `make build` / `make build-file` produce stripped binaries.
 Note the two backends use different on-disk formats.
+
+## 🌐 Browser / server mode
+
+```bash
+# Serve the current directory (localhost only by default).
+pai serve --port 9384 --max-active-sessions 2
+```
+
+Open `http://127.0.0.1:9384`. The embedded frontend uses no CDN, JavaScript
+framework, or Node build step. See `pai serve --help` for bind address, port,
+authentication, and concurrency options.
+
+### Using the UI
+
+- The sidebar lists saved sessions. Create a named session, select one, and use
+  **Send**, **Steer**, or **Cancel**. Send queues a follow-up, Steer delivers at
+  a safe step boundary, and Cancel interrupts current work without discarding
+  queued tasks. Cancellation cannot undo completed side effects.
+- A model question appears as an ordinary reply — answer it with your next
+  instruction. Untrusted tools get explicit approval cards, including change
+  previews and the same trust choices as the terminal (**Trust session** /
+  **Always**).
+- Multiple tabs may observe the same session, but there is only one runtime per
+  session. Closing a tab does **not** cancel tasks; reconnect to recover history
+  and pending approvals.
+- The header has **Role**, **Model**, and **Working dir** controls (each with
+  **Apply**). Settings changes require an *idle* session (no running work,
+  queued instructions, or pending approvals), are saved to the session, and take
+  effect on the next send. Changing the directory preserves conversation history
+  but rebuilds tools and project instructions against the new workspace; it does
+  not move files. The directory must already exist on the server. Model suggestions
+  include the configured default,
+  `preset_models`, and models saved in sessions; you can also type
+  `provider:model` for a configured provider. Switching preserves history and
+  does not change the global default. **Rename** is also idle-only; the light/dark
+  theme switch is remembered locally and works at any time.
+- Every user instruction carries an **↩ from here** button: it rewinds the session
+  to just before that instruction, drops the turns after it, and returns the
+  instruction to the composer. The confirmation offers **Rewind + backup** (copies
+  the dropped turns into a single rolling `<name>.rewind-backup` session first, so
+  nothing is lost) or **Rewind** (truncate directly); `[session] rewind_backup`
+  only sets the default when an API client omits the choice.
+- History loads lazily as you scroll up. Slash commands are not supported in the
+  browser; use the sidebar and header controls instead.
+
+### Remote access
+
+For a VPS, prefer an SSH tunnel or VPN. Non-loopback binds require a token of
+at least 32 characters, supplied through `--token-file` or `PAI_SERVE_TOKEN`.
+Use a private token file rather than putting credentials in URLs or arguments.
+For an HTTPS reverse proxy:
+
+```bash
+pai serve --token-file /path/to/private-token \
+  --public-origin https://pai.example.com
+```
+
+The proxy should preserve `Host` and support SSE without response buffering.
+`--public-origin` explicitly configures browser origin validation and Secure
+cookies; forwarded headers are not trusted. Do not expose plain HTTP carrying
+a token to an untrusted network. The login authenticates access to tools that
+can execute commands and modify files; this is a single-user service, not a
+multi-tenant sandbox.
+
+### Concurrency and workspaces
+
+The concurrency limit bounds live runtimes; idle runtimes can be evicted to
+make room. Full busy capacity rejects new work rather than growing an unbounded
+queue. Sessions execute in their persisted working directory, defaulting to the
+server's launch directory for new sessions. Directories must already exist and
+are normalized to absolute paths; they are not security sandboxes, and no request
+changes the process cwd. Use separate worktrees when concurrent tasks could
+modify the same files.
+
+While serving, PAI exclusively owns the session store across processes, for
+both SQLite and JSONL. Other PAI processes cannot open that store until the
+server stops. Do not delete `sessions.lock` while PAI is running. Tasks survive
+browser disconnections, **not server restarts**; use a service manager such as
+systemd for hosting. Shutdown cancels active work and releases store ownership.
+
+### Activity log
+
+`pai serve --activity-log` prints concise stdout activity, for example
+`[my-session]: tool_exec execute /bin/sh ls -la`, plus lifecycle and prompt labels.
+It is off by default and works without any browser connected. `tool_exec` announces
+a tool call, which may still require approval; it does not guarantee execution.
+Logs omit reasoning, answers, configuration, diffs, and raw tool output. **Commands
+and targets may contain sensitive data**, including credentials: enable this only
+when appropriate for your stdout destination. Events use a bounded 128-event queue;
+slow output drops new events rather than blocking agents. Shutdown drains queued
+logs for up to 250 ms; a blocked writer may lose the remaining logs.
+
+### HTTP API
+
+Scripts and other clients can drive the same sessions over HTTP — create a saved
+session, send, steer, cancel, reply to approvals, switch role/model/workspace, rename,
+rewind, and stream events over SSE. Mutating requests require JSON, a same-origin
+`Origin` header, and the login cookie when authentication is enabled. The full
+endpoint and security contract is in [`internal/web/README.md`](internal/web/README.md).
 
 ## 📄 License
 

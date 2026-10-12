@@ -245,6 +245,26 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, 200, map[string]bool{"ok": true})
+	case "/api/working-dir":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Name       string `json:"name"`
+			WorkingDir string `json:"working_dir"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+			fail(w, 400, "session name must contain 1–256 bytes")
+			return
+		}
+		if err := h.manager.SetWorkingDir(body.Name, body.WorkingDir); err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, map[string]bool{"ok": true})
 	case "/api/role":
 		if !method(w, r, http.MethodPost) {
 			return

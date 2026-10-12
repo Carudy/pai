@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -130,6 +131,13 @@ type Snapshot struct {
 	Error         string         `json:"error,omitempty"`
 	Reasoning     string         `json:"reasoning,omitempty"`
 }
+
+func cloneSnapshot(s Snapshot) Snapshot {
+	s.ActiveTool = cloneToolCall(s.ActiveTool)
+	s.Pending = clonePrompt(s.Pending)
+	return s
+}
+
 type Event struct {
 	Type     string   `json:"type"`
 	Data     any      `json:"data,omitempty"`
@@ -154,6 +162,7 @@ const queueLimit = 32
 const subscriberLimit = 32
 const eventLimit = 64
 const reasoningLimit = 64 << 10
+const failureSnapshotLimit = 32
 
 // ModelBackend is optional; model discovery must not require remote API calls.
 type ModelBackend interface {
@@ -172,6 +181,12 @@ type RewindBackend interface {
 // that cannot persist roles.
 type RoleSetter interface {
 	SetRole(name, role string) error
+}
+
+// WorkingDirSetter is optional; changing a workspace requires a backend that
+// can persist it independently of the runtime.
+type WorkingDirSetter interface {
+	SetWorkingDir(name, cwd string) error
 }
 
 // RenameBackend is optional; renaming a session must not require a backend that
@@ -249,7 +264,11 @@ func (m *Manager) SetModel(name, model string) error {
 		return err
 	}
 	defer finish()
-	return b.SetModel(name, model)
+	if err := b.SetModel(name, model); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
 }
 
 // SetRole retires the idle runtime before persisting the new role, so the next
@@ -264,7 +283,37 @@ func (m *Manager) SetRole(name, role string) error {
 		return err
 	}
 	defer finish()
-	return b.SetRole(name, role)
+	if err := b.SetRole(name, role); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
+}
+
+// SetWorkingDir retires the idle runtime before persisting its workspace, so the
+// next instruction rebuilds the runtime without changing process cwd.
+func (m *Manager) SetWorkingDir(name, cwd string) error {
+	if strings.TrimSpace(cwd) == "" {
+		return errors.New("working directory is required")
+	}
+	dir, err := ResolveWorkingDir(cwd)
+	if err != nil {
+		return err
+	}
+	b, ok := m.backend.(WorkingDirSetter)
+	if !ok {
+		return errors.New("backend does not support changing working directories")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.SetWorkingDir(name, dir); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
 }
 
 // Rename retires the idle runtime before renaming the session, so no live worker
@@ -282,6 +331,8 @@ func (m *Manager) Rename(name, newName string) error {
 	if err := b.Rename(name, newName); err != nil {
 		return err
 	}
+	m.clearFailureLocked(name)
+	m.clearFailureLocked(newName)
 	delete(m.entries, name)
 	return nil
 }
@@ -301,6 +352,7 @@ func (m *Manager) Delete(name string) error {
 	if err := b.Delete(name); err != nil {
 		return err
 	}
+	m.clearFailureLocked(name)
 	delete(m.entries, name)
 	return nil
 }
@@ -320,7 +372,11 @@ func (m *Manager) Rewind(name string, keep int, backup *bool) error {
 		return err
 	}
 	defer finish()
-	return b.Rewind(name, keep, backup)
+	if err := b.Rewind(name, keep, backup); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
 }
 
 type Manager struct {
@@ -335,6 +391,8 @@ type Manager struct {
 	wg         sync.WaitGroup
 	sequence   uint64
 	activities map[chan Activity]struct{}
+	// Failures survive worker removal without occupying runtime slots.
+	failures []Snapshot
 }
 type answer struct {
 	text    string
@@ -420,7 +478,11 @@ func (m *Manager) CreateWithRole(name, cwd, role string) (Meta, error) {
 		return Meta{}, errors.New("session name is empty")
 	}
 	if b, ok := m.backend.(RoleBackend); ok {
-		return b.CreateWithRole(name, cwd, role)
+		meta, err := b.CreateWithRole(name, cwd, role)
+		if err == nil {
+			m.clearFailureLocked(name)
+		}
+		return meta, err
 	}
 	if role != "" {
 		return Meta{}, errors.New("backend does not support roles")
@@ -429,7 +491,11 @@ func (m *Manager) CreateWithRole(name, cwd, role string) (Meta, error) {
 	if !ok {
 		return Meta{}, errors.New("backend does not support session creation")
 	}
-	return b.Create(name, cwd)
+	meta, err := b.Create(name, cwd)
+	if err == nil {
+		m.clearFailureLocked(name)
+	}
+	return meta, err
 }
 
 func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
@@ -472,6 +538,7 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 			}
 			select {
 			case w.tasks <- text:
+				m.clearFailureLocked(name)
 				// The worker may dequeue before reacquiring mu; reserve busy now.
 				if w.state == "awaiting" {
 					w.state = "busy"
@@ -506,6 +573,7 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 		ctx, cancel := context.WithCancel(m.ctx)
 		w := &worker{m: m, name: name, workingDir: cwd, ctx: ctx, cancel: cancel, done: make(chan struct{}), tasks: make(chan string, queueLimit), steering: make(chan string, queueLimit), state: "starting", phase: "starting", subs: make(map[chan Event]struct{})}
 		w.tasks <- text
+		m.clearFailureLocked(name)
 		m.entries[name] = w
 		m.wg.Add(1)
 		m.mu.Unlock()
@@ -616,14 +684,38 @@ func (w *worker) snapshotLocked() Snapshot {
 	}
 	return s
 }
+
+func (m *Manager) clearFailureLocked(name string) {
+	for i, s := range m.failures {
+		if s.Name == name {
+			m.failures = slices.Delete(m.failures, i, i+1)
+			return
+		}
+	}
+}
+
+func (m *Manager) rememberFailureLocked(s Snapshot) {
+	m.clearFailureLocked(s.Name)
+	if len(m.failures) == failureSnapshotLimit {
+		m.failures = slices.Delete(m.failures, 0, 1)
+	}
+	// The queued instructions died with the worker and cannot be delivered.
+	s.Queued = 0
+	m.failures = append(m.failures, cloneSnapshot(s))
+}
+
 func (m *Manager) Snapshot(name string) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	w := m.entries[name]
-	if w == nil {
-		return Snapshot{}, ErrNotFound
+	if w := m.entries[name]; w != nil {
+		return w.snapshotLocked(), nil
 	}
-	return w.snapshotLocked(), nil
+	for _, s := range m.failures {
+		if s.Name == name {
+			return cloneSnapshot(s), nil
+		}
+	}
+	return Snapshot{}, ErrNotFound
 }
 
 // Subscribe atomically installs a subscriber and delivers a snapshot. Slow
@@ -749,6 +841,9 @@ func (w *worker) run() {
 		for ch := range w.subs {
 			delete(w.subs, ch)
 			close(ch)
+		}
+		if w.failure != "" {
+			w.m.rememberFailureLocked(w.snapshotLocked())
 		}
 		delete(w.m.entries, w.name)
 		close(w.done)

@@ -16,7 +16,10 @@ This file covers how to build, test, and where things belong.
   The loop talks to `core` ports; adapters implement them.
 - **The model speaks JSON.** Every response is one JSON object with an
   `action` (`tool` | `ask` | `done` | `terminate`); a `tool` action also names
-  `toolname` at the top level, beside `payload`. `chat.OutputGuide()` is
+  `toolname` at the top level, beside `payload`. `ask` is non-blocking: the
+  question is shown and recorded like a reply, control returns to the user's
+  normal input, and the answer arrives as the next instruction. Only tool
+  confirmations create a replyable prompt. `chat.OutputGuide()` is
   re-rendered after the history each turn so the format can't be forgotten.
 
 ## Releasing

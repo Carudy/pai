@@ -93,6 +93,11 @@
                             </div>
                             <button id="apply-model" type="submit" disabled>Apply</button>
                         </form>
+                        <form id="working-dir-form" aria-label="Session working directory">
+                            <label for="session-working-dir">Working dir</label>
+                            <input id="session-working-dir" placeholder="/path/to/project" title="Existing directory on the server; used on the next send" autocomplete="off" required disabled />
+                            <button id="apply-working-dir" type="submit" disabled>Apply</button>
+                        </form>
                     </div>
                     <!--<p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>-->
 

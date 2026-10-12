@@ -2,6 +2,10 @@
 
 The devops agent runs an autonomous reason→act→observe loop. It inspects output, adapts to errors, and drives toward the goal step by step.
 
+Transcripts are abridged and illustrative; exact wording varies by model. A step
+that is not trusted pauses for approval (`y` once, `s` for this run, `a` always,
+`n` skip); see [Trust and approvals](../README.md#-trust-and-approvals).
+
 ---
 
 ### Example: Checking service status
@@ -17,9 +21,7 @@ $ pai "find all frpc's port and usage"
 [CMD 💬] Check if frpc processes are running and find their command lines.
 [CMD 💻] ps aux | grep frpc
 Execute this command?
-[*] Yes
-[ ] No
-(Press ↑/↓ and Enter to choose; q or ctrl+c to quit.)
+  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort
 [SYS] Command succeeded
 [CMD Result]
 root     12345  0.0  0.1  123456  7890 ?        S    Apr29   0:00 /path/to/frpc -c /path/to/frpc.toml
@@ -33,8 +35,7 @@ user     23456  0.0  0.0   12345   1234 pts/0    S+   17:30   0:00 grep --color=
 [CMD 💬] Read the frpc config file to see port forwarding rules.
 [CMD 💻] sudo cat /path/to/frpc.toml
 Execute this command?
-[*] Yes
-[ ] No
+  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort
 [SYS] Command succeeded
 [CMD Result]
 [REDACTED CONFIG CONTENT]
@@ -62,8 +63,7 @@ $ pai "check nginx status on webserver and show the last 5 error log lines"
 [CMD 💬] List available SSH hosts from config.
 [CMD 💻] cat ~/.ssh/config | grep "^Host "
 Execute this command?
-[*] Yes
-[ ] No
+  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort
 [SYS] Command succeeded
 [CMD Result]
 Host webserver
@@ -76,8 +76,7 @@ Host dbserver
 [RMT 💬] Check if nginx is running on webserver.
 [RMT 💻 @webserver] systemctl status nginx
 Run on webserver?
-[*] Yes
-[ ] No
+  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort
 [SYS] Remote command succeeded
 [CMD Result]
 ● nginx.service - A high performance web server

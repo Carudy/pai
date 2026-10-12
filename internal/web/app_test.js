@@ -270,6 +270,14 @@ wiring.run(`globalThis.marked = {Renderer: class {}, parse(value, options) { glo
   }};`);
 assert.equal(wiring.run("completeProse('**bold**').textContent"), 'sanitized');
 assert.equal(wiring.run("options.renderer.html({text:'<img src=x>'})"), '&lt;img src=x&gt;');
+// The model's reason is Markdown too: it must go through the same renderer as
+// the payload, keep its muted styling, and never be left as a plain-text span.
+wiring.run("renderTurns(" + JSON.stringify([{Role:'assistant', Content:JSON.stringify({action:'done', payload:'**answer**', reason:'checked **disk**'})}]) + ")");
+const reasonNodes = descendants(wiring.get('history')).filter(n => /\breason-text\b/.test(n.className));
+assert.equal(reasonNodes.length, 1);
+assert.match(reasonNodes[0].className, /\bmarkdown\b/, 'reason is rendered as Markdown');
+assert.equal(reasonNodes[0].textContent, 'sanitized');
+assert.ok(!descendants(reasonNodes[0]).some(n => n.tag === 'span'), 'no plain-text span fallback for a rendered reason');
 wiring.run("DOMPurify.sanitize = () => { throw Error('failure'); }");
 assert.equal(wiring.run("completeProse('**bold**').textContent"), '**bold**');
 
@@ -558,4 +566,64 @@ async function verifyDeleteOpen() {
   assert.equal(p.run("localStorage.getItem('pai.session')"), null, 'the remembered session is forgotten');
 }
 
-Promise.all([verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+async function verifyWorkingDir() {
+  const p = browser();
+  p.run("selected='one'; modelBlocked=false; sessionMetadata({cwd:'/old',role:'devops',model:'test:model'}); controls()");
+  assert.equal(p.get('session-working-dir').value, '/old');
+  assert.equal(p.get('apply-working-dir').disabled, true, 'unchanged workspace needs no Apply');
+  p.run("$('session-working-dir').value='/new'; cwdDirty=true; workingDirControls(); sessionMetadata({cwd:'/old'})");
+  assert.equal(p.get('session-working-dir').value, '/new', 'history refresh preserves a workspace draft');
+  assert.equal(p.get('apply-working-dir').disabled, false);
+  for (const s of [{state:'busy'}, {state:'starting'}, {state:'awaiting',queued:1}, {state:'awaiting',pending:{id:'1',kind:'confirm'}}]) {
+    p.run('snapshot(' + JSON.stringify(s) + ')');
+    assert.equal(p.get('session-working-dir').disabled, true, 'workspace is idle-only');
+    assert.equal(p.get('apply-working-dir').disabled, true);
+  }
+  p.run("snapshot({state:'awaiting',queued:0}); globalThis.calls=[]; sessions=async()=>{}; connect=()=>{}; history=async()=>sessionMetadata({cwd:'/normalized/new'}); loadSnapshot=async()=>{}; api=async(path,body)=>{calls.push([path,body]);return {ok:true}};");
+  await p.run("applyWorkingDir({preventDefault(){}})");
+  assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [['working-dir', {name:'one', working_dir:'/new'}]]);
+  assert.equal(p.get('session-working-dir').value, '/normalized/new', 'Apply shows the server-normalized path');
+  assert.equal(p.run('cwdDirty'), false);
+  assert.equal(p.get('apply-working-dir').disabled, true);
+
+  p.run("$('session-working-dir').value='/missing'; cwdDirty=true; workingDirControls(); api=async()=>{throw Error('working directory does not exist')}; loadSnapshot=async()=>sessionMetadata({cwd:'/normalized/new'})");
+  await p.run("applyWorkingDir({preventDefault(){}})");
+  assert.match(p.get('error').textContent, /does not exist/);
+  assert.equal(p.get('session-working-dir').value, '/missing', 'failed validation preserves the draft');
+  assert.equal(p.run('savedCwd'), '/normalized/new', 'failed Apply leaves persisted metadata unchanged');
+  p.run("$('session-working-dir').value='  '; workingDirControls()");
+  assert.equal(p.get('apply-working-dir').disabled, true, 'blank paths are disabled');
+
+  p.run("api=async()=>({turns:[],total:0,cwd:'/two'}); history=async()=>sessionMetadata({cwd:'/two'}); loadSnapshot=async()=>{}");
+  await p.run("select('two')");
+  assert.equal(p.get('session-working-dir').value, '/two');
+  p.run('clearWorkspace()');
+  assert.equal(p.get('session-working-dir').value, '');
+  assert.equal(p.get('session-working-dir').disabled, true);
+
+  const stale = browser();
+  stale.run("selected='one'; modelBlocked=false; sessionMetadata({cwd:'/old'}); $('session-working-dir').value='/new'; cwdDirty=true; workingDirControls(); api=()=>new Promise(resolve=>globalThis.finishApply=resolve); history=async()=>sessionMetadata({cwd:'/two'}); loadSnapshot=async()=>{}; connect=()=>{};");
+  const applying = stale.run("applyWorkingDir({preventDefault(){}})");
+  assert.equal(stale.get('apply-working-dir').disabled, true, 'Apply is disabled while the request is pending');
+  await stale.run("select('two')");
+  stale.run('finishApply({ok:true})');
+  await applying;
+  assert.equal(stale.get('session-working-dir').value, '/two', 'a stale Apply response cannot replace another session workspace');
+}
+
+async function verifySendFailure() {
+  const p = browser();
+  p.run(`selected='one'; $('login').hidden=true; $('message').value='hello';
+    sessions=async()=>{}; history=async()=>{};
+    api=async path => path === 'send' ? {ok:true} :
+      {name:'one',state:'stopped',queued:0,error:'session working directory: directory does not exist'};`);
+  await p.run("action('send')");
+  assert.match(p.get('state').textContent, /directory does not exist/, 'startup failure appears even when Send returned 202');
+  assert.equal(p.get('run-progress').hidden, true);
+  assert.equal(p.run('sessionBusy'), false, 'failed startup does not leave the composer busy');
+  p.connections[0].onerror();
+  await p.flush();
+  assert.match(p.get('state').textContent, /directory does not exist/, 'SSE reconnect retains the stopped failure snapshot');
+}
+
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

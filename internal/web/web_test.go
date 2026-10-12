@@ -12,10 +12,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -67,6 +70,51 @@ func (backend) History(name string, offset, limit int) (runner.History, error) {
 }
 func (b backend) Prepare(string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), error) {
 	return &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}, &questionProvider{confirm: b.confirm}, nil, nil, nil, nil
+}
+
+type failedPreparationBackend struct{ backend }
+
+func (failedPreparationBackend) Prepare(string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), error) {
+	return nil, nil, nil, nil, nil, errors.New("session working directory: directory does not exist")
+}
+
+func TestSendPreparationFailureSnapshot(t *testing.T) {
+	m := runner.New(context.Background(), failedPreparationBackend{}, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+	w := request(h, http.MethodPost, "/api/send", `{"name":"one","text":"hello"}`, nil, "http://pai.test")
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("send: %d %s", w.Code, w.Body.String())
+	}
+
+	// Subscribe only after the failed worker has gone: this is the browser's
+	// startup race, where the error event itself can no longer be received.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, unsubscribe, err := m.Subscribe("one")
+		if errors.Is(err, runner.ErrNotFound) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		unsubscribe()
+		if time.Now().After(deadline) {
+			t.Fatal("failed worker was not removed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	w = request(h, http.MethodGet, "/api/snapshot?name=one", "", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("snapshot: %d %s", w.Code, w.Body.String())
+	}
+	var s runner.Snapshot
+	if err := json.Unmarshal(w.Body.Bytes(), &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.State != "stopped" || !strings.Contains(s.Error, "directory does not exist") {
+		t.Fatalf("failure was lost: %+v", s)
+	}
 }
 
 type questionProvider struct {
@@ -167,6 +215,177 @@ func (b *modelBackend) History(name string, offset, limit int) (runner.History, 
 	h, err := b.backend.History(name, offset, limit)
 	h.Model = b.model
 	return h, err
+}
+
+type workingDirBackend struct {
+	backend
+	mu       sync.Mutex
+	dir      string
+	starts   int
+	cleanups int
+}
+
+func (b *workingDirBackend) SetWorkingDir(name, cwd string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if name != "one" {
+		return runner.ErrNotFound
+	}
+	b.dir = cwd
+	return nil
+}
+
+func (b *workingDirBackend) History(name string, offset, limit int) (runner.History, error) {
+	h, err := b.backend.History(name, offset, limit)
+	b.mu.Lock()
+	h.Cwd = b.dir
+	b.mu.Unlock()
+	return h, err
+}
+
+func (b *workingDirBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), string, error) {
+	b.mu.Lock()
+	dir := b.dir
+	b.starts++
+	b.mu.Unlock()
+	dir, err := runner.ResolveWorkingDir(dir)
+	if err != nil {
+		return nil, nil, nil, nil, nil, "", err
+	}
+	cfg, p, rec, history, _, err := b.backend.Prepare(name)
+	return cfg, p, rec, history, func() { b.mu.Lock(); b.cleanups++; b.mu.Unlock() }, dir, err
+}
+
+func TestWorkingDirAPI(t *testing.T) {
+	dir := t.TempDir()
+	b := &workingDirBackend{backend: backend{confirm: true}, dir: t.TempDir()}
+	m := runner.New(context.Background(), b, 1)
+	defer m.Close()
+	h := New(m, Options{})
+	body := func(name, cwd string) string {
+		data, err := json.Marshal(map[string]string{"name": name, "working_dir": cwd})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, method, body, origin string
+		status                     int
+	}{
+		{"method", "GET", "", "", 405},
+		{"missing origin", "POST", body("one", dir), "", 403},
+		{"foreign origin", "POST", body("one", dir), "http://evil.test", 403},
+		{"blank name", "POST", body(" \t", dir), "http://pai.test", 400},
+		{"long name", "POST", body(strings.Repeat("x", 257), dir), "http://pai.test", 400},
+		{"missing session", "POST", body("missing", dir), "http://pai.test", 404},
+		{"missing directory", "POST", `{"name":"one"}`, "http://pai.test", 400},
+		{"blank directory", "POST", body("one", " \t"), "http://pai.test", 400},
+		{"nonexistent directory", "POST", body("one", filepath.Join(dir, "missing")), "http://pai.test", 400},
+		{"file", "POST", body("one", file), "http://pai.test", 400},
+		{"unknown field", "POST", `{"name":"one","working_dir":".","extra":true}`, "http://pai.test", 400},
+		{"multiple values", "POST", `{} {}`, "http://pai.test", 400},
+		{"malformed JSON", "POST", `{`, "http://pai.test", 400},
+		{"wrong type", "POST", `{"name":"one","working_dir":42}`, "http://pai.test", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := request(h, tc.method, "/api/working-dir", tc.body, nil, tc.origin)
+			if w.Code != tc.status {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+	r := httptest.NewRequest("POST", "http://pai.test/api/working-dir", strings.NewReader(body("one", dir)))
+	r.Header.Set("Origin", "http://pai.test")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 415 {
+		t.Fatalf("content type: %d %s", w.Code, w.Body.String())
+	}
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatal(err)
+	}
+	pending := wait(t, m, func(s runner.Snapshot) bool { return s.Pending != nil })
+	if w := request(h, "POST", "/api/working-dir", body("one", dir), nil, "http://pai.test"); w.Code != 409 {
+		t.Fatalf("busy: %d %s", w.Code, w.Body.String())
+	}
+	if err := m.Reply("one", pending.Pending.ID, "", core.TrustDeny); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, m, func(s runner.Snapshot) bool { return s.State == "awaiting" })
+	before, err := m.History("one", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = request(h, "POST", "/api/working-dir", body("one", dir+string(os.PathSeparator)+"."), nil, "http://pai.test")
+	var result map[string]bool
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || w.Code != 200 || !result["ok"] {
+		t.Fatalf("switch: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(h, "GET", "/api/snapshot?name=one", "", nil, ""); w.Code != 404 {
+		t.Fatalf("retirement: %d %s", w.Code, w.Body.String())
+	}
+	w = request(h, "GET", "/api/history?name=one", "", nil, "")
+	var after runner.History
+	if err := json.Unmarshal(w.Body.Bytes(), &after); err != nil || w.Code != 200 || after.Cwd != dir || after.Total != before.Total || !reflect.DeepEqual(after.Turns, before.Turns) {
+		t.Fatalf("persisted workspace/history: %d %s", w.Code, w.Body.String())
+	}
+	b.mu.Lock()
+	starts, cleanups := b.starts, b.cleanups
+	b.mu.Unlock()
+	if starts != 1 || cleanups != 1 {
+		t.Fatalf("switch did not retire lazily: starts=%d cleanups=%d", starts, cleanups)
+	}
+	if w := request(h, "POST", "/api/send", `{"name":"one","text":"again"}`, nil, "http://pai.test"); w.Code != 202 {
+		t.Fatalf("send after switch: %d %s", w.Code, w.Body.String())
+	}
+	wait(t, m, func(s runner.Snapshot) bool { return s.Pending != nil })
+	b.mu.Lock()
+	starts = b.starts
+	b.mu.Unlock()
+	if starts != 2 {
+		t.Fatal("next send did not reconstruct runtime")
+	}
+}
+
+func TestWorkingDirAPIAuthentication(t *testing.T) {
+	b := &workingDirBackend{dir: t.TempDir()}
+	m := runner.New(context.Background(), b, 1)
+	defer m.Close()
+	h := New(m, Options{Token: "secret"})
+	data, err := json.Marshal(map[string]string{"name": "one", "working_dir": t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if w := request(h, "POST", "/api/working-dir", body, nil, "http://pai.test"); w.Code != 401 {
+		t.Fatalf("unauthenticated: %d %s", w.Code, w.Body.String())
+	}
+	login := request(h, "POST", "/api/login", `{"token":"secret"}`, nil, "http://pai.test")
+	cookies := login.Result().Cookies()
+	if login.Code != 200 || len(cookies) != 1 {
+		t.Fatalf("login: %d %s", login.Code, login.Body.String())
+	}
+	if w := request(h, "POST", "/api/working-dir", body, cookies[0], "http://evil.test"); w.Code != 403 {
+		t.Fatalf("authenticated foreign origin: %d", w.Code)
+	}
+	r := httptest.NewRequest("POST", "http://pai.test/api/working-dir", strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Origin", "http://pai.test")
+	r.Header.Set("Sec-Fetch-Site", "cross-site")
+	r.AddCookie(cookies[0])
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 403 {
+		t.Fatalf("cross-site: %d", w.Code)
+	}
+	if w := request(h, "POST", "/api/working-dir", body, cookies[0], "http://pai.test"); w.Code != 200 {
+		t.Fatalf("authenticated switch: %d %s", w.Code, w.Body.String())
+	}
 }
 
 func TestModelsAPI(t *testing.T) {

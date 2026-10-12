@@ -2,6 +2,11 @@
 
 Use PAI for quick data processing, scripting, and ad-hoc experiments.
 
+Transcripts are abridged and illustrative; exact wording varies by model. A step
+that is not trusted pauses for approval (`y` once, `s` for this run, `a` always,
+`n` skip); steps matching `trusted_cmds` or `trusted_paths` run straight away.
+Files are created with the `write` tool rather than a shell here-doc.
+
 ---
 
 ### Example: Generate data
@@ -16,9 +21,7 @@ $ pai "randomly generate a 5x5 grid of numbers and write to data.csv"
 [CMD 💬] Generate a 5x5 grid of random integers (0-99) as CSV.
 [CMD 💻] awk 'BEGIN{srand(); for(i=1;i<=5;i++){for(j=1;j<=5;j++) printf "%s%d", (j==1?"":","), int(rand()*100); print ""}}' > data.csv
 Execute this command?
-[*] Yes
-[ ] No
-(Press ↑/↓ and Enter to choose; q or ctrl+c to quit.)
+  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort
 [SYS] Command succeeded
 ────────────────────────────────────────
 [token: 312 in, 58 out, 370 total]
@@ -68,11 +71,11 @@ exists
 
 [PAI 🤖] Result is 101.5. Now save the script to calc.sh.
 ────────────────────────────────────────
-[CMD 💬] Save the awk one-liner as calc.sh.
-[CMD 💻] cat > calc.sh << 'EOF'
-awk -F',' '{sum+=$2} END {print sum/2}' data.csv
-EOF
-[SYS] Command succeeded
+[WRITE 💬] Save the awk one-liner as calc.sh.
+[WRITE 📝 calc.sh] 1 line
+Create calc.sh?
+  [y] run once · [n] skip · [ctrl+c] abort
+[SYS] created calc.sh
 ────────────────────────────────────────
 [token: 390 in, 87 out, 477 total]
 

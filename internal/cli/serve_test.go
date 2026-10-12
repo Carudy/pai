@@ -7,10 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/runner"
 	"github.com/Carudy/pai/internal/session"
@@ -293,6 +295,115 @@ func TestServeModelSwitch(t *testing.T) {
 	cleanup()
 	if cfg.DefaultModel != "deepseek:custom" || len(history) != 1 || history[0].Content != "keep me" {
 		t.Fatalf("resume: %+v %v", cfg, history)
+	}
+}
+
+func TestServeBackendSetWorkingDir(t *testing.T) {
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	cfgDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgDir)
+	if err := os.MkdirAll(filepath.Join(cfgDir, "pai"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "pai", "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("[app]\ndefault_model = 'deepseek:other'\ndefault_role = 'devops'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	processCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		actual, err := os.Getwd()
+		if err != nil || actual != processCwd {
+			t.Errorf("process cwd changed: %q %v", actual, err)
+		}
+	})
+	oldDir, newDir := t.TempDir(), t.TempDir()
+	for dir, text := range map[string]string{oldDir: "old project instructions", newDir: "new project instructions"} {
+		if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Create(session.Meta{Name: "workspace", Role: "coder", Model: "deepseek:test", Cwd: oldDir, Title: "keep title"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Append("workspace", core.Turn{Role: "user", Kind: "input", Content: "keep history"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Get("workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &serveBackend{store: store, cwd: processCwd}
+	for _, tc := range []struct{ name, session, cwd string }{
+		{"empty", "workspace", ""},
+		{"blank", "workspace", " \t\n"},
+		{"missing directory", "workspace", filepath.Join(newDir, "missing")},
+		{"file", "workspace", cfgPath},
+		{"invalid name", "bad/name", newDir},
+		{"missing session", "missing", newDir},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := b.SetWorkingDir(tc.session, tc.cwd)
+			if err == nil {
+				t.Fatal("invalid workspace update accepted")
+			}
+			if tc.session == "missing" && !errors.Is(err, runner.ErrNotFound) {
+				t.Fatalf("missing session error = %v, want runner.ErrNotFound", err)
+			}
+			got, err := store.Get("workspace")
+			if err != nil || !reflect.DeepEqual(got, before) {
+				t.Fatalf("failed update changed session: %+v %v", got, err)
+			}
+		})
+	}
+	if _, err := store.Get("missing"); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("missing session created: %v", err)
+	}
+	relative, err := filepath.Rel(processCwd, newDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SetWorkingDir("workspace", relative+"/../"+filepath.Base(newDir)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get("workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Meta.Cwd != newDir {
+		t.Fatalf("normalized cwd = %q, want %q", got.Meta.Cwd, newDir)
+	}
+	got.Meta.Cwd, got.Meta.UpdatedAt = before.Meta.Cwd, before.Meta.UpdatedAt
+	if !reflect.DeepEqual(got, before) {
+		t.Fatalf("workspace update changed other session data: %+v", got)
+	}
+	cfg, _, _, history, cleanup, dir, err := b.PrepareWorkspace("workspace", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if dir != newDir || cfg.DefaultRole != "coder" || cfg.DefaultModel != "deepseek:test" || len(history) != 1 || history[0].Content != "keep history" {
+		t.Fatalf("prepared workspace: %q config=%+v history=%+v", dir, cfg, history)
+	}
+	prompt, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.CustomPrompt, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prompt.ProjectContext != "new project instructions" || prompt.ContextSource != filepath.Join(newDir, "AGENTS.md") {
+		t.Fatalf("prepared project context: %q from %q", prompt.ProjectContext, prompt.ContextSource)
+	}
+	if !strings.Contains(prompt.Messages(history)[0].Content, "Working Dir: "+newDir+"\n") {
+		t.Fatal("prepared prompt does not use new working directory")
+	}
+	if _, _, _, _, _, _, err := b.PrepareWorkspace("workspace", oldDir); err == nil {
+		t.Fatal("old workspace still accepted")
 	}
 }
 

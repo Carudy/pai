@@ -206,6 +206,10 @@ func (s *fileStore) SetRole(name, role string) error {
 	return s.updateMeta(name, func(m *Meta) { m.Role = role })
 }
 
+func (s *fileStore) SetWorkingDir(name, cwd string) error {
+	return s.updateMeta(name, func(m *Meta) { m.Cwd = cwd })
+}
+
 // updateMeta rewrites a session's header with apply's change, preserving its
 // history byte-for-byte (including a truncated final turn).
 func (s *fileStore) updateMeta(name string, apply func(*Meta)) error {

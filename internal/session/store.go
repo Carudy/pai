@@ -19,6 +19,8 @@ type Store interface {
 	SetModel(name, model string) error
 	// SetRole updates the session's role without changing conversation history.
 	SetRole(name, role string) error
+	// SetWorkingDir updates the workspace without changing conversation history.
+	SetWorkingDir(name, cwd string) error
 	// Truncate keeps the first `keep` turns and drops the rest, or ErrNotFound.
 	// It backs rewinding to an earlier point in a conversation.
 	Truncate(name string, keep int) error

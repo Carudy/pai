@@ -16,6 +16,7 @@ let modelList = [];
 const SESSION_KEY = 'pai.session';
 let toastHost = null;
 let savedRole = '', roleDirty = false;
+let savedCwd = '', cwdDirty = false, cwdApplying = false;
 const THEME_KEY = 'pai.theme';
 const REASONING_POS_KEY = 'pai.reasoning-position';
 // ── Model controls ──────────────────────────────────────────
@@ -81,6 +82,31 @@ async function applyModel(e) {
         await loadSnapshot(); if (version === generation) connect();
   } catch (err) { if (name === selected && version === generation) { error(err); await loadSnapshot(); } }
   finally { modelApplying = false; modelControls(); }
+}
+function workingDirControls() {
+  const input = $('session-working-dir');
+  const disabled = !selected || modelBlocked || cwdApplying;
+  input.disabled = disabled;
+  $('apply-working-dir').disabled = disabled || !input.value.trim() || input.value.trim() === savedCwd;
+}
+async function applyWorkingDir(e) {
+  e.preventDefault(); if ($('apply-working-dir').disabled) return;
+  const name = selected, cwd = $('session-working-dir').value.trim();
+  let version = generation;
+  cwdApplying = true; workingDirControls(); $('error').textContent = '';
+  try {
+    await api('working-dir', {name, working_dir:cwd});
+    if (version !== generation) return;
+    // Retire the old subscription too: its workspace and pending callbacks
+    // belong to the runtime that was just stopped by this settings change.
+    disconnect(); version = ++generation; historyRequest++;
+    cwdDirty = false;
+    await history(true); if (version !== generation) return;
+    await loadSnapshot(); if (version !== generation) return;
+    connect();
+    await sessions(true);
+  } catch (err) { if (name === selected && version === generation) { error(err); await loadSnapshot(); } }
+  finally { cwdApplying = false; workingDirControls(); }
 }
 // ── Run status, live transcript, response parsing ───────────
 let durable = [], liveSteps = [], currentStep = null, thinking = '';
@@ -311,11 +337,12 @@ function controls() {
   $('rename-session').hidden = !ready;
   $('rename-session').disabled = !ready || sessionBusy;
   $('session-label').hidden = !ready;
-  // Changing role or model requires an idle worker (it retires the runtime).
+  // Changing session settings requires an idle worker (it retires the runtime).
   const configReady = ready && !modelBlocked;
   const roleSelect = $('session-role-select');
   roleSelect.disabled = !configReady;
   $('apply-role').disabled = !configReady || !roleSelect.value || roleSelect.value === savedRole;
+  workingDirControls();
   $('composer-hint').textContent = !ready
     ? 'Open a session to send instructions'
     : sessionBusy
@@ -394,7 +421,9 @@ function response(node, data) {
   const tool = data.action === 'tool';
   node.append(text('div', (tool ? (icons[data.toolname] || '🔩') + ' ' + (data.toolname || 'Tool') : ({done:'✅ Complete',ask:'❓ Question',terminate:'🤚 Stopped'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
   if (data.reason) {
-    const reason = prose(data.reason); reason.className += ' reason-text';
+    // The reason is model prose like the payload, so it gets the same sanitized
+    // Markdown rendering (and the same literal fallback) rather than plain text.
+    const reason = completeProse(data.reason); reason.className += ' reason-text';
     node.append(text('div', 'Reason', 'field-label'), reason, text('hr', '', 'response-divider'));
   }
   if (tool) { node.className += ' tool-card'; if (typeof data.payload === 'string') node.append(text('div', data.toolname === 'execute' ? 'CMD' : 'Query', 'field-label')); payload(node, data.payload); }
@@ -457,6 +486,9 @@ function paintConversation() {
 // ── History and session metadata ────────────────────────────
 function sessionMetadata(meta = {}) {
   modelMetadata(meta.model);
+  savedCwd = typeof meta.cwd === 'string' ? meta.cwd : '';
+  if (!cwdDirty) $('session-working-dir').value = savedCwd;
+  workingDirControls();
   savedRole = typeof meta.role === 'string' ? meta.role.trim() : '';
   const roleSelect = $('session-role-select');
   // Preserve an unsaved role choice across the frequent history/snapshot
@@ -524,7 +556,7 @@ function usageSnapshot(s) {
 }
 function snapshot(s) {
   usageSnapshot(s);
-  modelBlocked = ['busy','starting'].includes(s.state) || s.phase === 'starting' || !!s.pending;
+  modelBlocked = ['busy','starting'].includes(s.state) || s.phase === 'starting' || s.queued > 0 || !!s.pending;
   sessionBusy = ['busy','starting'].includes(s.state);
   liveModel = typeof s.model === 'string' ? s.model.trim() : '';
   if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
@@ -635,7 +667,7 @@ function connect() {
 async function select(name, cwd) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
   try { localStorage.setItem(SESSION_KEY, name); } catch {}
-  clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; modelBlocked = true; sessionMetadata();
+  clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('workspace').textContent = 'Workspace: ' + (cwd || 'server working directory');
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
@@ -723,7 +755,7 @@ function clearWorkspace() {
   try { localStorage.removeItem(SESSION_KEY); } catch {}
   durable = []; liveSteps = []; currentStep = null; thinking = '';
   liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0;
-  sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; modelBlocked = false;
+  sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; modelBlocked = false;
   $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   clearReasoning(); usageSnapshot({});
   $('title').textContent = 'Select or create a session';
@@ -875,6 +907,8 @@ function composerKey(e) {
 $('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; $('login').hidden = true; $('app').hidden = false; const list = await sessions(true); await Promise.all([roles(), models()]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
 $('model-form').onsubmit = applyModel;
 $('role-form').onsubmit = applyRole;
+$('working-dir-form').onsubmit = applyWorkingDir;
+$('session-working-dir').oninput = () => { cwdDirty = true; workingDirControls(); };
 $('rename-session').onclick = renameSession;
 $('session-model').oninput = () => { modelDirty = true; renderModelOptions($('session-model').value); modelControls(); };
 $('session-model').onfocus = () => renderModelOptions($('session-model').value);
