@@ -650,9 +650,9 @@ Resuming prints a short recap of the last few exchanges so you have context
 ### Storage backend
 
 Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, or
-`~/.local/share/pai/`). Storage uses pure-Go SQLite (`modernc.org/sqlite`) —
-cgo-free, so `go install` keeps working. `make build` produces a stripped binary
-(~13 MB).
+`~/.local/share/pai/`). Storage uses pure-Go SQLite (`modernc.org/sqlite`), so no
+C toolchain is involved and the release binaries stay cross-compilable.
+`make build` produces a stripped binary (~13 MB).
 
 SQLite is the only backend. Earlier releases could be built with `-tags filestore`
 to keep sessions as JSONL files instead; that build option is gone, so a

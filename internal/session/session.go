@@ -1,5 +1,5 @@
 // Package session persists chat sessions in pure-Go SQLite
-// (modernc.org/sqlite), so `go install` stays cgo-free.
+// (modernc.org/sqlite), so the build needs no C toolchain.
 //
 // Callers never branch on the storage engine. Open takes exclusive, nonblocking
 // OS ownership of the entire data directory. Even readers must wait until the

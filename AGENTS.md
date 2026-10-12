@@ -31,9 +31,9 @@ and publishes a GitHub Release with `--generate-notes` and a `checksums.txt`.
 
 `core.Version` is a `var` so the release workflow can inject the tag with
 `-ldflags "-X github.com/Carudy/pai/internal/core.Version=<tag>"`. The value in
-source is only the fallback for `go install` / local builds, so a release does
-not strictly need it bumped — but keep it near the latest tag so those builds
-report something sensible.
+source is only the fallback for local builds (`go build` / `go install`), so a
+release does not strictly need it bumped — but keep it near the latest tag so
+those builds report something sensible.
 
 ## Commands
 
@@ -182,9 +182,10 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 
 ## Dependency & binary policy
 
-- **Pure Go, cgo-free.** `go install github.com/Carudy/pai/cmd/pai@latest` must
-  keep working, and the stripped binary stays small (~13 MB). SQLite uses
-  `modernc.org/sqlite` precisely because it's pure Go.
+- **Pure Go, cgo-free.** Every release target is cross-compiled with
+  `CGO_ENABLED=0`, so no C toolchain or per-target runner is needed. SQLite uses
+  `modernc.org/sqlite` and the session lock uses `golang.org/x/sys` precisely
+  because both are pure Go. A stripped binary stays ~13 MB.
 - **Prefer existing dependencies.** Before adding one, prefer what's already
   used (`BurntSushi/toml`, the Charm stack) or the standard library. New
   dependencies need a clear justification against the size/complexity budget.

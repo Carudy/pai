@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite" // pure-Go driver: keeps `go install` cgo-free
+	_ "modernc.org/sqlite" // pure-Go driver: keeps cross-compilation toolchain-free
 
 	"github.com/Carudy/pai/internal/core"
 )

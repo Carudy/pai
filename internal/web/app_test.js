@@ -281,6 +281,18 @@ assert.ok(!descendants(reasonNodes[0]).some(n => n.tag === 'span'), 'no plain-te
 wiring.run("DOMPurify.sanitize = () => { throw Error('failure'); }");
 assert.equal(wiring.run("completeProse('**bold**').textContent"), '**bold**');
 
+// A payload whose fields are all known renders labelled fields rather than a raw
+// JSON dump, which is what the search tools' object payloads depend on.
+const search = browser();
+search.run('renderTurns(' + JSON.stringify([
+  {Role:'assistant', Content:JSON.stringify({action:'tool', toolname:'papersearch', payload:{source:'arxiv', query:'private decision tree', limit:5, sort:'relevance', year_from:2023}})}
+]) + ')');
+const searchHistory = search.get('history');
+assert.match(searchHistory.textContent, /papersearch/, 'the tool name is shown');
+assert.match(searchHistory.textContent, /private decision tree/, 'the query value is shown');
+for (const label of ['source','query','sort','year from']) assert.match(searchHistory.textContent, new RegExp(label), 'papersearch field label ' + label);
+assert.ok(!descendants(searchHistory).some(n => n.tag === 'summary' && n.textContent === 'Raw details'), 'known payload fields are not dumped as raw JSON');
+
 // Optional test-only dependency, installed outside the repository. No build or
 // production dependency; do not count the minimal DOM above as sanitizer tests.
 if (process.env.PAI_WEB_JSDOM) {

@@ -399,11 +399,11 @@ function completeProse(value) {
     return node;
   } catch { return literal(); }
 }
-const icons = {execute:'💻', remote:'🔐', read:'📖', write:'✍️', edit:'📝', websearch:'🔎'};
+const icons = {execute:'💻', remote:'🔐', read:'📖', write:'✍️', edit:'📝', websearch:'🔎', papersearch:'🧑‍🎓'};
 function payload(node, value, limit = Infinity) {
   if (typeof value === 'string') { node.append(text('pre', value.slice(0, limit))); return; }
   if (!value || typeof value !== 'object') { if (value !== undefined) node.append(prose(String(value))); return; }
-  const known = ['path','host','cmd','content','old_string','new_string','offset','limit','replace_all'];
+  const known = ['path','host','cmd','source','query','sort','match','content','old_string','new_string','year_from','year_to','offset','limit','replace_all'];
   for (const key of known) {
     if (value[key] === undefined) continue;
     node.append(text('div', key === 'cmd' ? 'CMD' : key.replaceAll('_', ' '), 'field-label'));
@@ -419,7 +419,7 @@ function rawDetails(node, value, limit = Infinity) {
 }
 function response(node, data) {
   const tool = data.action === 'tool';
-  node.append(text('div', (tool ? (icons[data.toolname] || '🔩') + ' ' + (data.toolname || 'Tool') : ({done:'✅ Complete',ask:'❓ Question',terminate:'🤚 Stopped'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
+  node.append(text('div', (tool ? (icons[data.toolname] || '📃') + ' ' + (data.toolname || 'Tool') : ({done:'✅ Complete',ask:'🙋 Question',terminate:'🤚 Stopped'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
   if (data.reason) {
     // The reason is model prose like the payload, so it gets the same sanitized
     // Markdown rendering (and the same literal fallback) rather than plain text.

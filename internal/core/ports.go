@@ -15,7 +15,7 @@ import (
 // Version is PAI's version string. Release builds override it at link time with
 // -ldflags "-X github.com/Carudy/pai/internal/core.Version=<tag>", so a released
 // binary reports the exact tag it was built from. The value here is the fallback
-// for `go install` and local builds; keep it at the latest release.
+// for local builds (`go build` / `go install`); keep it at the latest release.
 var Version = "v0.8.2"
 
 // ErrAborted is returned by a Prompter when the user cancels a prompt (Ctrl+C,
