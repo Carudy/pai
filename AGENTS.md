@@ -174,19 +174,34 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 - **`role.Runtime` is per-run state**, not configuration — config lives in
   `config.UserConfig`. Don't mix them. The name `Session` is reserved for
   persistence (`session`); the loop's state is `Runtime`.
-- **Command chaining has one parser.** `tool.SplitSegments` is quote-aware and is
-  the single source of truth for "how many commands is this": `IsTrusted` and the
-  confirmation display both use it, so the count shown can't disagree with what
-  trust saw. A quoted operator is data (`grep 'a|b' f` is one command), while a
-  bare `&` separates, because backgrounding runs what follows.
+- **Command chaining has one parser.** `tool.SplitSegments` parses the command
+  with the real shell parser (`mvdan.cc/sh/v3/syntax`) and is the single source of
+  truth for "how many commands is this": `IsTrusted` and the confirmation display
+  both use it, so the count shown can't disagree with what trust saw. A quoted
+  operator is data (`grep 'a|b' f` is one command), a bare `&` separates because
+  backgrounding runs what follows, a heredoc body belongs to its command rather
+  than becoming segments named `line`/`EOF`, and a compound construct (loop,
+  conditional, group) is one unit with no command name.
+- **Trust is name-based, and only a plain invocation has a name.** A segment's
+  `Name` is its `argv[0]`, and it is empty when the named command is not the whole
+  story — a construct, a bare redirection, a file write (`>`, `>>`, `&>`), a
+  heredoc or here-string, or an embedded `$(...)`/`<(...)` substitution. A
+  nameless segment is never covered by `trusted_cmds`, so it always prompts (with
+  no trust option, since there is nothing to scope a grant to). Add `ls` to the
+  trusted list and `ls -la` runs unprompted; `ls > f`, `ls $(x)` and
+  `for …; do ls; done` do not.
 
 ## Dependency & binary policy
 
 - **Pure Go, cgo-free.** Every release target is cross-compiled with
   `CGO_ENABLED=0`, so no C toolchain or per-target runner is needed. SQLite uses
-  `modernc.org/sqlite` and the session lock uses `golang.org/x/sys` precisely
-  because both are pure Go. A stripped binary stays ~13 MB.
+  `modernc.org/sqlite`, the session lock uses `golang.org/x/sys`, and command
+  parsing uses `mvdan.cc/sh/v3/syntax` precisely because all three are pure Go
+  (the `syntax` package pulls in only its own stdlib-only helpers). A stripped
+  binary stays ~13 MB.
 - **Prefer existing dependencies.** Before adding one, prefer what's already
   used (`BurntSushi/toml`, the Charm stack) or the standard library. New
-  dependencies need a clear justification against the size/complexity budget.
+  dependencies need a clear justification against the size/complexity budget; the
+  shell parser earns its ~330 KB by replacing a hand-rolled splitter that mis-read
+  heredocs and compound commands.
 - **Subcommands over flag sprawl**, with short aliases, and generated help.

@@ -13,6 +13,24 @@ func texts(segs []Segment) []string {
 	return out
 }
 
+func names(segs []Segment) []string {
+	out := make([]string, len(segs))
+	for i, s := range segs {
+		out[i] = s.Name
+	}
+	return out
+}
+
+func ops(segs []Segment) []string {
+	out := make([]string, len(segs))
+	for i, s := range segs {
+		out[i] = s.Op
+	}
+	return out
+}
+
+func same(a, b []string) bool { return strings.Join(a, "\x00") == strings.Join(b, "\x00") }
+
 func TestSplitSegments(t *testing.T) {
 	cases := []struct {
 		name string
@@ -35,10 +53,11 @@ func TestSplitSegments(t *testing.T) {
 		{"escaped quote does not end the string", `echo "a\"; b" x`, []string{`echo "a\"; b" x`}},
 		{"escaped operator outside quotes", `echo a\; b`, []string{`echo a\; b`}},
 
-		// Redirections must not be mistaken for separators.
+		// Redirections must not be mistaken for separators. The printer normalises
+		// the spacing around the redirect, so `&> log` comes back as `&>log`.
 		{"fd redirect is not backgrounding", "cmd 2>&1 | head", []string{"cmd 2>&1", "head"}},
-		{"redirect both", "cmd &> log", []string{"cmd &> log"}},
-		{"redirect both (other form)", "cmd >& log", []string{"cmd >& log"}},
+		{"redirect both", "cmd &> log", []string{"cmd &>log"}},
+		{"redirect both (other form)", "cmd >& log", []string{"cmd >&log"}},
 
 		// A bare & does run what follows, so it separates.
 		{"background", "a & b", []string{"a", "b"}},
@@ -81,6 +100,160 @@ func TestSegmentSrcIsVerbatim(t *testing.T) {
 
 func stripSpaces(s string) string {
 	return strings.Join(strings.Fields(s), "")
+}
+
+func TestSplitSegmentsOperators(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want []string
+	}{
+		{"a && b | c", []string{"&&", "|", ""}},
+		{"a || b; c", []string{"||", ";", ""}},
+		{"a\nb", []string{"\n", ""}},
+		{"a & b", []string{"&", ""}},
+		{"a |& b", []string{"|&", ""}},
+		{"a;", []string{""}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			if got := ops(SplitSegments(tc.cmd)); !same(got, tc.want) {
+				t.Errorf("ops(%q) = %q, want %q", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+// A heredoc body is data belonging to its command, not a run of commands: it must
+// not produce segments named after the body or the terminator.
+func TestSplitSegmentsHeredocBodyIsData(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want int
+	}{
+		{"cat > notes.md <<'EOF'\nline one\nEOF", 1},
+		{"cat <<-EOF\n\tindented\n\tEOF", 1},
+		{"python3 - <<'PY'\nimport os\nPY", 1},
+		// A pipeline of two commands: the heredoc body belongs to the first and
+		// must not add segments of its own.
+		{"cat <<EOF | grep x\nbody\nEOF", 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			segs := SplitSegments(tc.cmd)
+			if len(segs) != tc.want {
+				t.Fatalf("SplitSegments(%q) = %d segments (%v), want %d", tc.cmd, len(segs), texts(segs), tc.want)
+			}
+			for _, seg := range segs {
+				if seg.Name == "body" || seg.Name == "EOF" || seg.Name == "line" || seg.Name == "PY" {
+					t.Errorf("heredoc body leaked a segment named %q", seg.Name)
+				}
+			}
+			// A heredoc feeds the command data, so the name alone is not the whole
+			// story and the segment must not be trustable by name.
+			if segs[0].Name != "" {
+				t.Errorf("heredoc segment has name %q, want none", segs[0].Name)
+			}
+		})
+	}
+}
+
+// A compound construct is one unit with no command name; it can never be waved
+// through by trusting a keyword.
+func TestSplitSegmentsCompoundIsOneUnnamedSegment(t *testing.T) {
+	cmds := []string{
+		"for i in 1 2 3; do echo $i; done",
+		"while true; do echo x; break; done",
+		"if true; then echo y; fi",
+		"case $x in a) ls;; esac",
+		"{ echo hi; ls; }",
+		"(cd /tmp; ls)",
+		"f() { ls; }",
+		"> out.txt",
+	}
+	for _, cmd := range cmds {
+		t.Run(cmd, func(t *testing.T) {
+			segs := SplitSegments(cmd)
+			if len(segs) != 1 {
+				t.Fatalf("SplitSegments(%q) = %d segments (%v), want 1", cmd, len(segs), texts(segs))
+			}
+			if segs[0].Name != "" {
+				t.Errorf("compound segment has name %q, want none", segs[0].Name)
+			}
+			if IsTrusted(cmd, []string{"for", "while", "if", "case", "echo", "ls", "cd", "f"}) {
+				t.Errorf("IsTrusted(%q) = true; a construct must not be trusted by name", cmd)
+			}
+		})
+	}
+}
+
+// Running the named command must be the whole story: a file write or a
+// substitution hides code behind the command name.
+func TestSplitSegmentsWithholdsNameWhenCommandIsNotTheWholeStory(t *testing.T) {
+	hidden := []string{
+		"echo x > f",
+		"echo x >> f",
+		"sort < in > out",
+		"cmd &> log",
+		"cmd >| clobber",
+		"echo $(date)",
+		"echo `date`",
+		"diff <(a) <(b)",
+	}
+	for _, cmd := range hidden {
+		t.Run(cmd, func(t *testing.T) {
+			segs := SplitSegments(cmd)
+			for _, seg := range segs {
+				if seg.Name != "" {
+					t.Errorf("SplitSegments(%q) named a segment %q; want no name", cmd, seg.Name)
+				}
+			}
+		})
+	}
+
+	// A file-descriptor duplication is inert and keeps its name.
+	segs := SplitSegments("ls 2>&1")
+	if len(segs) != 1 || segs[0].Name != "ls" {
+		t.Errorf("ls 2>&1 = %+v, want one segment named ls", segs)
+	}
+}
+
+// The command name comes from argv[0], so a negation or a leading assignment does
+// not hide it.
+func TestSplitSegmentsNames(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want []string
+	}{
+		{"ls -l /tmp", []string{"ls"}},
+		{"/bin/ls -l", []string{"/bin/ls"}},
+		{"'ls' -l", []string{"ls"}},
+		{"! grep x f", []string{"grep"}},
+		{"FOO=bar cmd arg", []string{"cmd"}},
+		{"a && b | c", []string{"a", "b", "c"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			if got := names(SplitSegments(tc.cmd)); !same(got, tc.want) {
+				t.Errorf("names(%q) = %q, want %q", tc.cmd, got, tc.want)
+			}
+		})
+	}
+}
+
+// Text the parser rejects must fail closed: one unnamed segment that needs
+// approval, never a name that could be trusted by accident.
+func TestSplitSegmentsUnparseableFailsClosed(t *testing.T) {
+	cmd := `echo "unterminated`
+	segs := SplitSegments(cmd)
+	if len(segs) != 1 {
+		t.Fatalf("got %d segments, want 1", len(segs))
+	}
+	if segs[0].Name != "" {
+		t.Errorf("unparseable text has name %q, want none", segs[0].Name)
+	}
+	if IsTrusted(cmd, []string{"echo"}) {
+		t.Error("unparseable text was trusted")
+	}
 }
 
 func TestIsTrusted(t *testing.T) {

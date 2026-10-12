@@ -10,6 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	golang.org/x/sys v0.47.0
 	modernc.org/sqlite v1.59.0
+	mvdan.cc/sh/v3 v3.14.1
 )
 
 require (

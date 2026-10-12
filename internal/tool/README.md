@@ -9,8 +9,12 @@ See the [module map](../organization.md) for the execution/approval split.
   per-command workspace and streams output through an optional writer.
 - `ExecResult` reports command output and status; platform process-group helpers
   support cancellation of local work.
-- `SplitSegments` parses quote-aware command chains and is shared with
-  `IsTrusted`, so trust decisions and confirmation counts agree.
+- `SplitSegments` parses a command chain with the real shell parser
+  (`mvdan.cc/sh/v3/syntax`) into its separate commands, and is shared with
+  `IsTrusted`, so trust decisions and confirmation counts agree. A segment's `Name`
+  is empty when running the named command is not the whole story — a construct, a
+  file write, a heredoc, or an embedded substitution — so it can never be trusted
+  by name.
 - `IsTrustedPath` / `IsTrustedPathAt` evaluate configured workspace roots.
 - `RemoteManager` manages SSH execution; `NewRemoteManager` configures the
   optional remote-shell wrapper.

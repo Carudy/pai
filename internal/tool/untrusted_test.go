@@ -26,3 +26,16 @@ func TestUntrustedSegmentsAndNames(t *testing.T) {
 		t.Errorf("names not deduplicated: %v", names)
 	}
 }
+
+// A nameless segment (a construct) is flagged untrusted but offers no name to
+// trust, since trusting a keyword would mean trusting everything it contains.
+func TestUntrustedNamesSkipsConstructs(t *testing.T) {
+	cmd := "ls && for i in 1; do echo $i; done"
+	trusted := []string{"ls"}
+	if got := UntrustedSegments(cmd, trusted); len(got) != 1 || got[0] != 1 {
+		t.Errorf("UntrustedSegments = %v, want [1]", got)
+	}
+	if names := UntrustedNames(cmd, trusted); len(names) != 0 {
+		t.Errorf("UntrustedNames = %v, want none (a construct has no name)", names)
+	}
+}

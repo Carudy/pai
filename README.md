@@ -503,6 +503,13 @@ interpreters and wrappers (`sudo`, `sh`, `bash`, `env`, `xargs`, …). Session
 trust is in-memory: it lasts for the run and is not persisted, so a restart
 re-confirms.
 
+A step only has a name when running the plain command is the whole story. A loop,
+`if`/`case`, a group or subshell, a bare redirection, a file write (`>`, `>>`,
+`&>`), a heredoc or here-string, and an embedded `$(…)`/`<(…)` have no name, so
+`trusted_cmds` never covers them: they always ask (with no "trust from now on"
+option, since there is nothing to scope the grant to). Add `ls` and `ls -la` runs;
+`ls > f` and `for …; do ls; done` still ask.
+
 ### Trusted paths (file tools)
 By default every `edit` and `write` asks for approval. List the directories you
 work in and changes under them apply straight away — the diff is still shown, so

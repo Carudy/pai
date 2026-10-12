@@ -35,6 +35,22 @@ func TestConfirmCommandFallsBackToYesNo(t *testing.T) {
 	}
 }
 
+// A nameless command — a construct, a heredoc, a file write — has nothing to
+// scope "trust from now on" to, so it takes the plain yes/no path even when the
+// prompter supports trust choices.
+func TestConfirmCommandPlainWhenNoTrustableNames(t *testing.T) {
+	rt := &Runtime{Observer: &fakeObserver{}, Prompter: choicePrompter{choice: core.TrustPersist}}
+	if got, _ := confirmCommand(rt, "t", []string{"ls"}); got != core.TrustPersist {
+		t.Fatalf("named command: got %v, want TrustPersist", got)
+	}
+	// choicePrompter.Confirm always returns false, so a plain prompt shows as deny.
+	for _, names := range [][]string{nil, {}} {
+		if got, _ := confirmCommand(rt, "t", names); got != core.TrustDeny {
+			t.Fatalf("nameless command: got %v, want TrustDeny", got)
+		}
+	}
+}
+
 func TestApplyTrustSessionAddsToRuntime(t *testing.T) {
 	rt := &Runtime{Observer: &fakeObserver{}, Logger: nopLogger{}}
 	applyTrust(rt, core.TrustSession, []string{"ls", "git"})

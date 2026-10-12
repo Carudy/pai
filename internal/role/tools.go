@@ -52,10 +52,15 @@ func segmentTexts(cmd string) []string {
 }
 
 // confirmCommand asks about an untrusted command, offering the trust choices when
-// the prompter supports them and a plain yes/no otherwise.
+// the prompter supports them and a plain yes/no otherwise. With no trustable names
+// — a loop, a group, a heredoc to an interpreter — there is nothing to scope a
+// "trust from now on" to, so it asks a plain yes/no rather than offering a grant
+// that could not be limited.
 func confirmCommand(rt *Runtime, title string, untrusted []string) (core.TrustChoice, error) {
-	if cc, ok := rt.Prompter.(core.CommandConfirmer); ok {
-		return cc.ConfirmCommand(title, untrusted)
+	if len(untrusted) > 0 {
+		if cc, ok := rt.Prompter.(core.CommandConfirmer); ok {
+			return cc.ConfirmCommand(title, untrusted)
+		}
 	}
 	ok, err := rt.Prompter.Confirm(title)
 	if err != nil {

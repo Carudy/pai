@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // CancelledOutput is the sentinel value stored in ExecResult.Output when the
@@ -55,12 +57,12 @@ func trimCmd(cmd string) string {
 }
 
 // IsTrusted reports whether every command in a chained / piped / multi-line
-// command starts with a tool in the trusted list. An empty trusted list means
-// nothing is trusted.
+// command is covered by the trusted list. An empty trusted list means nothing is
+// trusted.
 //
-// Splitting honours quoting, so an operator inside a quoted string is data rather
-// than a separator: `grep 'a|b' f` is one command, not two. A bare "&" counts as
-// a separator because backgrounding runs the rest of the line too.
+// A segment with no name — a loop, a group, a heredoc, a command that writes a
+// file or embeds a substitution — can never be trusted: the name would not
+// describe all of what runs. See SplitSegments.
 func IsTrusted(cmd string, trusted []string) bool {
 	if len(trusted) == 0 {
 		return false
@@ -70,15 +72,17 @@ func IsTrusted(cmd string, trusted []string) bool {
 		return false
 	}
 	for _, seg := range segs {
-		w := firstWord(seg.Text)
-		if w == "" {
-			continue
-		}
-		if !matchTrusted(w, trusted) {
+		if !trustedName(seg, trusted) {
 			return false
 		}
 	}
 	return true
+}
+
+// trustedName reports whether a segment is covered by name-based trust. A
+// nameless segment is never covered, so it always needs a fresh approval.
+func trustedName(seg Segment, trusted []string) bool {
+	return seg.Name != "" && matchTrusted(seg.Name, trusted)
 }
 
 // matchTrusted checks whether a single tool name appears in the trusted
@@ -104,142 +108,231 @@ func matchTrusted(first string, trusted []string) bool {
 	return false
 }
 
-// UntrustedSegments returns the indices of SplitSegments(cmd) whose command is
-// not covered by trusted. The indices match SplitSegments order, so a UI that
-// splits the same way can mark the right lines. An empty trusted list marks every
+// UntrustedSegments returns the indices of SplitSegments(cmd) that are not
+// covered by trusted. The indices match SplitSegments order, so a UI that splits
+// the same way can mark the right lines. An empty trusted list marks every
 // segment.
 func UntrustedSegments(cmd string, trusted []string) []int {
 	var out []int
 	for i, seg := range SplitSegments(cmd) {
-		if w := firstWord(seg.Text); w != "" && !matchTrusted(w, trusted) {
+		if !trustedName(seg, trusted) {
 			out = append(out, i)
 		}
 	}
 	return out
 }
 
-// UntrustedNames returns the distinct command names (first words) among the
-// chain's untrusted segments, in order and deduplicated. These are the names an
-// "add to trusted" prompt would offer to trust.
+// UntrustedNames returns the distinct command names among the chain's untrusted
+// segments, in order and deduplicated. These are the names an "add to trusted"
+// prompt would offer; a nameless segment contributes none, because there is no
+// name to trust.
 func UntrustedNames(cmd string, trusted []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, seg := range SplitSegments(cmd) {
-		w := firstWord(seg.Text)
-		if w == "" || seen[w] || matchTrusted(w, trusted) {
+		if seg.Name == "" || seen[seg.Name] || matchTrusted(seg.Name, trusted) {
 			continue
 		}
-		seen[w] = true
-		out = append(out, w)
+		seen[seg.Name] = true
+		out = append(out, seg.Name)
 	}
 	return out
 }
 
-// Segment is one command in a shell chain.
+// Segment is one command in a shell chain, as the shell parser sees it.
 type Segment struct {
-	// Text is the command with the operator and surrounding space removed — what a
-	// trust check inspects.
+	// Text is the command without its trailing operator, normalised by the shell
+	// printer — what a display or a diagnostic should show.
 	Text string
-	// Op is the operator that follows this command ("&&", "||", ";", "|", "&",
-	// "\n"), or "" for the last one.
+	// Name is the command name (argv[0]) when the segment is a plain command
+	// invocation, or "" when it is a shell construct (a loop, conditional, group,
+	// subshell, function definition or bare redirection) or when running the named
+	// command is not the whole story (it writes a file, reads a heredoc, or embeds
+	// a substitution). A nameless segment is never covered by name-based trust.
+	Name string
+	// Op is the operator that follows this command ("&&", "||", ";", "|", "|&",
+	// "&", "\n"), or "" for the last one.
 	Op string
-	// Src is the segment exactly as written, operator included — what the UI shows,
-	// so nothing is re-worded on the way to the reader.
+	// Src is the segment as printed for a reader, operator included.
 	Src string
 }
 
-// SplitSegments splits a command at shell operators, honouring quoting and
-// escaping so an operator inside a quoted string does not split it.
+// SplitSegments splits a command into its separate commands using the shell
+// parser, so the split matches what the shell will actually run.
 //
 // This is the single source of truth for "what are the separate commands here":
-// trust checks and the confirmation display both use it, so they cannot disagree
-// about how many commands the user is approving.
+// the trust check and the confirmation display both use it, so they cannot
+// disagree about how many commands the user is approving.
+//
+// Parsing rather than scanning for operators removes two classes of false
+// positives. A heredoc body is data belonging to its command, not a run of
+// commands, so it no longer turns into segments called "line" or "EOF". And a
+// compound construct (a loop, a conditional, a group) is one unit that carries
+// no command name, so it cannot be waved through by trusting a keyword. Text the
+// parser rejects becomes a single unnamed segment, so an unparseable command
+// needs approval instead of being trusted by accident.
 func SplitSegments(cmd string) []Segment {
-	var segs []Segment
-	start := 0
-
-	for i := 0; i < len(cmd); {
-		if next, ok := skipQuoted(cmd, i); ok {
-			i = next
-			continue
-		}
-
-		op, n := operatorAt(cmd, i)
-		if n == 0 {
-			i++
-			continue
-		}
-		if text := strings.TrimSpace(cmd[start:i]); text != "" {
-			segs = append(segs, Segment{Text: text, Op: op, Src: strings.Trim(cmd[start:i+n], " \t\n")})
-		}
-		i += n
-		start = i
+	if strings.TrimSpace(cmd) == "" {
+		return nil
 	}
-	if text := strings.TrimSpace(cmd[start:]); text != "" {
-		segs = append(segs, Segment{Text: text, Src: strings.Trim(cmd[start:], " \t\n")})
+	file, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(cmd), "")
+	if err != nil {
+		return []Segment{{Text: strings.TrimSpace(cmd), Src: strings.TrimSpace(cmd)}}
+	}
+
+	var segs []Segment
+	for i, st := range file.Stmts {
+		flattenStmt(st, &segs)
+		// Carry the separator that follows each statement, so the reader sees how
+		// the commands are joined. Backgrounding wins over the statement's own
+		// terminator, because it is what decides that the next command still runs.
+		switch {
+		case st.Background:
+			setLastOp(segs, "&")
+		case i < len(file.Stmts)-1:
+			if st.Semicolon.IsValid() {
+				setLastOp(segs, ";")
+			} else {
+				setLastOp(segs, "\n")
+			}
+		}
+	}
+	for i := range segs {
+		segs[i].Src = withOperator(segs[i].Text, segs[i].Op)
 	}
 	return segs
 }
 
-// skipQuoted reports whether a quoted or escaped run starts at i, returning the
-// index just past it. Escapes are honoured inside double quotes and outside
-// quotes; inside single quotes everything up to the next quote is literal.
-func skipQuoted(s string, i int) (next int, ok bool) {
-	switch c := s[i]; {
-	case c == '\'':
-		for j := i + 1; j < len(s); j++ {
-			if s[j] == '\'' {
-				return j + 1, true
-			}
-		}
-		return len(s), true
-	case c == '"':
-		for j := i + 1; j < len(s); j++ {
-			if s[j] == '\\' {
-				j++
-				continue
-			}
-			if s[j] == '"' {
-				return j + 1, true
-			}
-		}
-		return len(s), true
-	case c == '\\':
-		return min(i+2, len(s)), true
+// flattenStmt appends the leaf statements of st. A binary command ("a && b",
+// "a | b") is flattened into its operands joined by their operator, so a chain is
+// reported one command at a time; anything else is a single segment.
+func flattenStmt(st *syntax.Stmt, out *[]Segment) {
+	if b, ok := st.Cmd.(*syntax.BinaryCmd); ok {
+		flattenStmt(b.X, out)
+		setLastOp(*out, b.Op.String())
+		flattenStmt(b.Y, out)
+		return
 	}
-	return i, false
+	*out = append(*out, segmentOf(st))
 }
 
-// operatorAt returns the shell operator at i and its length, or 0. A single "&"
-// counts only as backgrounding: "&&", ">&", "&>" and "|&" are other tokens.
-func operatorAt(s string, i int) (string, int) {
-	rest := s[i:]
-	switch {
-	case strings.HasPrefix(rest, "&&"), strings.HasPrefix(rest, "||"), strings.HasPrefix(rest, "|&"):
-		return rest[:2], 2
-	case rest[0] == ';' || rest[0] == '|':
-		return rest[:1], 1
-	case rest[0] == '\n':
-		return "\n", 1
-	case rest[0] == '&':
-		if i > 0 && (s[i-1] == '>' || s[i-1] == '&') {
-			return "", 0
-		}
-		if i+1 < len(s) && (s[i+1] == '>' || s[i+1] == '&') {
-			return "", 0
-		}
-		return "&", 1
+// segmentOf describes one leaf statement.
+func segmentOf(st *syntax.Stmt) Segment {
+	seg := Segment{Text: printStmt(st)}
+	call, ok := st.Cmd.(*syntax.CallExpr)
+	if !ok || len(call.Args) == 0 || !plainInvocation(st) {
+		return seg
 	}
-	return "", 0
+	seg.Name = wordValue(call.Args[0])
+	return seg
 }
 
-// firstWord returns the first whitespace-delimited token of s.
-func firstWord(s string) string {
-	s = strings.TrimSpace(s)
-	if idx := strings.IndexAny(s, " \t"); idx >= 0 {
-		return s[:idx]
+// plainInvocation reports whether a statement is one command with inert
+// arguments. It is false when the command writes a file, reads a heredoc or
+// here-string, or embeds a command or process substitution: then the command
+// name does not describe everything that runs, so the segment must not inherit
+// trust from that name. A file-descriptor duplication such as `2>&1` is inert and
+// stays a plain invocation.
+func plainInvocation(st *syntax.Stmt) bool {
+	for _, r := range st.Redirs {
+		switch r.Op {
+		case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc,
+			syntax.RdrOut, syntax.AppOut, syntax.RdrClob,
+			syntax.RdrAll, syntax.AppAll, syntax.RdrInOut:
+			return false
+		}
 	}
-	return s
+	return !hasSubstitution(st)
+}
+
+// hasSubstitution reports whether a statement embeds a command or process
+// substitution — code that runs but is not named by the command's argv[0].
+func hasSubstitution(st *syntax.Stmt) bool {
+	found := false
+	syntax.Walk(st, func(node syntax.Node) bool {
+		switch node.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst:
+			found = true
+			return false
+		}
+		return !found
+	})
+	return found
+}
+
+// printStmt renders a statement with the shell printer. A background statement is
+// printed without its trailing "&", which Segment.Op carries instead.
+func printStmt(st *syntax.Stmt) string {
+	if st.Background {
+		clone := *st
+		clone.Background = false
+		st = &clone
+	}
+	var sb strings.Builder
+	// Printing a parsed statement does not fail; anything written is kept.
+	_ = syntax.NewPrinter().Print(&sb, st)
+	return strings.TrimSpace(sb.String())
+}
+
+// wordValue returns a word's value, or its printed form when the word contains an
+// expansion and so has no fixed value. Quotes are transparent: `'ls'` and `"ls"`
+// both yield `ls`, so a quoted command name is still recognised.
+func wordValue(w *syntax.Word) string {
+	var sb strings.Builder
+	if !literalWord(w, &sb) {
+		return printWord(w)
+	}
+	return sb.String()
+}
+
+// literalWord reports whether every part of w is literal, appending the value to
+// sb when it is.
+func literalWord(w *syntax.Word, sb *strings.Builder) bool {
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.Lit:
+			sb.WriteString(p.Value)
+		case *syntax.SglQuoted:
+			sb.WriteString(p.Value)
+		case *syntax.DblQuoted:
+			for _, inner := range p.Parts {
+				lit, ok := inner.(*syntax.Lit)
+				if !ok {
+					return false
+				}
+				sb.WriteString(lit.Value)
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// printWord renders a word with the shell printer.
+func printWord(w *syntax.Word) string {
+	var sb strings.Builder
+	_ = syntax.NewPrinter().Print(&sb, w)
+	return sb.String()
+}
+
+// setLastOp records the operator that follows the most recent segment.
+func setLastOp(segs []Segment, op string) {
+	if len(segs) > 0 {
+		segs[len(segs)-1].Op = op
+	}
+}
+
+// withOperator joins a command with its following operator the way it is read.
+func withOperator(text, op string) string {
+	switch op {
+	case "", "\n":
+		return text
+	case ";":
+		return text + ";"
+	default:
+		return text + " " + op
+	}
 }
 
 // Shell returns the short name of the shell used to execute commands
