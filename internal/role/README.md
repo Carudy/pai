@@ -16,7 +16,11 @@ See the [module map](../organization.md) for the loop's dependencies and ports.
   object validation, provider errors as observations, and complete-record output
   budgeting. The `coder` and `latex` roles enable keyless academic discovery;
   `devops` does not.
-  `filetools.go` handles file operations. `command.go` declares in-session commands and generated help.
+  `filetools.go` handles file operations and approvals; `fileread.go`,
+  `fileedit.go`, and `filesafety.go` implement bounded reads, batch planning,
+  and guarded atomic publication. See [file-tool design](filetools.md) for
+  contracts, safety limits, and upstream comparisons. `command.go` declares
+  in-session commands and generated help.
 
 ## Boundaries
 

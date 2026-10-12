@@ -515,6 +515,42 @@ Reads are not confirmed by default. Set `confirm_read = true` to also require
 approval before a file *outside* `trusted_paths` is read — the one place where
 content could leave your workspace without a prompt.
 
+### Precise file operations
+
+`edit` supports several disjoint changes to **one file** in one reviewed call:
+
+```json
+{"path":"main.go","edits":[{"old_string":"first original block","new_string":"first replacement"},{"old_string":"second original block","new_string":"second replacement"}]}
+```
+
+- Each entry matches the **original file**, not earlier replacements. All entries
+  must validate before anything is written; overlapping ranges are rejected.
+  The original top-level `old_string`/`new_string`/`replace_all` shape still works,
+  but cannot be mixed with `edits`. Batches allow 1–50 edits and 10000 replacement
+  sites at most. Missing replacement fields are errors, not accidental deletions.
+- Matching is exact except for CRLF/LF representation. Untouched bytes and UTF-8
+  BOM are preserved; indentation and Unicode punctuation are not fuzzy-matched.
+  Previews show full affected lines with context, mark truncation, and are bounded.
+- After approval, edits recheck file/parent identity, contents, and permissions.
+  If changed, the model must read again and request a fresh edit. `write` remains
+  create-only, with atomic no-clobber publication even if a path appears during
+  approval. Failed operations do not grant directory trust.
+- `read` returns complete numbered lines up to 2000 lines or `context.exec_limit`
+  bytes (default 8000). Its continuation offset follows what was actually shown;
+  oversized first lines receive an actionable notice instead of partial text.
+  Total line counts appear only when known. Strip only the line number and tab
+  when copying text for an edit.
+- File tools handle regular UTF-8 text, not devices/directories or binary data.
+  Mutations are limited to 16 MiB and refuse final-path symlinks; explicitly edit
+  the real target instead. Parent directories must exist. Create-only publication
+  requires filesystem hard-link support and fails safely if unavailable.
+
+These checks protect against stale approvals and serialize PAI's own commits;
+they are not a filesystem sandbox or a portable lock against external writers.
+Atomic edits preserve permission bits, not inode identity, ownership, or extended
+attributes. See [file-tool design](internal/role/filetools.md) for the upstream
+comparison, exact contracts, and remaining limitations.
+
 ## 🧠 What gets sent to the model
 
 Each request is three parts:

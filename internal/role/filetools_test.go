@@ -254,8 +254,12 @@ func TestRunReadConfirmOutsideTrustedPaths(t *testing.T) {
 
 // The diff marks the removed and added text so the user can review it.
 func TestDiffEditMarksChanges(t *testing.T) {
-	got := diffEdit("a\nb\nc\n", "b", "B", 1)
-	for _, want := range []string{"@@ line 2 @@", "  a", "- b", "+ B", "  c"} {
+	plan, err := planFileEdits("a\nb\nc\n", []fileEdit{{OldString: "b", NewString: "B"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := plan.Diff
+	for _, want := range []string{"@@ -1,3 +1,3 @@", "  a", "- b", "+ B", "  c"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("diff missing %q:\n%s", want, got)
 		}

@@ -8,23 +8,49 @@
 # The Go implementation is registered under this name in internal/role/tools.go.
 
 name        = "edit"
-brief       = "replace exact text in a file"
+brief       = "apply precise, non-overlapping replacements to one file"
 description = '''
 Replace an exact block of text in a file, leaving the rest untouched. Prefer it
 over `sed -i` or a here-doc: it fails loudly when the text is missing or
 ambiguous instead of silently mangling the file, and the user reviews the change
 as a diff before it is applied.
 
-Use "read" first to copy the text to replace byte-for-byte. Keep "old_string"
-short but unambiguous: by default it must occur exactly once in the file, so
-include enough surrounding lines to pin down the location. Set "replace_all" to
-true to change every occurrence on purpose.
+Use "read" first to copy the text to replace. Remove only the displayed line-number
+prefix (six-character number followed by a tab); preserve actual indentation,
+quotes, and Unicode punctuation. Keep old_string short but unique. Ambiguous
+matches report line locations: add context or explicitly use replace_all for
+non-overlapping occurrences. CRLF/LF differences are tolerated and replacement
+line endings follow the matched range or uniform file style; no fuzzy
+whitespace/Unicode matching is performed.
+
+For multiple disjoint changes in the SAME file, prefer one edits array (1..50).
+Every old_string matches the ORIGINAL file, not earlier replacements in the array.
+Overlapping/nested edits are refused; merge changes to the same block into one
+replacement. Never mix the array with top-level old_string/new_string/replace_all.
+The entire batch is validated and reviewed before one atomic write; a failed edit
+changes nothing. The legacy top-level single-replacement shape still works.
+
+new_string is required, even for deletion (explicit empty string). Text must be
+UTF-8 without NUL. Files and planned results are limited to 16 MiB; a batch may
+replace at most 10000 occurrences. Final-path symlinks and non-regular files are
+refused: explicitly edit the real target instead. Untouched bytes and the UTF-8
+BOM are preserved. The file/parent identity, contents, and permissions are checked
+again after approval: if changed, read the current file and request a fresh edit.
+Success reports the first changed line. Diff previews are bounded and mark
+omitted content; approval still applies to the entire proposed change.
 '''
 schema = '''
 {
   "path":        "file path to edit (required)",
   "old_string":  "exact text to replace; must be unique unless replace_all is true",
-  "new_string":  "replacement text; an empty string deletes the match",
-  "replace_all": "replace every occurrence instead of requiring a unique match; default false"
+  "new_string":  "required replacement text; an explicit empty string deletes the match",
+  "replace_all": "replace every non-overlapping occurrence; default false"
+}
+OR, for disjoint changes in one file:
+{
+  "path": "file path to edit (required)",
+  "edits": [
+    {"old_string": "unique original text", "new_string": "replacement", "replace_all": false}
+  ]
 }
 '''

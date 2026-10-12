@@ -155,9 +155,15 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
   take a **string** payload; `papersearch`
     (`{"source":..., "query":..., "limit":..., "year_from":..., "year_to":..., "sort":...}`), `remote` (`{"host":..., "cmd":...}`), `read`
   (`{"path":..., "offset":..., "limit":...}`), `edit`
-  (`{"path":..., "old_string":..., "new_string":..., "replace_all":...}`) and
+  (`{"path":..., "old_string":..., "new_string":..., "replace_all":...}` or
+    `{"path":..., "edits":[{"old_string":..., "new_string":...}]}`) and
   `write` (`{"path":..., "content":...}`) take an **object**. Getting this wrong
   yields `json: cannot unmarshal object into Go value of type string` at runtime.
+- **File edits are planned before approval.** Batch entries match the original
+  snapshot, not sequential output; reject overlaps and stale approvals. Keep
+  complete-line read budgets and atomic no-clobber creation. See
+  [`internal/role/filetools.md`](internal/role/filetools.md) for limits and the
+  explicitly best-effort external-writer protection.
 - **`role.Runtime` is per-run state**, not configuration — config lives in
   `config.UserConfig`. Don't mix them. The name `Session` is reserved for
   persistence (`session`); the loop's state is `Runtime`.

@@ -1,23 +1,19 @@
 package role
 
-// The file tools (read, edit) keep their I/O here rather than in internal/tool:
-// each one interleaves reading, building a diff preview and confirming the
-// change with the user, and confirming is explicitly the handler's job. Splitting
-// those steps across packages would add plumbing without a real boundary.
+// Handlers own approval and observations; the file helpers own bounded reads,
+// edit planning, and guarded publication without presentation dependencies.
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
+
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
-	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/tool"
@@ -30,316 +26,312 @@ func (rt *Runtime) resolvePath(path string) string {
 	return path
 }
 
-// defaultReadLimit bounds a single read when the model gives no limit. It is
-// generous enough to take in a whole source file, while still stopping a
-// runaway "read the 500k-line log" before it reaches the model.
 const defaultReadLimit = 2000
 
-// readPayload is the shape of the "read" tool's payload.
 type readPayload struct {
 	Path   string `json:"path"`
-	Offset int    `json:"offset"` // 1-based first line
-	Limit  int    `json:"limit"`  // max lines
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
 }
 
-// editPayload is the shape of the "edit" tool's payload.
 type editPayload struct {
-	Path       string `json:"path"`
-	OldString  string `json:"old_string"`
-	NewString  string `json:"new_string"`
-	ReplaceAll bool   `json:"replace_all"`
+	Path       string     `json:"path"`
+	OldString  string     `json:"old_string"`
+	NewString  string     `json:"new_string"`
+	ReplaceAll bool       `json:"replace_all"`
+	Edits      []fileEdit `json:"edits,omitempty"`
 }
 
-// writePayload is the shape of the "write" tool's payload.
 type writePayload struct {
 	Path    string `json:"path"`
 	Content string `json:"content"`
 }
 
-// runRead returns a numbered window of a text file. Unlike a shell command it is
-// never confirmed — reading changes nothing — and unlike `cat` it is bounded and
-// line-numbered, so the model can quote an exact string for runEdit.
+// Missing replacement/content fields must not silently become empty strings:
+// an explicit empty string is a deletion/empty file, a typo is not.
+func decodeFilePayload(payload json.RawMessage, target any, required ...string) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, fmt.Errorf("payload must be an object")
+	}
+	for _, key := range required {
+		value, ok := fields[key]
+		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return nil, fmt.Errorf("missing required field %q", key)
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
 func runRead(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
 	var p readPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
+	if _, err := decodeFilePayload(payload, &p, "path"); err != nil {
 		return "", fmt.Errorf("read payload: %w", err)
 	}
 	if strings.TrimSpace(p.Path) == "" {
 		return "", fmt.Errorf("read requires a non-empty path")
 	}
+	if p.Offset < 0 || p.Limit < 0 {
+		return "", fmt.Errorf("read offset and limit must not be negative")
+	}
 	p.Path = rt.resolvePath(p.Path)
-	if p.Offset < 1 {
+	if p.Offset == 0 {
 		p.Offset = 1
 	}
-	if p.Limit <= 0 {
+	if p.Limit == 0 {
 		p.Limit = defaultReadLimit
 	}
-
-	// Announce the attempt before opening, so a failure is visible to the user and
-	// not just an observation the model sees.
-	trusted := tool.IsTrustedPathAt(p.Path, cfg.TrustedPaths, rt.WorkingDir)
-	rt.Observer.ToolCall(core.ToolCall{
-		Name:    "read",
-		Target:  p.Path,
-		Detail:  fmt.Sprintf("lines %d–%d", p.Offset, p.Offset+p.Limit-1),
-		Reason:  reason,
-		Trusted: trusted,
-	})
+	p.Limit = min(p.Limit, defaultReadLimit)
+	announced := false
 	fail := func(err error) (string, error) {
+		if !announced {
+			rt.Observer.ToolCall(core.ToolCall{Name: "read", Target: p.Path, Reason: reason})
+		}
 		rt.Observer.ToolResult(core.ToolResult{Message: err.Error()})
 		return "", err
 	}
-
-	// ConfirmRead is off by default: a read is non-destructive. When it is on, a
-	// file outside the trusted paths needs approval before its contents reach the
-	// model.
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	// Pin the resolved name before approval so a symlink retarget cannot change
+	// which file the user authorized. Reads may follow links; mutations do not.
+	resolved, err := filepath.EvalSymlinks(p.Path)
+	if err != nil {
+		return fail(fmt.Errorf("read %s: %w", p.Path, err))
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return fail(fmt.Errorf("read %s: %w", p.Path, err))
+	}
+	if !info.Mode().IsRegular() {
+		return fail(fmt.Errorf("read %s: text tools require a regular file", p.Path))
+	}
+	trusted := tool.IsTrustedPathAt(resolved, rt.trustedPaths(cfg), rt.WorkingDir)
+	rt.Observer.ToolCall(core.ToolCall{Name: "read", Target: p.Path, Detail: fmt.Sprintf("from line %d, up to %d lines", p.Offset, p.Limit), Reason: reason, Trusted: trusted})
+	announced = true
 	if cfg.ConfirmRead && !trusted {
 		ok, err := rt.Prompter.Confirm(fmt.Sprintf("Read %s?", p.Path))
 		if err != nil {
-			return "", fmt.Errorf("user interaction error: %w", err)
+			return fail(fmt.Errorf("user interaction error: %w", err))
 		}
 		if !ok {
 			rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
 			return fmt.Sprintf("[read skipped]\nFILE: %s\nUSER DECLINED: the file was not read.", p.Path), nil
 		}
 	}
-
-	f, err := os.Open(p.Path)
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	latest, err := filepath.EvalSymlinks(p.Path)
+	if err != nil || latest != resolved {
+		return fail(fmt.Errorf("read %s: path changed during approval; retry the read", p.Path))
+	}
+	current, err := os.Lstat(resolved)
+	if err != nil || !current.Mode().IsRegular() || !os.SameFile(info, current) {
+		return fail(fmt.Errorf("read %s: file changed during approval; retry the read", p.Path))
+	}
+	f, err := os.Open(resolved)
 	if err != nil {
 		return fail(fmt.Errorf("read %s: %w", p.Path, err))
 	}
 	defer f.Close()
-
-	// Refuse binary files on a sniff of the head. Feeding NUL bytes to the model
-	// is both useless and a good way to corrupt the conversation.
-	br := bufio.NewReaderSize(f, 64*1024)
-	if head, _ := br.Peek(8192); bytes.IndexByte(head, 0) >= 0 {
-		return fail(fmt.Errorf("%s looks like a binary file; read handles text only", p.Path))
+	opened, err := f.Stat()
+	if err != nil {
+		return fail(fmt.Errorf("read %s: %w", p.Path, err))
 	}
-
-	var body strings.Builder
-	lineNo, included := 0, 0
-	more := false
-	for {
-		line, rerr := br.ReadString('\n')
-		if line != "" {
-			lineNo++
-			switch {
-			case lineNo < p.Offset:
-				// before the window
-			case included < p.Limit:
-				fmt.Fprintf(&body, "%6d\t%s\n", lineNo, trimEOL(line))
-				included++
-			default:
-				more = true
-			}
-		}
-		if rerr != nil {
-			if rerr != io.EOF {
-				return fail(fmt.Errorf("read %s: %w", p.Path, rerr))
-			}
-			break
-		}
-		if more {
-			break
-		}
+	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return fail(fmt.Errorf("read %s: file changed during approval; retry the read", p.Path))
 	}
-
-	if lineNo == 0 {
+	window, err := readTextWindow(ctx, f, p.Offset, p.Limit, cfg.Context.ExecLimit)
+	if err != nil {
+		return fail(fmt.Errorf("read %s: %w", p.Path, err))
+	}
+	if window.EOF && window.Scanned == 0 {
+		rt.Observer.ToolResult(core.ToolResult{OK: true, Message: "read empty file"})
 		return fmt.Sprintf("[read result]\nFILE: %s\n(empty file)", p.Path), nil
 	}
-
-	// Backstop for files with very long lines: the line count bounds the number
-	// of lines, the byte budget bounds their size.
-	out := chat.Truncate{MaxBytes: cfg.Context.ExecLimit}.Apply(body.String())
-	header := fmt.Sprintf("FILE: %s\nLINES: %d–%d of %d", p.Path, p.Offset, p.Offset+included-1, lineNo)
-	if more {
-		header += fmt.Sprintf("\n… file continues beyond line %d; read again with offset=%d", lineNo-1, p.Offset+included)
+	if window.Included == 0 && window.OversizeLine == 0 {
+		return fail(fmt.Errorf("read offset %d is beyond end of file (%d lines)", p.Offset, window.Scanned))
 	}
-	rt.Observer.ToolResult(core.ToolResult{OK: true, Message: fmt.Sprintf("read %s (%d lines)", p.Path, included)})
-	return "[read result]\n" + header + "\n" + out, nil
+	var header strings.Builder
+	fmt.Fprintf(&header, "FILE: %s\n", p.Path)
+	if window.OversizeLine > 0 {
+		fmt.Fprintf(&header, "Line %d exceeds the numbered-read byte budget; no partial line was returned. Use execute for a bounded, targeted extraction of that line, or increase context.exec_limit.", window.OversizeLine)
+	} else {
+		fmt.Fprintf(&header, "LINES: %d–%d", p.Offset, p.Offset+window.Included-1)
+		if window.EOF && !window.More {
+			fmt.Fprintf(&header, " of %d", window.Scanned)
+		}
+		if window.More {
+			fmt.Fprintf(&header, "\n… file continues beyond line %d or the read budget was reached; read again with offset=%d", p.Offset+window.Included-1, p.Offset+window.Included)
+		}
+	}
+	rt.Observer.ToolResult(core.ToolResult{OK: true, Message: fmt.Sprintf("read %s (%d lines)", p.Path, window.Included)})
+	return "[read result]\n" + header.String() + "\n" + window.Body, nil
 }
 
-// trimEOL removes a trailing newline (and a preceding CR) that bufio kept.
-func trimEOL(s string) string {
-	s = strings.TrimSuffix(s, "\n")
-	return strings.TrimSuffix(s, "\r")
-}
-
-// runEdit replaces an exact block of text in a file, showing the user a diff and
-// asking before writing. Exact-match-with-unique-required is deliberate: it turns
-// an ambiguous or stale edit into a loud error the model can fix, rather than a
-// silent wrong change. The user still reviews the diff, but the confirmation is a
-// final gate, not the only safeguard.
 func runEdit(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
 	var p editPayload
-	if err := json.Unmarshal(payload, &p); err != nil {
+	fields, err := decodeFilePayload(payload, &p, "path")
+	if err != nil {
 		return "", fmt.Errorf("edit payload: %w", err)
 	}
 	if strings.TrimSpace(p.Path) == "" {
 		return "", fmt.Errorf("edit requires a non-empty path")
 	}
 	p.Path = rt.resolvePath(p.Path)
-	// fail reports a refused edit to the user (not just to the model) — otherwise
-	// a rejected call looks like the agent silently did nothing.
-	fail := func(msg string) (string, error) {
-		rt.Observer.ToolCall(core.ToolCall{Name: "edit", Target: p.Path, Reason: reason})
-		rt.Observer.ToolResult(core.ToolResult{Message: msg})
-		return "", errors.New(msg)
+	announced := false
+	fail := func(err error) (string, error) {
+		if !announced {
+			rt.Observer.ToolCall(core.ToolCall{Name: "edit", Target: p.Path, Reason: reason})
+		}
+		rt.Observer.ToolResult(core.ToolResult{Message: err.Error()})
+		return "", err
 	}
-	if p.OldString == "" {
-		return fail("edit requires a non-empty old_string")
+	var edits []fileEdit
+	if raw, ok := fields["edits"]; ok {
+		for _, key := range []string{"old_string", "new_string", "replace_all"} {
+			if _, ok := fields[key]; ok {
+				return fail(fmt.Errorf("edit cannot mix edits with top-level %s", key))
+			}
+		}
+		var entries []json.RawMessage
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			return fail(fmt.Errorf("edit edits: %w", err))
+		}
+		for i, entry := range entries {
+			var e fileEdit
+			if _, err := decodeFilePayload(entry, &e, "old_string", "new_string"); err != nil {
+				return fail(fmt.Errorf("edit %d payload: %w", i+1, err))
+			}
+			edits = append(edits, e)
+		}
+	} else {
+		for _, key := range []string{"old_string", "new_string"} {
+			if value, ok := fields[key]; !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fail(fmt.Errorf("edit missing required field %q", key))
+			}
+		}
+		edits = []fileEdit{{OldString: p.OldString, NewString: p.NewString, ReplaceAll: p.ReplaceAll}}
 	}
-	if p.OldString == p.NewString {
-		return fail("edit old_string and new_string are identical")
-	}
-
-	info, err := os.Stat(p.Path)
+	snapshot, err := captureFileSnapshot(ctx, p.Path)
 	if err != nil {
-		return fail(fmt.Sprintf("edit %s: %v", p.Path, err))
+		return fail(fmt.Errorf("edit %s: %w", p.Path, err))
 	}
-	data, err := os.ReadFile(p.Path)
+	plan, err := planFileEdits(string(snapshot.Data), edits)
 	if err != nil {
-		return fail(fmt.Sprintf("edit %s: %v", p.Path, err))
+		return fail(fmt.Errorf("edit %s: %w", p.Path, err))
 	}
-	if bytes.IndexByte(data, 0) >= 0 {
-		return fail(fmt.Sprintf("%s looks like a binary file; edit handles text only", p.Path))
-	}
-	content := string(data)
-
-	n := strings.Count(content, p.OldString)
-	switch {
-	case n == 0:
-		return fail(fmt.Sprintf("old_string not found in %s; read the file and copy the exact text", p.Path))
-	case n > 1 && !p.ReplaceAll:
-		return fail(fmt.Sprintf("old_string appears %d times in %s; include more surrounding context to make it unique, or set replace_all to change every occurrence", n, p.Path))
-	}
-
-	diff := diffEdit(content, p.OldString, p.NewString, n)
-	trusted := tool.IsTrustedPathAt(p.Path, rt.trustedPaths(cfg), rt.WorkingDir)
-	rt.Observer.ToolCall(core.ToolCall{
-		Name:    "edit",
-		Target:  p.Path,
-		Detail:  fmt.Sprintf("replace %s", countNoun(n, "occurrence")),
-		Reason:  reason,
-		Diff:    diff,
-		Trusted: trusted,
-	})
-
-	// A trusted path skips the prompt but not the diff above, so the change is
-	// still visible; only the approval step is saved.
+	trusted := tool.IsTrustedPathAt(snapshot.Path, rt.trustedPaths(cfg), rt.WorkingDir)
+	rt.Observer.ToolCall(core.ToolCall{Name: "edit", Target: p.Path, Detail: fmt.Sprintf("replace %s in %d edit(s)", countNoun(plan.Replacements, "occurrence"), len(edits)), Reason: reason, Diff: plan.Diff, Trusted: trusted})
+	announced = true
+	choice := core.TrustOnce
+	dir := filepath.Dir(snapshot.Path)
 	if !trusted {
-		dir := filepath.Dir(p.Path)
-		choice, err := confirmPath(rt, fmt.Sprintf("Apply this edit to %s?", p.Path), dir)
+		var err error
+		choice, err = confirmPath(rt, fmt.Sprintf("Apply this edit to %s?", p.Path), dir)
 		if err != nil {
-			return "", fmt.Errorf("user interaction error: %w", err)
+			return fail(fmt.Errorf("user interaction error: %w", err))
 		}
 		if choice == core.TrustDeny {
 			rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
 			return fmt.Sprintf("[edit skipped]\nFILE: %s\nUSER DECLINED: the file was not changed.", p.Path), nil
 		}
-		applyPathTrust(rt, choice, dir)
 	}
-
-	replacements := 1
-	if p.ReplaceAll {
-		replacements = -1
+	if err := snapshot.commit(ctx, []byte(plan.Content)); err != nil {
+		return fail(fmt.Errorf("edit %s: %w; read the current file before retrying", p.Path, err))
 	}
-	if err := writeFileAtomic(p.Path, []byte(strings.Replace(content, p.OldString, p.NewString, replacements)), info.Mode().Perm()); err != nil {
-		return "", fmt.Errorf("write %s: %w", p.Path, err)
-	}
-
+	grantFilePathTrust(rt, choice, dir, snapshot.parent)
 	rt.Observer.ToolResult(core.ToolResult{OK: true, Message: "edited " + p.Path})
-	return fmt.Sprintf("[edit result]\nFILE: %s\nREPLACED: %s", p.Path, countNoun(n, "occurrence")), nil
+	out := fmt.Sprintf("[edit result]\nFILE: %s\nREPLACED: %s\nFIRST_CHANGED_LINE: %d", p.Path, countNoun(plan.Replacements, "occurrence"), plan.FirstLine)
+	if plan.LineEndingAdjusted {
+		out += "\nMATCH: CRLF/LF differences tolerated; replacement line endings follow the matched range or uniform file style."
+	}
+	return out, nil
 }
 
-// runWrite creates a new file, showing the user its content and asking before it
-// is written. It is create-only on purpose: overwriting is destructive and needs a
-// real line diff to be reviewable, so changing an existing file is runEdit's job.
-// The content travels as data rather than as a shell here-doc, which sidesteps the
-// escaping bugs (quotes, `$`, a stray EOF) that make here-docs unreliable.
 func runWrite(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
 	var p writePayload
-	if err := json.Unmarshal(payload, &p); err != nil {
+	if _, err := decodeFilePayload(payload, &p, "path", "content"); err != nil {
 		return "", fmt.Errorf("write payload: %w", err)
 	}
 	if strings.TrimSpace(p.Path) == "" {
 		return "", fmt.Errorf("write requires a non-empty path")
 	}
 	p.Path = rt.resolvePath(p.Path)
-	// fail reports a refused write to the user (not just to the model).
-	fail := func(msg string) (string, error) {
-		rt.Observer.ToolCall(core.ToolCall{Name: "write", Target: p.Path, Reason: reason})
-		rt.Observer.ToolResult(core.ToolResult{Message: msg})
-		return "", errors.New(msg)
+	announced := false
+	fail := func(err error) (string, error) {
+		if !announced {
+			rt.Observer.ToolCall(core.ToolCall{Name: "write", Target: p.Path, Reason: reason})
+		}
+		rt.Observer.ToolResult(core.ToolResult{Message: err.Error()})
+		return "", err
 	}
-
-	if _, err := os.Stat(p.Path); err == nil {
-		return fail(fmt.Sprintf("%s already exists; use edit to change it, or read it first", p.Path))
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fail(fmt.Sprintf("write %s: %v", p.Path, err))
+	if !utf8.ValidString(p.Content) || strings.IndexByte(p.Content, 0) >= 0 {
+		return fail(fmt.Errorf("write content must be UTF-8 text without NUL bytes"))
 	}
-	if _, err := os.Stat(filepath.Dir(p.Path)); err != nil {
-		return fail(fmt.Sprintf("write %s: parent directory does not exist", p.Path))
+	if len(p.Content) > maxEditableFileBytes {
+		return fail(fmt.Errorf("write content exceeds 16 MiB"))
 	}
-
+	target, err := captureCreateTarget(ctx, p.Path)
+	if err != nil {
+		return fail(fmt.Errorf("write %s: %w", p.Path, err))
+	}
 	n := lineCount(p.Content)
-	trusted := tool.IsTrustedPathAt(p.Path, rt.trustedPaths(cfg), rt.WorkingDir)
-	rt.Observer.ToolCall(core.ToolCall{
-		Name:    "write",
-		Target:  p.Path,
-		Detail:  fmt.Sprintf("create %s", countNoun(n, "line")),
-		Reason:  reason,
-		Diff:    diffNewFile(p.Content),
-		Trusted: trusted,
-	})
-
+	trusted := tool.IsTrustedPathAt(target.Path, rt.trustedPaths(cfg), rt.WorkingDir)
+	rt.Observer.ToolCall(core.ToolCall{Name: "write", Target: p.Path, Detail: fmt.Sprintf("create %s", countNoun(n, "line")), Reason: reason, Diff: diffNewFile(p.Content), Trusted: trusted})
+	announced = true
+	choice := core.TrustOnce
+	dir := filepath.Dir(target.Path)
 	if !trusted {
-		dir := filepath.Dir(p.Path)
-		choice, err := confirmPath(rt, fmt.Sprintf("Create %s?", p.Path), dir)
+		var err error
+		choice, err = confirmPath(rt, fmt.Sprintf("Create %s?", p.Path), dir)
 		if err != nil {
-			return "", fmt.Errorf("user interaction error: %w", err)
+			return fail(fmt.Errorf("user interaction error: %w", err))
 		}
 		if choice == core.TrustDeny {
 			rt.Observer.ToolResult(core.ToolResult{Skipped: true, Message: "Skipped"})
 			return fmt.Sprintf("[write skipped]\nFILE: %s\nUSER DECLINED: no file was created.", p.Path), nil
 		}
-		applyPathTrust(rt, choice, dir)
 	}
-
-	if err := writeFileAtomic(p.Path, []byte(p.Content), 0o644); err != nil {
-		return "", fmt.Errorf("write %s: %w", p.Path, err)
+	if err := target.commit(ctx, []byte(p.Content)); err != nil {
+		return fail(fmt.Errorf("write %s: %w", p.Path, err))
 	}
-
+	grantFilePathTrust(rt, choice, dir, target.parent)
 	rt.Observer.ToolResult(core.ToolResult{OK: true, Message: "created " + p.Path})
 	return fmt.Sprintf("[write result]\nFILE: %s\nCREATED: %s", p.Path, countNoun(n, "line")), nil
 }
 
-// diffNewFile previews a new file as an all-additions diff. It is capped, since a
-// long file would otherwise flood the transcript; the confirmation reports the
-// true line count.
-func diffNewFile(content string) string {
-	const maxLines = 40
-	lines := strings.Split(content, "\n")
-	if len(lines) > 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1] // a trailing newline is not an extra empty line
+// A rejected/stale operation must not grant trust to a substituted directory.
+func grantFilePathTrust(rt *Runtime, choice core.TrustChoice, dir string, parent fileParent) {
+	if choice != core.TrustSession && choice != core.TrustPersist {
+		return
 	}
-
-	var b strings.Builder
-	b.WriteString("@@ new file @@")
-	for i, l := range lines {
-		if i == maxLines {
-			fmt.Fprintf(&b, "\n… +%d more lines", len(lines)-i)
-			break
-		}
-		b.WriteString("\n+ ")
-		b.WriteString(l)
+	if err := parent.verify(context.Background()); err != nil {
+		rt.Observer.Notice("file committed, but directory trust was not granted: " + err.Error())
+		return
 	}
-	return b.String()
+	applyPathTrust(rt, choice, dir)
 }
 
-// lineCount returns the number of lines in s, treating a trailing newline as the
-// end of the last line rather than the start of an empty one.
+func diffNewFile(content string) string {
+	var w fileEditPreviewWriter
+	w.line("", "@@ new file @@")
+	w.block("+ ", content)
+	if w.truncated {
+		w.body.WriteString(fileEditPreviewNotice)
+	}
+	return strings.TrimRight(w.body.String(), "\n")
+}
+
 func lineCount(s string) int {
 	if s == "" {
 		return 0
@@ -351,104 +343,6 @@ func lineCount(s string) int {
 	return n
 }
 
-// writeFileAtomic writes through a temp file in the same directory and renames
-// it into place, so an interrupted write cannot leave a half-written file.
-func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".pai-edit-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename succeeds
-
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
-}
-
-// diffEdit renders a compact review of an edit: each change site with a few lines
-// of context, the replaced text marked "-" and the replacement "+". It works from
-// the exact strings being replaced rather than diffing whole files, so it stays
-// cheap on a large file and shows every site when replace_all is used.
-func diffEdit(content, oldStr, newStr string, occurrences int) string {
-	const context = 2
-	const maxHunks = 6
-
-	lines := strings.Split(content, "\n")
-	oldLines := strings.Split(oldStr, "\n")
-	newLines := strings.Split(newStr, "\n")
-
-	var b strings.Builder
-	shown := 0
-	for i := range occurrences {
-		if shown == maxHunks {
-			fmt.Fprintf(&b, "\n… +%d more change(s)", occurrences-shown)
-			break
-		}
-		idx := indexNth(content, oldStr, i)
-		if idx < 0 {
-			break
-		}
-		start := strings.Count(content[:idx], "\n") // 0-based line of the match
-
-		from := max(start-context, 0)
-		to := min(start+len(oldLines)+context, len(lines))
-		after := min(start+len(oldLines), len(lines))
-
-		fmt.Fprintf(&b, "@@ line %d @@\n", start+1)
-		for _, l := range lines[from:start] {
-			b.WriteString("  ")
-			b.WriteString(l)
-			b.WriteString("\n")
-		}
-		for _, l := range oldLines {
-			b.WriteString("- ")
-			b.WriteString(l)
-			b.WriteString("\n")
-		}
-		for _, l := range newLines {
-			b.WriteString("+ ")
-			b.WriteString(l)
-			b.WriteString("\n")
-		}
-		for _, l := range lines[after:to] {
-			b.WriteString("  ")
-			b.WriteString(l)
-			b.WriteString("\n")
-		}
-		shown++
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// indexNth returns the byte offset of the nth (0-based) occurrence of sub in s,
-// or -1.
-func indexNth(s, sub string, n int) int {
-	off := 0
-	for i := 0; i <= n; i++ {
-		j := strings.Index(s[off:], sub)
-		if j < 0 {
-			return -1
-		}
-		if i == n {
-			return off + j
-		}
-		off += j + len(sub)
-	}
-	return -1
-}
-
-// countNoun renders "N occurrence(s)".
 func countNoun(n int, noun string) string {
 	if n == 1 {
 		return fmt.Sprintf("1 %s", noun)

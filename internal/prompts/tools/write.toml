@@ -13,11 +13,18 @@ description = '''
 Create a new file with the given content. Prefer it over a shell here-doc: the
 content is passed as data, so quotes, `$`, backticks and lines like EOF are
 written verbatim instead of being interpreted by the shell, and the write is
-atomic.
+atomic and create-only even if another process creates the path during approval.
 
 It creates new files only. If the path already exists the call is refused — use
 "edit" to change an existing file (read it first if you need its text). The user
 reviews the content before it is written, so make it complete and correct.
+content is required (an explicit empty string creates an empty file); it must be
+UTF-8 without NUL, at most 16 MiB. The parent directory must already exist.
+Existing paths, including dangling symlinks, are refused. Parent identity is
+checked again after approval. Publication uses a no-clobber hard link; if the
+filesystem does not support it, the operation fails rather than overwriting.
+Previews are bounded and explicitly mark omissions. Cancellation before the
+commit leaves no destination file; no automatic directory creation occurs.
 '''
 schema = '''
 {
