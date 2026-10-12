@@ -189,7 +189,7 @@ func Run(ctx context.Context, cfg *config.UserConfig, rt *Runtime, history []pro
 		}
 		rt.WorkingDir = wd
 	}
-	rp, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.CustomPrompt, rt.WorkingDir)
+	rp, err := chat.LoadRolePromptAt(cfg.DefaultRole, chat.IntroOverride{Prompt: cfg.CustomPrompt.Prompt, Additional: cfg.CustomPrompt.Additional}, rt.WorkingDir)
 	if err != nil {
 		return fmt.Errorf("load role %q: %w", cfg.DefaultRole, err)
 	}

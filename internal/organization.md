@@ -23,7 +23,7 @@ the only package that knows about all of them.
       core  ◄────────────────────────────────────┘
    (ports + shared types)
 
-   paths, provider  — leaf packages, no internal deps
+   paths, provider, hostinfo  — leaf packages, no internal deps
 ```
 
 ## Packages
@@ -33,13 +33,14 @@ the only package that knows about all of them.
 | `core` | The ports the loop needs from its host, plus shared value types. No internal deps. | `Observer`, `Prompter`, `Logger`, `Recorder`, `ErrAborted`, `Turn`, `ToolCall`, `ToolResult`, `Usage` |
 | `paths` | XDG-aware directories (`ConfigDir`, `DataDir`, `Home`). Leaf. | — |
 | `provider` | LLM transport. OpenAI-compatible HTTP + streaming; provider registry. Leaf. | `Provider`, `Message`, `CompletionParams`, `ChatCompletion`, `ReasoningEffort` |
-| `prompts` | Role/tool **definitions as data** (`roles/*.toml`, `tools/*.toml`), embedded, plus user overrides from `~/.config/pai/roles/`. | `RoleNames`, `ReadRole`, `ReadTool`, `ToolNames` |
+| `hostinfo` | The host facts embedded in the system prompt (OS, platform, shell, user, date, workspace). Leaf, so composition never shells out. | `Describe` |
+| `prompts` | Role/tool **definitions as data** (`roles/*.toml`, `tools/*.toml`), embedded, plus user overrides from `~/.config/pai/roles/`. The only package that knows the definition file format. | `RoleNames`, `ReadRole`, `ReadTool`, `LoadRole`, `LoadTool`, `Role`, `Tool`, `ToolNames` |
 | `config` | Configuration only: `config.toml` loading, the `provider:model` split, and the comment-preserving editor. | `UserConfig`, `LoadUserConfig`, `Path`, `SetModel`, `SetScalar`/`UnsetScalar` |
-| `chat` | The LLM conversation protocol: builds the message list, parses/validates the JSON response, retries, streams, truncates tool output. | `RolePrompt`, `Ports`, `ChatStr`, `OutputGuide`, `ActionType` |
+| `chat` | The LLM conversation protocol: composes the prompt head, builds the message list, parses/validates the JSON response, retries, streams, truncates tool output. Parses no definition files and probes no host. | `RolePrompt`, `IntroOverride`, `Ports`, `ChatStr`, `OutputGuide`, `ActionType` |
 | `tool` | Tool **execution** and trust checks: local shell, SSH, web and academic search, plus command/path allowlists (`IsTrusted`, `IsTrustedPath`). Never prompts the user. | `ExecuteCommand`, `RemoteManager`, `Search`, `PaperSearch`, `IsTrustedPath` |
 | `role` | The **single agent loop** and the tool-handler registry. Runs a role to completion. | `Runtime`, `Run` |
-| `session` | Session persistence behind one `Store` interface; SQLite by default, JSONL with `-tags filestore`. | `Store`, `Meta`, `Session`, `Recorder` |
-| `tui` | Terminal adapters implementing `core` ports. Knows about styling; core does not. | `LineObserver`, `Prompter`, `Logger` |
+| `session` | Session persistence behind one `Store` interface; SQLite by default, JSONL with `-tags filestore`. The cross-process lock uses `golang.org/x/sys/unix`, so that dependency is not SQLite-specific. | `Store`, `Meta`, `Session`, `Recorder` |
+| `tui` | Terminal adapters implementing `core` ports. Knows about styling; core does not. Imports `tool` only for the shared command-splitting parser used by the confirmation display. | `LineObserver`, `Prompter`, `Logger` |
 | `runner` | Transport-independent, bounded concurrent runtime hosting, input routing, prompts, and event subscriptions. Storage is supplied through a backend port. | `Manager`, `Backend`, `Snapshot` |
 | `web` | HTTP/SSE adapter and embedded dependency-free browser UI, with cookie authentication and origin validation. | `New`, `Options` |
 | `cli` | Composition root: subcommand dispatch, flag parsing, wiring, signal handling; serves per-session persisted workspaces without changing process cwd. Only package that imports `tui`/`session`. | `Run`, `CliFlags` |
@@ -61,6 +62,10 @@ the only package that knows about all of them.
 - **Capability boundaries are enforced.** A role's `tools` list is checked
   against the handler registry at startup (`checkToolCoverage`), so a role can
   never declare a tool that cannot run.
+- **One owner per concern at the bottom.** `prompts` is the only package that
+  parses a role/tool definition; `hostinfo` is the only place that probes the
+  host, so `chat` composes prompts from resolved values and never shells out.
+  Keep those two seams: they are what let `chat` stay a protocol package.
 
 ## Dependency rules
 
@@ -73,11 +78,11 @@ the only package that knows about all of them.
   web     -> core runner
   runner  -> config core provider role
   role    -> chat config core prompts provider tool
-  chat    -> config core prompts provider
-  session -> core paths
-  tui     -> core
+  chat    -> config core hostinfo prompts provider
+  session -> core paths            (+ golang.org/x/sys/unix for the lock)
+  tui     -> core tool
   tool    -> paths
   config  -> paths provider
-  prompts -> paths
-  core, paths, provider -> (nothing internal)
+  prompts -> paths                 (+ BurntSushi/toml for the file format)
+  core, paths, provider, hostinfo -> (nothing internal)
   ```

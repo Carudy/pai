@@ -11,6 +11,9 @@ See the [module map](../organization.md) for how the loop consumes them.
 - `UserRolesDir` is the `roles` directory under PAI's resolved config directory;
   users can add or override roles without rebuilding.
 - `ReadTool` tries source-checkout definitions before embedded tools.
+- `LoadRole` / `LoadTool` resolve **and parse** a definition into `Role` / `Tool`.
+  Parsing lives here so this package owns the TOML format: consumers work with
+  typed values and never import a TOML decoder.
 - `roles/*.toml` define intros, capabilities, and project-context files;
   `tools/*.toml` describe tool behavior and payload shapes.
 - The built-in `latex` role handles scientific editing, bibliography evidence,
@@ -21,7 +24,9 @@ See the [module map](../organization.md) for how the loop consumes them.
 ## Boundaries
 
 Definitions do not execute tools. Implementations and capability coverage checks
-live in `role`; a role may only reference implemented tools.
+live in `role`; a role may only reference implemented tools. The resolved tool
+name is the role's declaration, not a `name` field inside the file, because that
+declaration is what the handler registry and capability check use.
 Keep payload schemas consistent with handlers and use discovery APIs, not
 hardcoded role/tool lists. User role overrides are distinct from intro overrides
 loaded by `config` from `prompts.toml`.

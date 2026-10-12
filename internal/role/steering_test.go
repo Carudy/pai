@@ -55,7 +55,7 @@ func (p *recordingProvider) CompletionStream(context.Context, provider.Completio
 // A message sent while the agent runs is injected at the next step boundary, so
 // the model sees it before choosing its next action.
 func TestSteeringIsInjectedBetweenSteps(t *testing.T) {
-	rp, err := chat.LoadRolePrompt("devops", config.CustomPrompt{})
+	rp, err := chat.LoadRolePrompt("devops", chat.IntroOverride{})
 	if err != nil {
 		t.Fatalf("load role: %v", err)
 	}

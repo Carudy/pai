@@ -268,7 +268,7 @@ func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
 		c.notice("%v", err)
 		return cmdHandled, ""
 	}
-	rp, err := chat.LoadRolePromptAt(name, custom, c.rt.WorkingDir)
+	rp, err := chat.LoadRolePromptAt(name, chat.IntroOverride{Prompt: custom.Prompt, Additional: custom.Additional}, c.rt.WorkingDir)
 	if err != nil {
 		c.notice("%v", err)
 		return cmdHandled, ""

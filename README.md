@@ -654,8 +654,8 @@ Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, or
 
 | Backend | Build | Binary (stripped) |
 |---|---|---|
-| SQLite (default) | `go build ./cmd/pai` | ~12 MB |
-| JSONL files | `go build -tags filestore ./cmd/pai` | ~8 MB |
+| SQLite (default) | `go build ./cmd/pai` | ~13 MB |
+| JSONL files | `go build -tags filestore ./cmd/pai` | ~9 MB |
 
 The default uses pure-Go SQLite (`modernc.org/sqlite`) — cgo-free, so `go
 install` keeps working. Pass `-tags filestore` for a ~4 MB smaller binary with no

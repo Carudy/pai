@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/Carudy/pai/internal/config"
 )
+
+// testHostInfo stands in for the probed host block, so head composition is
+// deterministic in tests.
+const testHostInfo = "OS: test (linux amd64)\nShell: sh User: tester\nDatetime: 2026-01-01 00:00:00\nWorking Dir: /work\n"
 
 func write(t *testing.T, path, body string) {
 	t.Helper()
@@ -90,7 +92,7 @@ func TestComposeHeadPlacesProjectContext(t *testing.T) {
 		ProjectContext: "Always run make fmt.",
 		ContextSource:  "/repo/AGENTS.md",
 	}
-	head := composeHead(rp)
+	head := composeHead(rp, testHostInfo)
 
 	if !strings.Contains(head, "## Project instructions (from AGENTS.md)") {
 		t.Errorf("head is missing the labelled context section:\n%s", head)
@@ -113,7 +115,7 @@ func TestComposeHeadPlacesProjectContext(t *testing.T) {
 // No context file means no section, and no stray heading.
 func TestComposeHeadWithoutProjectContext(t *testing.T) {
 	rp := &RolePrompt{Name: "devops", Intro: "You are an SRE."}
-	if head := composeHead(rp); strings.Contains(head, "Project instructions") {
+	if head := composeHead(rp, testHostInfo); strings.Contains(head, "Project instructions") {
 		t.Errorf("unexpected context section:\n%s", head)
 	}
 }
@@ -121,7 +123,7 @@ func TestComposeHeadWithoutProjectContext(t *testing.T) {
 // The role declaration is honoured: whatever the coder role resolves at the
 // current working directory is what lands in the prompt.
 func TestLoadRolePromptWiresContextFiles(t *testing.T) {
-	rp, err := LoadRolePrompt("coder", config.CustomPrompt{})
+	rp, err := LoadRolePrompt("coder", IntroOverride{})
 	if err != nil {
 		t.Fatalf("load coder: %v", err)
 	}
@@ -144,7 +146,7 @@ func TestOutputContractPlacement(t *testing.T) {
 		Intro: "You are an SRE.",
 		Tools: []ToolSpec{{Name: "execute", Brief: "run a shell command"}},
 	}
-	head := composeHead(rp)
+	head := composeHead(rp, testHostInfo)
 
 	tool := strings.Index(head, "## Tool: execute")
 	guide := strings.Index(head, "## Response format")
@@ -176,7 +178,7 @@ func TestOutputContractPlacement(t *testing.T) {
 
 // A role that declares no context files never reads any.
 func TestLoadRolePromptWithoutContextFiles(t *testing.T) {
-	rp, err := LoadRolePrompt("devops", config.CustomPrompt{})
+	rp, err := LoadRolePrompt("devops", IntroOverride{})
 	if err != nil {
 		t.Fatalf("load devops: %v", err)
 	}

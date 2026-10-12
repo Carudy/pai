@@ -280,7 +280,7 @@ func configSet(path, name, raw string, stdout io.Writer, log *tui.Logger) int {
 
 	shown := raw
 	if ck.secret {
-		shown = maskSecret(raw)
+		shown = config.SecretHint(raw)
 	}
 	fmt.Fprintf(stdout, "%s = %s\n", name, shown)
 	return 0
@@ -354,7 +354,7 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		if reveal {
 			return cfg.TavilyAPIKey
 		}
-		return maskSecret(cfg.TavilyAPIKey)
+		return config.SecretHint(cfg.TavilyAPIKey)
 	case "papersearch_source":
 		return cfg.PaperSearchSource
 	case "papersearch_email":
@@ -441,19 +441,6 @@ func sortedConfigKeys() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// maskSecret renders a secret as a hint: "" stays empty, otherwise the last few
-// characters are shown.
-func maskSecret(s string) string {
-	if s == "" {
-		return ""
-	}
-	r := []rune(s)
-	if len(r) <= 4 {
-		return "****"
-	}
-	return "****" + string(r[len(r)-4:])
 }
 
 // validateConfigTOML is a sanity check that a key/value pair parses as TOML.

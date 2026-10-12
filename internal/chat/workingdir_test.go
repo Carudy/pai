@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/Carudy/pai/internal/config"
 )
 
 func TestLoadRolePromptAtWorkspaces(t *testing.T) {
@@ -26,7 +24,7 @@ func TestLoadRolePromptAtWorkspaces(t *testing.T) {
 		}
 		t.Run(instructions, func(t *testing.T) {
 			t.Parallel()
-			rp, err := LoadRolePromptAt("coder", config.CustomPrompt{}, sub)
+			rp, err := LoadRolePromptAt("coder", IntroOverride{}, sub)
 			if err != nil {
 				t.Fatal(err)
 			}

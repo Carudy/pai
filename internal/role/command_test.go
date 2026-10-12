@@ -78,7 +78,7 @@ func newTestCtx(t *testing.T) (*cmdCtx, *Runtime, *fakeObserver) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
-	rp, err := chat.LoadRolePrompt("devops", config.CustomPrompt{})
+	rp, err := chat.LoadRolePrompt("devops", chat.IntroOverride{})
 	if err != nil {
 		t.Fatalf("load role: %v", err)
 	}

@@ -192,11 +192,11 @@ func (cfg *UserConfig) Redacted() *UserConfig {
 	if cfg.ProvidersConfigs != nil {
 		dup.ProvidersConfigs = make(map[string]ProviderConfig, len(cfg.ProvidersConfigs))
 		for name, pc := range cfg.ProvidersConfigs {
-			pc.APIKey = maskSecret(pc.APIKey)
+			pc.APIKey = MaskSecret(pc.APIKey)
 			dup.ProvidersConfigs[name] = pc
 		}
 	}
-	dup.TavilyAPIKey = maskSecret(cfg.TavilyAPIKey)
+	dup.TavilyAPIKey = MaskSecret(cfg.TavilyAPIKey)
 	return &dup
 }
 
@@ -217,12 +217,26 @@ func cleanModels(models []string) []string {
 	return clean
 }
 
-// maskSecret renders a secret as a presence hint, never its contents.
-func maskSecret(s string) string {
+// MaskSecret renders a secret as a presence hint, never its contents. Use it for
+// logs and diagnostics, which must never carry a usable credential.
+func MaskSecret(s string) string {
 	if s == "" {
 		return ""
 	}
 	return "****"
+}
+
+// SecretHint renders a secret for a human-facing display: empty stays empty,
+// otherwise the last few characters are shown so two keys can be told apart.
+func SecretHint(s string) string {
+	if s == "" {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= 4 {
+		return "****"
+	}
+	return "****" + string(r[len(r)-4:])
 }
 
 func defaultConfig() *UserConfig {

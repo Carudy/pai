@@ -126,7 +126,10 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
   thing the model reads"). Match that; don't narrate obvious code.
 - **Small, single-purpose packages.** Keep the layering intact — see the
   dependency rules in `internal/organization.md`. In particular, never import
-  `tui` or `session` from `chat`/`role`/`tool`.
+  `tui` or `session` from `chat`/`role`/`tool`, and keep the bottom seams
+  one-per-concern: only `prompts` parses role/tool definitions and only
+  `hostinfo` probes the host, so `chat` imports no TOML decoder and shells out to
+  nothing.
 - **Ports carry meaning, not presentation.** Don't put ANSI/lipgloss concerns in
   `core`; the adapter decides rendering.
 - **Validate at the boundary; feed failures back as data.** A tool handler does
@@ -185,7 +188,7 @@ Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
 ## Dependency & binary policy
 
 - **Pure Go, cgo-free.** `go install github.com/Carudy/pai/cmd/pai@latest` must
-  keep working, and the stripped binary stays small (~12 MB SQLite / ~8 MB JSONL).
+  keep working, and the stripped binary stays small (~13 MB SQLite / ~9 MB JSONL).
   The SQLite backend uses `modernc.org/sqlite` precisely because it's pure Go.
 - **Prefer existing dependencies.** Before adding one, prefer what's already
   used (`BurntSushi/toml`, the Charm stack) or the standard library. New

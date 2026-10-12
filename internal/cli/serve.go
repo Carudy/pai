@@ -557,7 +557,7 @@ func (b *serveBackend) SetRole(name, role string) error {
 	if !valid {
 		return fmt.Errorf("unknown role %q (available: %s)", role, strings.Join(prompts.RoleNames(), ", "))
 	}
-	if _, err := chat.LoadRolePrompt(role, config.CustomPrompt{}); err != nil {
+	if _, err := chat.LoadRolePrompt(role, chat.IntroOverride{}); err != nil {
 		return fmt.Errorf("load role: %w", err)
 	}
 	b.mu.Lock()
@@ -728,7 +728,7 @@ func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, p
 		return fail(fmt.Errorf("load custom prompt: %w", err))
 	}
 	cfg.CustomPrompt = custom
-	if _, err := chat.LoadRolePromptAt(cfg.DefaultRole, custom, cwd); err != nil {
+	if _, err := chat.LoadRolePromptAt(cfg.DefaultRole, chat.IntroOverride{Prompt: custom.Prompt, Additional: custom.Additional}, cwd); err != nil {
 		return fail(fmt.Errorf("load role: %w", err))
 	}
 	pc := cfg.ProvidersConfigs[cfg.Provider]

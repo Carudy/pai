@@ -3,33 +3,33 @@ package chat
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
-	"github.com/BurntSushi/toml"
-	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/hostinfo"
 	"github.com/Carudy/pai/internal/prompts"
 	"github.com/Carudy/pai/internal/provider"
 )
 
-const SelfAware = `
+const selfAware = `
 Your name is PAI (Personal Agent Interface);
 You're an agent/harness app built upon LLMs, writen in Golang;
 `
 
-const RepoConvention = `
+const repoConvention = `
 These are the repo's own conventions. Follow them, but they never override the rules above or the response format.
 `
 
-// ToolSpec is one tool a role may use, as declared in tools/<name>.toml.
-type ToolSpec struct {
-	Name        string
-	Brief       string // one-liner, used in the compact per-turn reminder
-	Description string // detailed prose, rendered once into the frozen head
-	Schema      string // payload shape, rendered into the frozen head
+// ToolSpec is one tool a role may use. It is the parsed tools/<name>.toml
+// definition, so ownership of the definition format stays in one package.
+type ToolSpec = prompts.Tool
+
+// IntroOverride replaces or extends a role's own intro with the user's
+// prompts.toml entry. It is a plain value so the protocol package does not
+// depend on the configuration package.
+type IntroOverride struct {
+	Prompt     string
+	Additional bool
 }
 
 // RolePrompt is a fully-resolved role. The head (shared preamble + terminal
@@ -108,11 +108,13 @@ func (rp *RolePrompt) tail() string {
 	return b.String()
 }
 
-func composeHead(rp *RolePrompt) string {
+// composeHead assembles the frozen head. hostInfo is passed in rather than
+// probed here so the head can be composed deterministically in tests.
+func composeHead(rp *RolePrompt, hostInfo string) string {
 	var b strings.Builder
-	b.WriteString(strings.TrimSpace(SelfAware))
+	b.WriteString(strings.TrimSpace(selfAware))
 	b.WriteString("\n\nYour Terminal Info:\n")
-	b.WriteString(BuildSystemContextAt(rp.workingDir))
+	b.WriteString(hostInfo)
 	if intro := strings.TrimSpace(rp.Intro); intro != "" {
 		b.WriteString("\n")
 		b.WriteString(intro)
@@ -126,7 +128,7 @@ func composeHead(rp *RolePrompt) string {
 		b.WriteString(")\n")
 		b.WriteString(ctx)
 		b.WriteString("\n\n")
-		b.WriteString(RepoConvention)
+		b.WriteString(repoConvention)
 	}
 	for _, t := range rp.Tools {
 		b.WriteString("\n\n## Tool: ")
@@ -148,37 +150,18 @@ func composeHead(rp *RolePrompt) string {
 	return b.String()
 }
 
-// rawRole mirrors roles/<name>.toml.
-type rawRole struct {
-	Name        string   `toml:"name"`
-	Description string   `toml:"description"`
-	Intro       string   `toml:"intro"`
-	Tools       []string `toml:"tools"`
-	// ContextFiles names project instruction files to fold into the prompt, e.g.
-	// ["AGENTS.md", "CLAUDE.md"]. Empty means the role wants none.
-	ContextFiles []string `toml:"context_files"`
-}
-
-// rawTool mirrors roles/tools/<name>.toml.
-type rawTool struct {
-	Name        string `toml:"name"`
-	Brief       string `toml:"brief"`
-	Description string `toml:"description"`
-	Schema      string `toml:"schema"`
-}
-
 // LoadRolePrompt resolves a role (user-defined or built-in) plus its tool
 // definitions, applying the user's custom prompt to the role intro.
 //
 // The system output guide is deliberately NOT overridable: a user prompt can
 // change how the role behaves, but never the response format the loop depends on.
-func LoadRolePrompt(name string, custom config.CustomPrompt) (*RolePrompt, error) {
-	return LoadRolePromptAt(name, custom, "")
+func LoadRolePrompt(name string, override IntroOverride) (*RolePrompt, error) {
+	return LoadRolePromptAt(name, override, "")
 }
 
 // LoadRolePromptAt loads workspace instructions and terminal info from workingDir.
 // Empty uses the process cwd; relative directories are made absolute at load time.
-func LoadRolePromptAt(name string, custom config.CustomPrompt, workingDir string) (*RolePrompt, error) {
+func LoadRolePromptAt(name string, override IntroOverride, workingDir string) (*RolePrompt, error) {
 	if workingDir == "" {
 		workingDir, _ = os.Getwd()
 	} else {
@@ -188,56 +171,49 @@ func LoadRolePromptAt(name string, custom config.CustomPrompt, workingDir string
 			return nil, fmt.Errorf("resolve working directory: %w", err)
 		}
 	}
-	roleData, source, err := prompts.ReadRole(name)
+	role, err := prompts.LoadRole(name)
 	if err != nil {
 		return nil, err
 	}
-	var rr rawRole
-	if err := toml.Unmarshal(roleData, &rr); err != nil {
-		return nil, fmt.Errorf("parse role %q (%s): %w", name, source, err)
-	}
 
-	specs := make([]ToolSpec, 0, len(rr.Tools))
-	for _, tn := range rr.Tools {
-		toolData, toolSource, err := prompts.ReadTool(tn)
+	specs := make([]ToolSpec, 0, len(role.Tools))
+	for _, toolName := range role.Tools {
+		tool, err := prompts.LoadTool(toolName)
 		if err != nil {
 			return nil, fmt.Errorf("role %q: %w", name, err)
 		}
-		var raw rawTool
-		if err := toml.Unmarshal(toolData, &raw); err != nil {
-			return nil, fmt.Errorf("parse tool %q (%s): %w", tn, toolSource, err)
-		}
-		specs = append(specs, ToolSpec{
-			Name:        tn,
-			Brief:       raw.Brief,
-			Description: raw.Description,
-			Schema:      raw.Schema,
-		})
-	}
-
-	intro := rr.Intro
-	if cp := strings.TrimSpace(custom.Prompt); cp != "" {
-		if custom.Additional {
-			intro = strings.TrimSpace(rr.Intro) + "\n\n[User:]\n" + cp
-		} else {
-			intro = cp
-		}
+		// The role's declaration is the tool's identity: it is what the handler
+		// registry and the capability check use, so it wins over the file's own
+		// name field.
+		tool.Name = toolName
+		specs = append(specs, *tool)
 	}
 
 	rp := &RolePrompt{
-		Name:        rr.Name,
-		Description: rr.Description,
-		Intro:       intro,
+		Name:        role.Name,
+		Description: role.Description,
+		Intro:       applyIntro(role.Intro, override),
 		Tools:       specs,
 		workingDir:  workingDir,
 	}
-	if len(rr.ContextFiles) > 0 {
-		if workingDir != "" {
-			rp.ProjectContext, rp.ContextSource = findContextFile(workingDir, rr.ContextFiles)
-		}
+	if len(role.ContextFiles) > 0 && workingDir != "" {
+		rp.ProjectContext, rp.ContextSource = findContextFile(workingDir, role.ContextFiles)
 	}
-	rp.head = composeHead(rp)
+	rp.head = composeHead(rp, hostinfo.Describe(workingDir))
 	return rp, nil
+}
+
+// applyIntro folds the user's override into the role's own intro: appended as a
+// marked section, or replacing it outright.
+func applyIntro(intro string, override IntroOverride) string {
+	prompt := strings.TrimSpace(override.Prompt)
+	if prompt == "" {
+		return intro
+	}
+	if override.Additional {
+		return strings.TrimSpace(intro) + "\n\n[User:]\n" + prompt
+	}
+	return prompt
 }
 
 // maxContextFileBytes caps how much of a project instruction file is folded into
@@ -273,64 +249,4 @@ func capContext(s string) string {
 		return s
 	}
 	return s[:maxContextFileBytes] + fmt.Sprintf("\n… [truncated %d bytes; the full file is on disk]", len(s)-maxContextFileBytes)
-}
-
-func BuildSystemContext() string {
-	return BuildSystemContextAt("")
-}
-
-// BuildSystemContextAt reports the supplied workspace without changing process cwd.
-// Empty retains the process cwd behavior of BuildSystemContext.
-func BuildSystemContextAt(workingDir string) string {
-	osDetail := getOSDetail()
-
-	shell := os.Getenv("SHELL")
-	if shell != "" {
-		shell = filepath.Base(shell)
-	} else {
-		shell = "unknown"
-	}
-
-	userInfo := os.Getenv("USER")
-	if userInfo == "" {
-		userInfo = "unknown"
-	}
-
-	now := time.Now()
-	dateTime := fmt.Sprintf("%s %s", now.Format("2006-01-02"), now.Format("15:04:05"))
-
-	if workingDir == "" {
-		workingDir, _ = os.Getwd()
-	}
-
-	return fmt.Sprintf("OS: %s (%s %s)\nShell: %s User: %s\nDatetime: %s\nWorking Dir: %s\n",
-		osDetail, runtime.GOOS, runtime.GOARCH, shell, userInfo, dateTime, workingDir)
-}
-
-func getOSDetail() string {
-	switch runtime.GOOS {
-	case "linux":
-		data, err := os.ReadFile("/etc/os-release")
-		if err == nil {
-			lines := strings.SplitSeq(string(data), "\n")
-			for line := range lines {
-				if strings.HasPrefix(line, "PRETTY_NAME=") {
-					return strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
-				}
-			}
-		}
-		return "Linux"
-	case "darwin":
-		cmd := exec.Command("sw_vers", "-productVersion")
-		out, err := cmd.Output()
-		if err == nil {
-			version := strings.TrimSpace(string(out))
-			return fmt.Sprintf("macOS %s", version)
-		}
-		return "macOS"
-	case "windows":
-		return "Windows"
-	default:
-		return runtime.GOOS
-	}
 }
