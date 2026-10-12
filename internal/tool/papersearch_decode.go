@@ -6,14 +6,21 @@ import (
 	"fmt"
 	"html"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 )
 
-func decodePaperArxiv(body []byte) ([]Paper, error) {
+// decodePaperArxiv returns the entries plus the feed's total match count. The
+// total lets a caller tell an over-narrow query (0 candidates) from a malformed
+// response, and it drives the all-of→any-of fallback.
+func decodePaperArxiv(body []byte) ([]Paper, int, error) {
 	var feed struct {
 		XMLName xml.Name `xml:"feed"`
-		Entries []struct {
+		// arXiv advertises the OpenSearch namespace, so the total must be matched
+		// by namespace URI rather than by the local name alone.
+		TotalResults string `xml:"http://a9.com/-/spec/opensearch/1.1/ totalResults"`
+		Entries      []struct {
 			ID        string `xml:"id"`
 			Title     string `xml:"title"`
 			Summary   string `xml:"summary"`
@@ -31,12 +38,12 @@ func decodePaperArxiv(body []byte) ([]Paper, error) {
 		} `xml:"entry"`
 	}
 	if err := xml.Unmarshal(body, &feed); err != nil {
-		return nil, fmt.Errorf("decode Atom feed: %w", err)
+		return nil, 0, fmt.Errorf("decode Atom feed: %w", err)
 	}
 	papers := make([]Paper, 0, len(feed.Entries))
 	for _, entry := range feed.Entries {
 		if strings.Contains(entry.ID, "/api/errors") || strings.EqualFold(strings.TrimSpace(entry.Title), "Error") {
-			return nil, fmt.Errorf("arxiv error entry: %s", paperText(entry.Summary, entry.ID))
+			return nil, 0, fmt.Errorf("arxiv error entry: %s", paperText(entry.Summary, entry.ID))
 		}
 		id := strings.TrimSpace(entry.ID)
 		arxivID := id
@@ -67,7 +74,12 @@ func decodePaperArxiv(body []byte) ([]Paper, error) {
 		}
 		papers = append(papers, p)
 	}
-	return papers, nil
+	candidates, err := strconv.Atoi(strings.TrimSpace(feed.TotalResults))
+	if err != nil || candidates < len(papers) {
+		// A missing or unparsable total must never understate what was returned.
+		candidates = len(papers)
+	}
+	return papers, candidates, nil
 }
 
 type paperCrossrefDate struct {
@@ -92,7 +104,7 @@ func (d paperCrossrefDate) format() string {
 	return date
 }
 
-func decodePaperCrossref(body []byte) ([]Paper, error) {
+func decodePaperCrossref(body []byte) ([]Paper, int, error) {
 	type work struct {
 		DOI      string   `json:"DOI"`
 		URL      string   `json:"URL"`
@@ -109,19 +121,24 @@ func decodePaperCrossref(body []byte) ([]Paper, error) {
 		Print     paperCrossrefDate `json:"published-print"`
 		Online    paperCrossrefDate `json:"published-online"`
 		Issued    paperCrossrefDate `json:"issued"`
+		// Score is Crossref's relevance score, present when results are
+		// relevance-ranked. It is provider-specific and not comparable across
+		// sources, so it is reported for judgement rather than filtering.
+		Score float64 `json:"score"`
 	}
 	var envelope struct {
 		Status  string `json:"status"`
 		Type    string `json:"message-type"`
 		Message *struct {
-			Items *[]work `json:"items"`
+			TotalResults *int    `json:"total-results"`
+			Items        *[]work `json:"items"`
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return nil, fmt.Errorf("decode Crossref response: %w", err)
+		return nil, 0, fmt.Errorf("decode Crossref response: %w", err)
 	}
 	if envelope.Status != "ok" || envelope.Type != "work-list" || envelope.Message == nil || envelope.Message.Items == nil {
-		return nil, fmt.Errorf("malformed Crossref envelope: expected ok work-list with message.items array")
+		return nil, 0, fmt.Errorf("malformed Crossref envelope: expected ok work-list with message.items array")
 	}
 	papers := make([]Paper, 0, len(*envelope.Message.Items))
 	for _, item := range *envelope.Message.Items {
@@ -129,7 +146,7 @@ func decodePaperCrossref(body []byte) ([]Paper, error) {
 		p := Paper{
 			ID: doi, DOI: doi, URL: strings.TrimSpace(item.URL),
 			Title: paperMarkup(strings.Join(item.Title, "; ")), Venue: paperMarkup(strings.Join(item.Venue, "; ")),
-			Abstract: paperMarkup(item.Abstract), Type: paperText(item.Type, ""),
+			Abstract: paperMarkup(item.Abstract), Type: paperText(item.Type, ""), Score: item.Score,
 		}
 		if p.URL == "" && doi != "" {
 			doiURL := url.URL{Scheme: "https", Host: "doi.org", Path: "/" + doi}
@@ -151,7 +168,14 @@ func decodePaperCrossref(body []byte) ([]Paper, error) {
 		}
 		papers = append(papers, p)
 	}
-	return papers, nil
+	candidates := 0
+	if envelope.Message.TotalResults != nil {
+		candidates = *envelope.Message.TotalResults
+	}
+	if candidates < len(papers) {
+		candidates = len(papers)
+	}
+	return papers, candidates, nil
 }
 
 // Crossref abstracts are often JATS fragments, not well-formed XML documents.

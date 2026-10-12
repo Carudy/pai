@@ -390,7 +390,7 @@ pai config set context.paper_limit 16384   # bytes of formatted paper results
 `papersearch` takes an object, unlike `websearch`'s string query:
 
 ```json
-{"source":"arxiv","query":"retrieval augmented generation evaluation","limit":5,"year_from":2023,"sort":"relevance"}
+{"source":"arxiv","query":"\"decision tree\" homomorphic","limit":5,"year_from":2023,"sort":"relevance","match":"any","offset":0}
 ```
 
 - **Sources:** arXiv is strongest for CS/math/physics preprints; Crossref searches
@@ -400,19 +400,34 @@ pai config set context.paper_limit 16384   # bytes of formatted paper results
   required plain-text keywords, not provider syntax. `limit` defaults to 5
   (maximum 20), `year_from`/`year_to` are inclusive, and `sort` is `relevance`
   or `newest`. arXiv dates refer to first submission; Crossref dates refer to
-  publication. arXiv combines keywords with AND, so shorter queries may help.
+  publication. `offset` (0-based) walks a result set.
+- **Matching:** searching is lexical, so include your own variants and wrap exact
+  phrases in `"double quotes"`. Any provider operators or field prefixes you
+  write (`AND`, `ti:`) are treated as literal words. `match` defaults to all-of,
+  which **falls back to relevance-ranked any-of only when the strict query matches
+  nothing**; set `match:"any"` to search any-of keywords directly, or
+  `match:"all"` to require every keyword and accept an empty result. Crossref
+  always relevance-ranks any-of keywords, so `match:"all"` is refused there.
+- **Diagnostics:** every result header reports the query actually sent, the match
+  mode used, the provider's candidate count, the year filter, the sort, and the
+  next offset. That separates a genuinely empty result from a too-narrow or
+  misdirected query, so a repeat search can change something real. Crossref
+  records also show that provider's relevance score (not comparable across sources).
 - **Output:** original titles, authors, dates, identifiers, URLs, and available
   abstracts—not an extra AI summary. Abstracts are capped at 2,000 characters
   with a truncation marker. The separate 16,384-byte default budget omits whole
-  records with a notice rather than severing their identifiers. No pagination,
-  full-text/PDF reading, file downloads, or citation-graph traversal yet.
+  records with a notice rather than severing their identifiers. Full-text/PDF
+  reading, file downloads, cross-source merge, and citation-graph traversal are
+  not implemented.
 - **Network/privacy:** the explicit query goes to the selected public API;
   an optional contact email goes only to Crossref. No local files are included.
   Tool observations may be retained in persisted sessions. Keyless does not
   mean unlimited: requests share process-wide throttles (arXiv: one connection,
   starts at least three seconds apart; Crossref: one start per second), a
-  45-second deadline, and one bounded retry for HTTP 429/503. Separate PAI
-  processes do not share these throttles; coordinate them when using arXiv.
+  45-second deadline, and one bounded retry for HTTP 429/503. An arXiv all-of
+  query that matches nothing costs one extra request (the any-of fallback), and
+  both count against the same throttle. Separate PAI processes do not share these
+  throttles; coordinate them when using arXiv.
 - **Evidence:** metadata/abstracts are untrusted source material, not instructions;
   missing abstracts are explicit. Preprints, DOIs, and publication types do not
   establish peer review or paper quality. The tool does not claim full-text access.

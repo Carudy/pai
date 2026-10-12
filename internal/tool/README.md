@@ -18,10 +18,16 @@ See the [module map](../organization.md) for the execution/approval split.
 - `PaperSearch` searches fixed public arXiv/Crossref APIs without keys, normalizes
   metadata and original abstracts, and shares cancellable provider throttles
   across sessions in one process. Optional contact identifies Crossref requests.
-- `PaperSearchRequest.Normalize` validates/defaults the object payload;
-  `PaperSearchResult.Format` bounds UTF-8 output by complete records, preserving
-  identifiers and marking unavailable/truncated abstracts and omitted records.
-  It does not retrieve full text, infer peer review, or generate AI summaries.
+- `PaperSearchRequest.Normalize` validates/defaults the object payload, including
+  the `match` mode and pagination `offset`. arXiv keywords are quoted (so a
+  model's operators cannot become query syntax), joined all-of or any-of, and a
+  strict query that matches nothing retries once as any-of.
+- `PaperSearchResult` keeps provider diagnostics alongside records — sent query,
+  match mode and fallback, candidate count, offset, year filter, sort, and
+  Crossref scores — so a caller can tell a genuine zero from a broken query.
+  `Format` bounds UTF-8 output by complete records, preserving identifiers and
+  marking unavailable/truncated abstracts and omitted records. It does not
+  retrieve full text, infer peer review, or generate AI summaries.
 
 ## Boundaries
 

@@ -19,7 +19,8 @@ import (
 )
 
 const paperAtomFixture = `<?xml version="1.0"?>
-<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+<opensearch:totalResults>2</opensearch:totalResults>
 <entry><id>http://arxiv.org/abs/2401.12345v3</id><title>  Quantum
   café 宇宙 </title><summary> Résumé &amp; 日本語. </summary>
 <published>2024-01-12T14:00:00Z</published><author><name>Ada Lovelace</name></author><author><name> 李 明 </name></author>
@@ -28,12 +29,22 @@ const paperAtomFixture = `<?xml version="1.0"?>
 <link rel="related" type="application/pdf" href="https://arxiv.org/pdf/2401.12345v3"/></entry>
 <entry><id>http://arxiv.org/abs/hep-th/9901001v2</id></entry></feed>`
 
-const paperCrossrefFixture = `{"status":"ok","message-type":"work-list","message":{"items":[
+const paperCrossrefFixture = `{"status":"ok","message-type":"work-list","message":{"total-results":3,"items":[
 {"DOI":"10.1234/é","title":["A &amp; B"],"author":[{"given":"Ada","family":"Lovelace"},{"name":"研究 Group"},{}],
 "published":{"date-parts":[[2023,6,2]]},"container-title":["Example Journal"],"type":"journal-article",
 "abstract":"<jats:p>Résumé &amp; 日本語 <jats:italic>café</jats:italic>.</jats:p><script>secret()</script><style>hidden</style>"},
 {"title":["Partial"],"issued":{"date-parts":[[1999]]},"type":"posted-content"},{}
 ]}}`
+
+// paperTestFeed builds an arXiv-style Atom feed whose total match count is
+// explicit, which is what lets the client tell "no matches" from "narrow query".
+func paperTestFeed(totalResults int, entries string) string {
+	return fmt.Sprintf(`<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/"><opensearch:totalResults>%d</opensearch:totalResults>%s</feed>`, totalResults, entries)
+}
+
+func paperTestEntry(id, title string) string {
+	return fmt.Sprintf(`<entry><id>%s</id><title>%s</title><summary>abstract</summary><published>2024-01-02T00:00:00Z</published></entry>`, id, title)
+}
 
 func newPaperTestClient(t *testing.T, handler http.HandlerFunc) *paperClient {
 	t.Helper()
@@ -66,7 +77,10 @@ func TestPaperNormalize(t *testing.T) {
 		"source": {Query: "x", Source: "other"}, "limit negative": {Query: "x", Limit: -1},
 		"limit large": {Query: "x", Limit: 21}, "year negative": {Query: "x", YearFrom: -1},
 		"year large": {Query: "x", YearTo: 10000}, "reversed": {Query: "x", YearFrom: 2025, YearTo: 2024},
-		"sort": {Query: "x", Sort: "oldest"},
+		"sort":            {Query: "x", Sort: "oldest"},
+		"match":           {Query: "x", Match: "some"},
+		"offset negative": {Query: "x", Offset: -1},
+		"offset large":    {Query: "x", Offset: paperSearchMaxOffset + 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := req.Normalize("arxiv"); err == nil {
@@ -81,6 +95,10 @@ func TestPaperNormalize(t *testing.T) {
 	request.Source = "arxiv"
 	if err := request.Normalize("bad"); err != nil {
 		t.Fatalf("explicit source should override default: %v", err)
+	}
+	request = PaperSearchRequest{Query: "x", Match: " ANY ", Offset: 3}
+	if err := request.Normalize(""); err != nil || request.Match != PaperMatchAny || request.Offset != 3 {
+		t.Fatalf("normalize match/offset: %+v, %v", request, err)
 	}
 	if err := json.Unmarshal([]byte(`{"query":"x","limit":"5"}`), &request); err == nil {
 		t.Fatal("accepted string limit")
@@ -113,7 +131,7 @@ func TestPaperProviderRequests(t *testing.T) {
 						}
 						io.WriteString(w, paperAtomFixture)
 					} else {
-						if r.URL.Path != "/crossref" || q.Get("rows") != "2" || q.Get("query.bibliographic") != `quantum OR ti:"injected"` || q.Get("mailto") != "test@example.com" {
+						if r.URL.Path != "/crossref" || q.Get("rows") != "2" || q.Get("offset") != "0" || q.Get("query.bibliographic") != `quantum OR ti:"injected"` || q.Get("mailto") != "test@example.com" {
 							t.Errorf("crossref request: %s", r.URL)
 						}
 						if q.Get("filter") != "from-pub-date:2020-01-01,until-pub-date:2024-12-31" {
@@ -137,6 +155,13 @@ func TestPaperProviderRequests(t *testing.T) {
 				if result.Source != source || result.Query != `quantum OR ti:"injected"` || len(result.Papers) != 2 || result.RetrievedAt.Before(before) {
 					t.Fatalf("result: %+v", result)
 				}
+				wantMatch, wantCandidates := "all", 2
+				if source == "crossref" {
+					wantMatch, wantCandidates = "any", 3
+				}
+				if result.Match != wantMatch || result.Fallback || result.Candidates != wantCandidates || result.QuerySent == "" {
+					t.Fatalf("diagnostics: %+v", result)
+				}
 			})
 		}
 	}
@@ -151,12 +176,12 @@ func TestPaperYearFilters(t *testing.T) {
 		{1, 0, `(all:"x") AND submittedDate:[000101010000 TO 999912312359]`, "from-pub-date:0001-01-01"},
 		{0, 9999, `(all:"x") AND submittedDate:[000101010000 TO 999912312359]`, "until-pub-date:9999-12-31"},
 	} {
-		query, err := paperArxivQuery(PaperSearchRequest{Query: "x", YearFrom: tc.from, YearTo: tc.to})
-		if err != nil || query != tc.arxiv {
-			t.Fatalf("arxiv query: %q, %v", query, err)
+		query := paperArxivExpression(paperArxivTerms("x"), PaperMatchAll, tc.from, tc.to)
+		if query != tc.arxiv {
+			t.Fatalf("arxiv query: %q", query)
 		}
 		client := newPaperTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-			if q := r.URL.Query(); q.Get("filter") != tc.crossref || q.Get("mailto") != "" || q.Get("rows") != "5" {
+			if q := r.URL.Query(); q.Get("filter") != tc.crossref || q.Get("mailto") != "" || q.Get("rows") != "5" || q.Get("offset") != "0" {
 				t.Errorf("query: %v", q)
 			}
 			io.WriteString(w, `{"status":"ok","message-type":"work-list","message":{"items":[]}}`)
@@ -165,15 +190,214 @@ func TestPaperYearFilters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := paperArxivQuery(PaperSearchRequest{Query: `:()"*`}); err == nil {
-		t.Fatal("accepted punctuation-only arxiv query")
+	// A query of nothing but punctuation yields no searchable term, so it is
+	// refused instead of being sent as an empty provider query.
+	if terms := paperArxivTerms(`:()"*`); len(terms) != 0 {
+		t.Fatalf("punctuation produced terms: %v", terms)
+	}
+	client := newPaperTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unsendable query reached the provider") })
+	if _, err := client.search(context.Background(), PaperSearchRequest{Query: `:()"*`}, ""); err == nil || !strings.Contains(err.Error(), "no searchable keywords") {
+		t.Fatalf("error: %v", err)
+	}
+}
+
+func TestPaperArxivTerms(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  []string
+	}{
+		{`alpha beta`, []string{`all:"alpha"`, `all:"beta"`}},
+		{`"decision tree"`, []string{`all:"decision tree"`}},
+		// A bare span is split on punctuation, so a hyphenated compound becomes two
+		// keywords; a quoted phrase keeps its internal punctuation and spacing.
+		{`non-interactive "private decision tree" privacy`, []string{`all:"non"`, `all:"interactive"`, `all:"private decision tree"`, `all:"privacy"`}},
+		// Provider operators and field prefixes in the model's text stay literal.
+		{`a OR b ANDNOT c`, []string{`all:"a"`, `all:"OR"`, `all:"b"`, `all:"ANDNOT"`, `all:"c"`}},
+		{`ti:decision abs:tree`, []string{`all:"ti"`, `all:"decision"`, `all:"abs"`, `all:"tree"`}},
+		{`  spaced   out  `, []string{`all:"spaced"`, `all:"out"`}},
+		// An unterminated quote keeps the rest of the text as one phrase.
+		{`"unclosed phrase`, []string{`all:"unclosed phrase"`}},
+		// A phrase must contain a letter or digit to be worth searching.
+		{`"*" :()`, nil},
+		{`""`, nil},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			if got := paperArxivTerms(tc.query); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("terms %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPaperArxivExpression(t *testing.T) {
+	terms := []string{`all:"a"`, `all:"b"`}
+	for _, tc := range []struct {
+		match    string
+		from, to int
+		want     string
+	}{
+		{PaperMatchAll, 0, 0, `all:"a" AND all:"b"`},
+		{PaperMatchAny, 0, 0, `all:"a" OR all:"b"`},
+		// AND binds tighter than OR, so an any-of group must be parenthesized
+		// before the date restriction is appended.
+		{PaperMatchAny, 2020, 0, `(all:"a" OR all:"b") AND submittedDate:[202001010000 TO 999912312359]`},
+	} {
+		if got := paperArxivExpression(terms, tc.match, tc.from, tc.to); got != tc.want {
+			t.Fatalf("expression %q, want %q", got, tc.want)
+		}
+	}
+}
+
+// The strict all-of query is tried first; only a zero-match result falls back to
+// any-of, and the fallback is reported rather than hidden.
+func TestPaperArxivMatchFallback(t *testing.T) {
+	for _, tc := range []struct {
+		match        string
+		wantMatch    string
+		wantFallback bool
+		wantCalls    int32
+		wantPapers   int
+		wantCands    int
+	}{
+		{"", "any", true, 2, 1, 7},
+		{PaperMatchAny, "any", false, 1, 1, 7},
+		{PaperMatchAll, "all", false, 1, 0, 0},
+	} {
+		t.Run("match="+tc.match, func(t *testing.T) {
+			var calls atomic.Int32
+			var mu sync.Mutex
+			var queries []string
+			client := newPaperTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				query := r.URL.Query().Get("search_query")
+				mu.Lock()
+				queries = append(queries, query)
+				mu.Unlock()
+				if strings.Contains(query, " OR ") {
+					io.WriteString(w, paperTestFeed(7, paperTestEntry("http://arxiv.org/abs/2401.00001v1", "Found")))
+					return
+				}
+				io.WriteString(w, paperTestFeed(0, ""))
+			})
+			result, err := client.search(context.Background(), PaperSearchRequest{Query: "alpha beta", Match: tc.match}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Match != tc.wantMatch || result.Fallback != tc.wantFallback || len(result.Papers) != tc.wantPapers || result.Candidates != tc.wantCands {
+				t.Fatalf("result: %+v", result)
+			}
+			if got := calls.Load(); got != tc.wantCalls {
+				t.Fatalf("calls %d, want %d (%v)", got, tc.wantCalls, queries)
+			}
+			if tc.wantFallback {
+				if result.Attempted != 0 || !strings.Contains(result.QuerySent, " OR ") {
+					t.Fatalf("fallback diagnostics: %+v", result)
+				}
+				// The strict attempt must be the one that returned nothing.
+				if len(queries) != 2 || strings.Contains(queries[0], " OR ") || !strings.Contains(queries[0], " AND ") {
+					t.Fatalf("attempt order: %v", queries)
+				}
+			}
+		})
+	}
+}
+
+func TestPaperPagination(t *testing.T) {
+	t.Run("arxiv start", func(t *testing.T) {
+		client := newPaperTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if q := r.URL.Query(); q.Get("start") != "10" || q.Get("max_results") != "5" {
+				t.Errorf("request: %v", q)
+			}
+			io.WriteString(w, paperTestFeed(20, paperTestEntry("http://arxiv.org/abs/2401.00002v1", "Tenth")))
+		})
+		result, err := client.search(context.Background(), PaperSearchRequest{Query: "x", Offset: 10}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Offset != 10 || result.Candidates != 20 || result.NextOffset() != 11 {
+			t.Fatalf("result: %+v next=%d", result, result.NextOffset())
+		}
+		if !strings.Contains(result.Format(0), "Next offset: 11") {
+			t.Fatalf("missing page hint: %s", result.Format(0))
+		}
+	})
+	t.Run("crossref offset and score", func(t *testing.T) {
+		client := newPaperTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if q := r.URL.Query(); q.Get("offset") != "7" || q.Get("rows") != "5" {
+				t.Errorf("request: %v", q)
+			}
+			io.WriteString(w, `{"status":"ok","message-type":"work-list","message":{"total-results":9,"items":[{"DOI":"10.1/a","title":["A"],"score":12.5}]}}`)
+		})
+		result, err := client.search(context.Background(), PaperSearchRequest{Source: "crossref", Query: "x", Offset: 7}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Offset != 7 || result.Candidates != 9 || result.NextOffset() != 8 || result.Papers[0].Score != 12.5 {
+			t.Fatalf("result: %+v", result)
+		}
+		formatted := result.Format(0)
+		if !strings.Contains(formatted, "Score: 12.5") || !strings.Contains(formatted, "Match: any (9 candidates)") {
+			t.Fatalf("diagnostics: %s", formatted)
+		}
+	})
+	t.Run("last page has no next offset", func(t *testing.T) {
+		client := newPaperTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, paperTestFeed(2, paperTestEntry("http://arxiv.org/abs/2401.00003v1", "Last")))
+		})
+		result, err := client.search(context.Background(), PaperSearchRequest{Query: "x", Offset: 1}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.NextOffset() != 0 || strings.Contains(result.Format(0), "Next offset") {
+			t.Fatalf("result: %+v", result)
+		}
+	})
+}
+
+// match=all is arxiv-only: refusing it beats silently ignoring the request.
+func TestPaperCrossrefRejectsMatchAll(t *testing.T) {
+	client := newPaperTestClient(t, func(w http.ResponseWriter, r *http.Request) { t.Error("request sent despite unsupported match") })
+	if _, err := client.search(context.Background(), PaperSearchRequest{Source: "crossref", Query: "x", Match: PaperMatchAll}, ""); err == nil || !strings.Contains(err.Error(), "arxiv-only") {
+		t.Fatalf("error: %v", err)
+	}
+}
+
+func TestPaperDiagnosticsHeader(t *testing.T) {
+	fallback := &PaperSearchResult{
+		Source: "arxiv", Query: "oblique decision tree privacy inference",
+		QuerySent: `(all:"oblique" OR all:"decision")`, Match: PaperMatchAny, Fallback: true,
+		Attempted: 0, Candidates: 298496, Sort: "newest", YearFrom: 2020, RetrievedAt: time.Now(),
+		Papers: []Paper{{Title: "T", ID: "i"}},
+	}
+	got := fallback.Format(0)
+	for _, want := range []string{
+		"Status: ok",
+		"Sent: (all:\"oblique\" OR all:\"decision\")",
+		"Match: all→any (all returned 0 candidates; any returned 298496)",
+		"Years: 2020–9999",
+		"Sort: newest (arXiv first-submitted date)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+
+	empty := &PaperSearchResult{Source: "crossref", Query: "q", Match: PaperMatchAny, Sort: "relevance", RetrievedAt: time.Now()}
+	got = empty.Format(0)
+	for _, want := range []string{"Status: empty", "No papers found", "match:\"any\"", "Sort: relevance"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
 	}
 }
 
 func TestPaperDecodeArxiv(t *testing.T) {
-	papers, err := decodePaperArxiv([]byte(paperAtomFixture))
+	papers, candidates, err := decodePaperArxiv([]byte(paperAtomFixture))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if candidates != 2 {
+		t.Fatalf("candidates: %d", candidates)
 	}
 	p := papers[0]
 	if p.ID != "http://arxiv.org/abs/2401.12345v3" || p.ArxivID != "2401.12345v3" || p.URL != "https://arxiv.org/abs/2401.12345v3" || p.DOI != "10.1234/example" || p.Type != "preprint" || p.Date != "2024-01-12" || p.Venue != "Example 12 (2024)" {
@@ -186,16 +410,19 @@ func TestPaperDecodeArxiv(t *testing.T) {
 		t.Fatalf("partial: %+v", papers[1])
 	}
 	for _, fixture := range []string{`<feed><entry><id>http://arxiv.org/api/errors#bad_query</id><title>Error</title><summary>bad query</summary></entry></feed>`, `<feed><entry>`, `<html/>`} {
-		if _, err := decodePaperArxiv([]byte(fixture)); err == nil {
+		if _, _, err := decodePaperArxiv([]byte(fixture)); err == nil {
 			t.Fatalf("accepted %s", fixture)
 		}
 	}
 }
 
 func TestPaperDecodeCrossref(t *testing.T) {
-	papers, err := decodePaperCrossref([]byte(paperCrossrefFixture))
+	papers, candidates, err := decodePaperCrossref([]byte(paperCrossrefFixture))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if candidates != 3 {
+		t.Fatalf("candidates: %d", candidates)
 	}
 	p := papers[0]
 	if p.ID != "10.1234/é" || p.DOI != p.ID || p.URL != "https://doi.org/10.1234/%C3%A9" || p.Title != "A & B" || p.Date != "2023-06-02" || p.Type != "journal-article" || p.Venue != "Example Journal" || p.ArxivID != "" {
@@ -208,7 +435,7 @@ func TestPaperDecodeCrossref(t *testing.T) {
 		t.Fatalf("partial: %+v", papers)
 	}
 	for _, fixture := range []string{`{}`, `null`, `{"status":"error"}`, `{"status":"ok","message-type":"work","message":{"items":[]}}`, `{"status":"ok","message-type":"work-list","message":{}}`, `{"status":"ok","message-type":"work-list","message":{"items":null}}`, `{"status":"ok","message-type":"work-list","message":{"items":{}}}`, `{"status":"ok","message-type":"work-list","message":{"items":[]}} trailing`} {
-		if _, err := decodePaperCrossref([]byte(fixture)); err == nil {
+		if _, _, err := decodePaperCrossref([]byte(fixture)); err == nil {
 			t.Fatalf("accepted %s", fixture)
 		}
 	}
@@ -228,7 +455,7 @@ func TestPaperDecodeCrossrefDOIURLs(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			papers, err := decodePaperCrossref(fixture)
+			papers, _, err := decodePaperCrossref(fixture)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -295,7 +522,7 @@ func TestPaperHTTPFailuresAndRetry(t *testing.T) {
 					io.WriteString(w, "rejected")
 					return
 				}
-				io.WriteString(w, `<feed/>`)
+				io.WriteString(w, paperTestFeed(1, ""))
 			})
 			_, err := client.search(context.Background(), PaperSearchRequest{Query: "x"}, "")
 			if tc.want == "" && err != nil {
@@ -525,7 +752,10 @@ func TestPaperLimiterSharedClients(t *testing.T) {
 		case <-r.Context().Done():
 			return
 		}
-		io.WriteString(w, `<feed/>`)
+		// A non-zero total keeps this a single-request probe of the shared gate;
+		// a zero-match feed would trigger the all-of→any-of fallback and thus a
+		// second request per caller.
+		io.WriteString(w, paperTestFeed(1, ""))
 	})
 	other := *client // Separate callers still share the provider gate.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

@@ -364,8 +364,17 @@ func runPapersearchWith(ctx context.Context, cfg *config.UserConfig, rt *Runtime
 	for i, p := range sr.Papers {
 		fmt.Fprintf(&preview, "%d. %s\n", i+1, p.Title)
 	}
+	// A fallback means the strict query matched nothing; say so in the user's
+	// transcript rather than only inside the model's observation.
+	if sr.Fallback {
+		rt.Observer.Notice(fmt.Sprintf("papersearch %s: the strict query matched nothing; searched any-of keywords instead (%d candidates)", sr.Source, sr.Candidates))
+	}
+	message := fmt.Sprintf("%d papers from %s", len(sr.Papers), sr.Source)
+	if sr.Candidates > len(sr.Papers) {
+		message = fmt.Sprintf("%d of %d papers from %s", len(sr.Papers), sr.Candidates, sr.Source)
+	}
 	rt.Observer.ToolResult(core.ToolResult{
-		OK: true, Message: fmt.Sprintf("%d papers from %s", len(sr.Papers), sr.Source),
+		OK: true, Message: message,
 		Detail: strings.TrimSpace(preview.String()),
 	})
 	return "[papersearch result]\n" + sr.Format(cfg.Context.PaperLimit), nil
