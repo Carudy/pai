@@ -10,8 +10,10 @@ See the [module map](../organization.md) for dependency rules.
 - `CliFlags` / `GetFlags` describe and parse agent-run flags.
 - `command.go` owns subcommand dispatch; `config.go`, `role.go`, and
   `session.go` implement the corresponding command families.
-- `serve.go` composes the session backend, `runner.Manager`, and `web.New`,
-  validates bind/authentication settings, and owns shutdown.
+- The `serve*.go` files compose the session backend, `runner.Manager`, and
+  `web.New`: `serve.go` owns flags, the entry point, and shutdown; `servebackend.go`
+  implements the runner backend; `serveauth.go` handles origins and tokens;
+  `serveactivity.go` writes the activity log.
 - Served sessions use their persisted workspace; new sessions default to the
   starting cwd. Each runtime gets its own working directory, without `os.Chdir`.
 

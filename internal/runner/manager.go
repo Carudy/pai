@@ -1,0 +1,516 @@
+package runner
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"strings"
+	"sync"
+
+	"github.com/Carudy/pai/internal/core"
+)
+
+var (
+	ErrClosed    = errors.New("runner closed")
+	ErrCapacity  = errors.New("runner capacity reached")
+	ErrNotFound  = errors.New("runtime not found")
+	ErrQueueFull = errors.New("runner queue full")
+	ErrPrompt    = errors.New("prompt is no longer pending")
+)
+
+var ErrBusy = errors.New("session is busy; wait for pending prompts and queued instructions before changing model")
+
+const queueLimit = 32
+const subscriberLimit = 32
+const eventLimit = 64
+const reasoningLimit = 64 << 10
+const failureSnapshotLimit = 32
+
+type Manager struct {
+	mu         sync.Mutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+	backend    Backend
+	max        int
+	closed     bool
+	entries    map[string]*worker
+	changing   map[string]bool
+	wg         sync.WaitGroup
+	sequence   uint64
+	activities map[chan Activity]struct{}
+	// Failures survive worker removal without occupying runtime slots.
+	failures []Snapshot
+}
+
+func New(ctx context.Context, backend Backend, max int) *Manager {
+	if max < 1 {
+		max = 1
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	m := &Manager{ctx: ctx, cancel: cancel, backend: backend, max: max, entries: make(map[string]*worker)}
+	go func() { <-ctx.Done(); m.Close() }()
+	return m
+}
+func (m *Manager) List() ([]Meta, error) { return m.backend.List() }
+func (m *Manager) History(name string, offset, limit int) (History, error) {
+	return m.backend.History(name, offset, limit)
+}
+
+// Send queues an instruction, never an answer to a model question. At capacity
+// an idle worker is evicted and joined before its slot is reused.
+func (m *Manager) Send(name, text string) error {
+	return m.SendWithWorkspace(name, text, "")
+}
+
+func (m *Manager) Create(name, cwd string) (Meta, error) {
+	return m.CreateWithRole(name, cwd, "")
+}
+
+func (m *Manager) CreateWithRole(name, cwd, role string) (Meta, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.ctx.Err() != nil {
+		return Meta{}, ErrClosed
+	}
+	if strings.TrimSpace(name) == "" {
+		return Meta{}, errors.New("session name is empty")
+	}
+	if b, ok := m.backend.(RoleBackend); ok {
+		meta, err := b.CreateWithRole(name, cwd, role)
+		if err == nil {
+			m.clearFailureLocked(name)
+		}
+		return meta, err
+	}
+	if role != "" {
+		return Meta{}, errors.New("backend does not support roles")
+	}
+	b, ok := m.backend.(CreationBackend)
+	if !ok {
+		return Meta{}, errors.New("backend does not support session creation")
+	}
+	meta, err := b.Create(name, cwd)
+	if err == nil {
+		m.clearFailureLocked(name)
+	}
+	return meta, err
+}
+
+func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
+	if cwd != "" {
+		if _, ok := m.backend.(WorkspaceBackend); !ok {
+			return errors.New("backend does not support working directories")
+		}
+		var err error
+		cwd, err = ResolveWorkingDir(cwd)
+		if err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(name) == "" {
+		return errors.New("session name is empty")
+	}
+	if err := validate(text); err != nil {
+		return err
+	}
+	for {
+		m.mu.Lock()
+		if m.closed || m.ctx.Err() != nil {
+			m.mu.Unlock()
+			return ErrClosed
+		}
+		if m.changing[name] {
+			m.mu.Unlock()
+			return ErrBusy
+		}
+		if w := m.entries[name]; w != nil {
+			if w.state == "stopped" {
+				done := w.done
+				m.mu.Unlock()
+				<-done
+				continue
+			}
+			if cwd != "" && cwd != w.workingDir {
+				m.mu.Unlock()
+				return errors.New("requested working directory differs from session workspace")
+			}
+			select {
+			case w.tasks <- text:
+				m.clearFailureLocked(name)
+				// The worker may dequeue before reacquiring mu; reserve busy now.
+				if w.state == "awaiting" {
+					w.state = "busy"
+				}
+				w.emitLocked("queued", nil)
+				m.mu.Unlock()
+				return nil
+			default:
+				m.mu.Unlock()
+				return ErrQueueFull
+			}
+		}
+		if len(m.entries) >= m.max {
+			var idle *worker
+			for _, w := range m.entries {
+				if w.state == "awaiting" && len(w.tasks) == 0 && len(w.steering) == 0 {
+					idle = w
+					break
+				}
+			}
+			if idle == nil {
+				m.mu.Unlock()
+				return ErrCapacity
+			}
+			idle.state = "stopped"
+			idle.cancel()
+			done := idle.done
+			m.mu.Unlock()
+			<-done
+			continue
+		}
+		ctx, cancel := context.WithCancel(m.ctx)
+		w := &worker{m: m, name: name, workingDir: cwd, ctx: ctx, cancel: cancel, done: make(chan struct{}), tasks: make(chan string, queueLimit), steering: make(chan string, queueLimit), state: "starting", phase: "starting", subs: make(map[chan Event]struct{})}
+		w.tasks <- text
+		m.clearFailureLocked(name)
+		m.entries[name] = w
+		m.wg.Add(1)
+		m.mu.Unlock()
+		go w.run()
+		return nil
+	}
+}
+func (m *Manager) Steer(name, text string) error {
+	if err := validate(text); err != nil {
+		return err
+	}
+	// Slash commands have no command-dispatch semantics at steering safe points.
+	if strings.HasPrefix(strings.TrimSpace(text), "/") {
+		return errors.New("slash commands cannot steer")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	w := m.entries[name]
+	if w == nil {
+		return ErrNotFound
+	}
+	if w.state == "stopped" {
+		return ErrNotFound
+	}
+	ch := w.steering
+	if w.state == "awaiting" {
+		ch = w.tasks
+	}
+	select {
+	case ch <- text:
+		if w.state == "awaiting" {
+			w.state = "busy"
+		}
+		w.emitLocked("queued", nil)
+		return nil
+	default:
+		return ErrQueueFull
+	}
+}
+func (m *Manager) Cancel(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	w := m.entries[name]
+	if w == nil {
+		return ErrNotFound
+	}
+	w.latestTool = nil
+	if w.state != "awaiting" {
+		w.abortPrompts = true
+		if w.rt != nil {
+			w.rt.Interrupt()
+		} else {
+			w.cancel()
+		}
+	}
+	if w.pending != nil {
+		w.reply <- answer{aborted: true}
+		w.pending = nil
+		w.emitLocked("prompt_cancelled", nil)
+	}
+	return nil
+}
+func (m *Manager) Reply(name, id, text string, choice core.TrustChoice) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return ErrClosed
+	}
+	w := m.entries[name]
+	if w == nil {
+		return ErrNotFound
+	}
+	if w.pending == nil || w.pending.ID != id {
+		return ErrPrompt
+	}
+	w.reply <- answer{text: text, choice: choice}
+	if w.pending.Kind == "confirm" && w.activeTool != nil {
+		w.phase = "tool"
+	} else {
+		w.phase = "waiting_model"
+	}
+	w.pending = nil
+	w.emitLocked("prompt_replied", nil)
+	return nil
+}
+
+// SetModel retires the idle runtime before persisting settings, so the next
+// instruction uses the new model.
+func (m *Manager) SetModel(name, model string) error {
+	b, ok := m.backend.(ModelBackend)
+	if !ok {
+		return errors.New("backend does not support models")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.SetModel(name, model); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
+}
+
+// SetRole retires the idle runtime before persisting the new role, so the next
+// instruction rebuilds its prompt and tool set with the new role.
+func (m *Manager) SetRole(name, role string) error {
+	b, ok := m.backend.(RoleSetter)
+	if !ok {
+		return errors.New("backend does not support changing roles")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.SetRole(name, role); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
+}
+
+// SetWorkingDir retires the idle runtime before persisting its workspace, so the
+// next instruction rebuilds the runtime without changing process cwd.
+func (m *Manager) SetWorkingDir(name, cwd string) error {
+	if strings.TrimSpace(cwd) == "" {
+		return errors.New("working directory is required")
+	}
+	dir, err := ResolveWorkingDir(cwd)
+	if err != nil {
+		return err
+	}
+	b, ok := m.backend.(WorkingDirSetter)
+	if !ok {
+		return errors.New("backend does not support changing working directories")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.SetWorkingDir(name, dir); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
+}
+
+// Rename retires the idle runtime before renaming the session, so no live worker
+// keeps serving under the old name, and drops the now-orphaned entry.
+func (m *Manager) Rename(name, newName string) error {
+	b, ok := m.backend.(RenameBackend)
+	if !ok {
+		return errors.New("backend does not support renaming")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.Rename(name, newName); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	m.clearFailureLocked(newName)
+	delete(m.entries, name)
+	return nil
+}
+
+// Delete retires the idle runtime before removing the session from storage, so no
+// live worker keeps serving a deleted session, and drops the orphaned entry.
+func (m *Manager) Delete(name string) error {
+	b, ok := m.backend.(DeleteBackend)
+	if !ok {
+		return errors.New("backend does not support deleting")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.Delete(name); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	delete(m.entries, name)
+	return nil
+}
+
+// Rewind drops every persisted turn from index keep onward, retiring the idle
+// runtime so the next instruction re-prepares from the truncated history.
+func (m *Manager) Rewind(name string, keep int, backup *bool) error {
+	if keep < 0 {
+		return errors.New("keep must be non-negative")
+	}
+	b, ok := m.backend.(RewindBackend)
+	if !ok {
+		return errors.New("backend does not support rewinding")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.Rewind(name, keep, backup); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
+}
+
+func (m *Manager) Models() ([]string, string, error) {
+	if b, ok := m.backend.(ModelBackend); ok {
+		return b.Models()
+	}
+	return nil, "", errors.New("backend does not support models")
+}
+
+func (m *Manager) Roles() ([]string, string, error) {
+	if b, ok := m.backend.(RoleBackend); ok {
+		return b.Roles()
+	}
+	return nil, "", errors.New("backend does not support roles")
+}
+
+func (m *Manager) Snapshot(name string) (Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if w := m.entries[name]; w != nil {
+		return w.snapshotLocked(), nil
+	}
+	for _, s := range m.failures {
+		if s.Name == name {
+			return cloneSnapshot(s), nil
+		}
+	}
+	return Snapshot{}, ErrNotFound
+}
+
+func (m *Manager) Close() {
+	m.mu.Lock()
+	m.closed = true
+	m.cancel()
+	for _, w := range m.entries {
+		w.cancel()
+	}
+	m.mu.Unlock()
+	m.wg.Wait()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for ch := range m.activities {
+		delete(m.activities, ch)
+		close(ch)
+	}
+}
+
+// reserveIdle marks name as changing and retires its idle runtime, so the next
+// instruction re-prepares with fresh metadata. On success m.mu is held and the
+// caller must call the returned finish (typically deferred) after the backend
+// change. The reservation survives releasing mu for the join, so no send can
+// start a runtime that would load stale metadata (Send returns ErrBusy).
+func (m *Manager) reserveIdle(name string) (func(), error) {
+	m.mu.Lock()
+	if m.closed || m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return nil, ErrClosed
+	}
+	if m.changing[name] {
+		m.mu.Unlock()
+		return nil, ErrBusy
+	}
+	w := m.entries[name]
+	if w != nil && (w.state != "awaiting" || w.pending != nil || len(w.tasks) != 0 || len(w.steering) != 0) {
+		m.mu.Unlock()
+		return nil, ErrBusy
+	}
+	if m.changing == nil {
+		m.changing = make(map[string]bool)
+	}
+	m.changing[name] = true
+	if w != nil {
+		w.state = "stopped"
+		w.cancel()
+		m.mu.Unlock()
+		<-w.done
+		m.mu.Lock()
+	}
+	if m.closed || m.ctx.Err() != nil {
+		delete(m.changing, name)
+		m.mu.Unlock()
+		return nil, ErrClosed
+	}
+	return func() {
+		delete(m.changing, name)
+		m.mu.Unlock()
+	}, nil
+}
+
+func validate(text string) error {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return errors.New("instruction is empty")
+	}
+	line := strings.TrimSpace(text)
+	if strings.HasPrefix(line, "/") && !strings.HasPrefix(line, "//") {
+		command := strings.Fields(strings.TrimPrefix(line, "/"))
+		if len(command) > 0 {
+			switch strings.ToLower(command[0]) {
+			case "new", "rename":
+				return errors.New("session binding commands are unavailable in runner")
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Manager) clearFailureLocked(name string) {
+	for i, s := range m.failures {
+		if s.Name == name {
+			m.failures = slices.Delete(m.failures, i, i+1)
+			return
+		}
+	}
+}
+
+func (m *Manager) rememberFailureLocked(s Snapshot) {
+	m.clearFailureLocked(s.Name)
+	if len(m.failures) == failureSnapshotLimit {
+		m.failures = slices.Delete(m.failures, 0, 1)
+	}
+	// The queued instructions died with the worker and cannot be delivered.
+	s.Queued = 0
+	m.failures = append(m.failures, cloneSnapshot(s))
+}
