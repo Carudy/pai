@@ -36,8 +36,15 @@
                     <input id="session-name" maxlength="256" placeholder="Session name" required />
                     <label for="session-cwd">Working DIR</label>
                     <input id="session-cwd" placeholder="PAI serving DIR" aria-describedby="cwd-hint" />
-                    <label for="session-role">Role</label>
-                    <select id="session-role"><option value="">Configured default</option></select>
+                    <fieldset id="role-fieldset" class="role-fieldset">
+                        <legend>Role</legend>
+                        <div
+                            id="session-role"
+                            class="role-options"
+                            role="radiogroup"
+                            aria-label="Role"
+                        ></div>
+                    </fieldset>
                     <button id="create-session" class="primary" type="submit">Create</button>
                 </form>
                 <hr class="response-divider">
@@ -128,6 +135,7 @@
                         </section>
                     </div>
                     <button id="prev-input" type="button" title="Jump to the previous instruction" aria-label="Jump to the previous instruction" hidden>↑</button>
+                    <button id="to-bottom" type="button" title="Jump to the latest message" aria-label="Jump to the latest message" hidden>↓</button>
                     <section
                         id="pending"
                         aria-labelledby="pending-title"
@@ -136,6 +144,22 @@
                 <div class="composer-dock">
                     <form id="composer">
                         <div class="composer-row">
+                            <div class="composer-trust">
+                                <label class="switch" for="trust-all">
+                                    <input
+                                        id="trust-all"
+                                        type="checkbox"
+                                        role="switch"
+                                        aria-describedby="trust-all-hint"
+                                        disabled
+                                    />
+                                    <span class="switch-track" aria-hidden="true"></span>
+                                    <span class="switch-text">Trust all</span>
+                                </label>
+                                <span id="trust-all-hint" class="trust-hint">
+                                    ⚠︎ approves every command and file change for this session
+                                </span>
+                            </div>
                             <div class="composer-input">
                                 <label for="message">Instruction</label
                                 ><textarea
@@ -152,6 +176,8 @@
                             <div class="actions">
                                 <button id="send" class="primary" type="submit" title="Send an instruction; queued while PAI is busy" disabled>
                                     Send</button
+                                ><button id="apply-plan" type="button" title="Auto-reply: send &quot;Apply your plan.&quot; without touching your draft" disabled>
+                                    Apply plan</button
                                 ><button id="steer" type="button" title="Redirect the running task at its next step" disabled>
                                     Steer</button
                                 ><button id="cancel" type="button" title="Stop the current step" disabled>

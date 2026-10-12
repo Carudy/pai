@@ -510,6 +510,12 @@ A step only has a name when running the plain command is the whole story. A loop
 option, since there is nothing to scope the grant to). Add `ls` and `ls -la` runs;
 `ls > f` and `for …; do ls; done` still ask.
 
+To silence every prompt for a run of work, the browser workspace has a **Trust
+all** switch in the composer: while it is on, no confirmation card appears — every
+command and file change just runs. It applies to that session only, lasts as long
+as the `pai serve` process (it is never written to config), and turning it off
+brings the prompts straight back.
+
 ### Trusted paths (file tools)
 By default every `edit` and `write` asks for approval. List the directories you
 work in and changes under them apply straight away — the diff is still shown, so

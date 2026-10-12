@@ -142,6 +142,10 @@ type Snapshot struct {
 	Pending       *Prompt        `json:"pending,omitempty"`
 	Error         string         `json:"error,omitempty"`
 	Reasoning     string         `json:"reasoning,omitempty"`
+	// TrustAll reports that every confirmation for this session is auto-approved
+	// without a prompt. It is a per-session, in-memory toggle the user sets
+	// explicitly; it is never persisted to config.
+	TrustAll bool `json:"trust_all,omitempty"`
 }
 
 func cloneSnapshot(s Snapshot) Snapshot {

@@ -40,6 +40,10 @@ type Manager struct {
 	activities map[chan Activity]struct{}
 	// Failures survive worker removal without occupying runtime slots.
 	failures []Snapshot
+	// trustAll is a per-session auto-approval toggle. It lives here, not on the
+	// worker, because the worker is recreated for each instruction while the
+	// setting must last for the session.
+	trustAll map[string]bool
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {
@@ -94,6 +98,82 @@ func (m *Manager) CreateWithRole(name, cwd, role string) (Meta, error) {
 		m.clearFailureLocked(name)
 	}
 	return meta, err
+}
+
+// SetTrustAll turns a session's trust-all mode on or off. While it is on, every
+// command and file-change confirmation is approved without a prompt. The flag is
+// in-memory only and never persisted, so a restart re-asks. Turning it on also
+// answers a confirmation that is already waiting, so the switch takes effect at
+// once rather than after the user also clicks the pending card.
+func (m *Manager) SetTrustAll(name string, on bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.ctx.Err() != nil {
+		return ErrClosed
+	}
+	if strings.TrimSpace(name) == "" {
+		return errors.New("session name is empty")
+	}
+	if !m.knownSessionLocked(name) {
+		return ErrNotFound
+	}
+	if m.trustAll == nil {
+		m.trustAll = make(map[string]bool)
+	}
+	if on {
+		m.trustAll[name] = true
+	} else {
+		delete(m.trustAll, name)
+	}
+	w := m.entries[name]
+	if w == nil {
+		return nil
+	}
+	if on && w.pending != nil && w.pending.Kind == "confirm" && w.reply != nil {
+		w.reply <- answer{choice: core.TrustOnce}
+		if w.activeTool != nil {
+			w.phase = "tool"
+		} else {
+			w.phase = "waiting_model"
+		}
+		w.pending = nil
+		w.emitLocked("prompt_replied", nil)
+	}
+	return nil
+}
+
+// TrustAll reports whether a session is in trust-all mode. An unknown session is
+// simply off.
+func (m *Manager) TrustAll(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.trustAll[name]
+}
+
+// knownSessionLocked reports whether name is a live worker, a retained failure,
+// or a stored session, so a mutation never targets a name that cannot exist.
+func (m *Manager) knownSessionLocked(name string) bool {
+	if m.entries[name] != nil {
+		return true
+	}
+	for _, s := range m.failures {
+		if s.Name == name {
+			return true
+		}
+	}
+	if m.backend == nil {
+		return false
+	}
+	list, err := m.backend.List()
+	if err != nil {
+		return false
+	}
+	for _, meta := range list {
+		if meta.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
@@ -346,6 +426,7 @@ func (m *Manager) Rename(name, newName string) error {
 	m.clearFailureLocked(name)
 	m.clearFailureLocked(newName)
 	delete(m.entries, name)
+	delete(m.trustAll, name)
 	return nil
 }
 
@@ -366,6 +447,7 @@ func (m *Manager) Delete(name string) error {
 	}
 	m.clearFailureLocked(name)
 	delete(m.entries, name)
+	delete(m.trustAll, name)
 	return nil
 }
 

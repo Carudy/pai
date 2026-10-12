@@ -14,6 +14,10 @@ let modelList = [];
 // only needed after the page loads, so it need not travel on every request, and
 // it needs no server state. A cleared store just leaves the workspace empty.
 const SESSION_KEY = 'pai.session';
+// The one-click instruction the Apply plan button sends. It is deliberately a
+// plain sentence: the model reads it like any other user turn.
+const AUTO_REPLY = 'Apply your plan.';
+let trustAllApplying = false;
 let toastHost = null;
 let savedRole = '', roleDirty = false;
 let savedCwd = '', cwdDirty = false, cwdApplying = false;
@@ -158,18 +162,35 @@ function runSnapshot(s) {
   runState = s.state;
 }
 function activityScroll() { $('events').scrollTop = $('events').scrollHeight; }
-function scrollBottom() { $('conversation').scrollTop = $('conversation').scrollHeight; }
-// Jump-to-previous-instruction: a floating up-arrow scrolls to the user turn just
-// above the current position, then the one before it, and so on.
+function scrollBottom() {
+  const scroller = $('conversation');
+  scroller.scrollTop = scroller.scrollHeight;
+  updateJumpButtons();
+}
+// Two floating jump buttons ride over the timeline: ↑ to the user turn just above
+// the current position (then the one before it, and so on), ↓ to the newest
+// message. Each is shown only when it would do something.
 function userCards() { return [...$('history').children].filter(node => typeof node.className === 'string' && node.className.includes('turn user')); }
-function updatePrevInput() { $('prev-input').hidden = userCards().length === 0; }
+function atConversationBottom() {
+  const scroller = $('conversation');
+  return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop <= 80;
+}
+function updateJumpButtons() {
+  $('prev-input').hidden = userCards().length === 0;
+  $('to-bottom').hidden = atConversationBottom();
+}
 function jumpToPrevInput() {
   const scroller = $('conversation');
   const cards = userCards();
   const above = cards.filter(card => (card.offsetTop || 0) < scroller.scrollTop - 4);
   const target = above.length ? above[above.length - 1] : cards[0];
   if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({block: 'start'});
-  updatePrevInput();
+  updateJumpButtons();
+}
+function jumpToBottom() {
+  const scroller = $('conversation');
+  scroller.scrollTop = scroller.scrollHeight;
+  updateJumpButtons();
 }
 function logDetails(node, title, value, open = false) {
   if (!value) return;
@@ -334,6 +355,9 @@ function controls() {
   // Steer only redirects a running task; while idle it would just be a Send.
   $('steer').disabled = !ready || !filled || !sessionBusy;
   $('cancel').disabled = !ready;
+  // Auto-reply needs only a session: it sends a canned instruction, not the draft.
+  $('apply-plan').disabled = !ready;
+  trustAllControls();
   $('rename-session').hidden = !ready;
   $('rename-session').disabled = !ready || sessionBusy;
   $('session-label').hidden = !ready;
@@ -348,6 +372,33 @@ function controls() {
     : sessionBusy
       ? 'Enter to send · Shift+Enter for newline · While busy: Sends queue, Steer redirects, Cancel stops'
       : 'Enter to send · Shift+Enter for newline';
+}
+// ── Trust-all switch ────────────────────────────────────────
+// A per-session auto-approval toggle. The server is the authority (it keeps the
+// flag across worker restarts between instructions); the switch mirrors it. While
+// on, no confirmation card appears — every command and file change just runs.
+function trustAllControls() {
+  $('trust-all').disabled = !selected || trustAllApplying;
+}
+async function loadTrustAll() {
+  const version = generation, name = selected;
+  if (!name) { $('trust-all').checked = false; return; }
+  try {
+    const data = await api('trust-all?name=' + encodeURIComponent(name));
+    if (version !== generation || selected !== name) return;
+    $('trust-all').checked = !!data.trust_all;
+  } catch (e) { if (version === generation && selected === name) $('trust-all').checked = false; }
+}
+async function setTrustAll(on) {
+  if (!selected) { $('trust-all').checked = false; return; }
+  const name = selected;
+  trustAllApplying = true; trustAllControls();
+  try {
+    await api('trust-all', {name, trust_all: on});
+    if (selected === name) { $('trust-all').checked = on; if (on) await loadSnapshot(); }
+    if (on) toast('Trusting every command and file change for this session');
+  } catch (e) { error(e); $('trust-all').checked = !on; }
+  finally { trustAllApplying = false; trustAllControls(); }
 }
 // ── Rendering ───────────────────────────────────────────────
 function diff(value) {
@@ -481,7 +532,7 @@ function paintConversation() {
       else if (!represented) card.append(text('div', step.result ? 'Finished' : 'Executing…', 'progress-status'));
     }
   }
-  updatePrevInput();
+  updateJumpButtons();
 }
 // ── History and session metadata ────────────────────────────
 function sessionMetadata(meta = {}) {
@@ -558,6 +609,7 @@ function snapshot(s) {
   usageSnapshot(s);
   modelBlocked = ['busy','starting'].includes(s.state) || s.phase === 'starting' || s.queued > 0 || !!s.pending;
   sessionBusy = ['busy','starting'].includes(s.state);
+  if (!trustAllApplying) $('trust-all').checked = !!s.trust_all;
   liveModel = typeof s.model === 'string' ? s.model.trim() : '';
   if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
   modelControls();
@@ -672,8 +724,9 @@ async function select(name, cwd) {
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
     $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
-  updatePrevInput();
+  updateJumpButtons();
   $('conversation').scrollTop = 0; controls();
+  loadTrustAll();
   for (const row of $('sessions').children) { const active = row.dataset?.name === name; row.classList.toggle('selected', active); const open = row.firstElementChild; if (open) open.setAttribute('aria-current', active ? 'page' : 'false'); }
   $('app').classList.remove('sessions-open'); $('toggle-sessions').setAttribute('aria-expanded', 'false');
   try { await history(true, true); } catch (e) { if (e.status !== 404) error(e); }
@@ -725,14 +778,15 @@ async function rewind(index, content) {
     sessions(true).catch(error);
   } catch (e) { error(e); }
 }
-async function action(kind) {
+async function action(kind, override) {
   if (!selected) { error(new Error('Open a named session first')); return; }
-  const name = selected, message = $('message').value;
+  const name = selected, message = override === undefined ? $('message').value : override;
   if (kind !== 'cancel' && !message.trim()) return;
   try {
     await api(kind, {name, text:kind === 'cancel' ? '' : message});
     if (selected === name && kind !== 'cancel') scrollBottom();
-    if (kind !== 'cancel' && selected === name && $('message').value === message) $('message').value = '';
+    // A canned override (the auto-reply button) leaves the draft alone.
+    if (override === undefined && kind !== 'cancel' && selected === name && $('message').value === message) $('message').value = '';
     controls();
     if (selected === name) { await loadSnapshot(); if (!stream) connect(); scheduleHistory(); }
     await sessions(true);
@@ -756,6 +810,7 @@ function clearWorkspace() {
   durable = []; liveSteps = []; currentStep = null; thinking = '';
   liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0;
   sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; modelBlocked = false;
+  $('trust-all').checked = false;
   $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   clearReasoning(); usageSnapshot({});
   $('title').textContent = 'Select or create a session';
@@ -764,7 +819,7 @@ function clearWorkspace() {
   const empty = text('div', '', 'empty');
   empty.append(text('h3', 'Best partner, PAI!'), text('p', 'Open a named session to start working with PAI.'));
   $('history').append(empty);
-  updatePrevInput();
+  updateJumpButtons();
   controls();
 }
 // ── Activity feed ───────────────────────────────────────────
@@ -848,12 +903,28 @@ function flushReasoning() {
 function clearReasoning() {
   thinking = ''; $('reasoning-text').textContent = ''; $('reasoning-preview').hidden = true;
 }
+// The new-session role is a radio grid, so every choice is visible at once
+// instead of hidden behind a dropdown.
+function roleChoice(role) {
+  const option = text('label', '', 'role-option');
+  const input = document.createElement('input');
+  input.type = 'radio'; input.name = 'new-session-role'; input.value = role;
+  option.append(input, text('span', role));
+  return option;
+}
+function selectedRole() {
+  const chosen = [...$('session-role').children].map(option => option.children[0]).find(input => input && input.checked);
+  return chosen ? chosen.value : '';
+}
+function setSelectedRole(role) {
+  for (const option of $('session-role').children) if (option.children[0]) option.children[0].checked = option.children[0].value === role;
+}
 async function roles() {
   const data = await api('roles');
   const option = role => { const node = text('option', role); node.value = role; return node; };
-  const dropdown = $('session-role'), previous = dropdown.value;
-  dropdown.replaceChildren(...data.roles.map(option));
-  dropdown.value = data.roles.includes(previous) ? previous : data.default_role;
+  const group = $('session-role'), previous = selectedRole();
+  group.replaceChildren(...data.roles.map(roleChoice));
+  setSelectedRole(data.roles.includes(previous) ? previous : data.default_role);
   // The header role control switches an existing session's role.
   const header = $('session-role-select');
   const draft = roleDirty ? header.value : '';
@@ -894,7 +965,7 @@ async function createSession(e) {
   const version = generation;
   creating = true; $('create-session').disabled = true; $('error').textContent = '';
   try {
-    const meta = await api('create', {name, working_dir:cwd, role:$('session-role').value});
+    const meta = await api('create', {name, working_dir:cwd, role:selectedRole()});
     if (version === generation) await select(meta.name, meta.cwd);
     await sessions(true);
   } catch (err) { error(err); }
@@ -918,11 +989,14 @@ $('session-role-select').onchange = () => { roleDirty = true; controls(); };
 $('new-session').onsubmit = createSession;
 $('composer').onsubmit = e => { e.preventDefault(); action('send'); };
 $('steer').onclick = () => action('steer'); $('cancel').onclick = () => action('cancel');
+$('apply-plan').onclick = () => action('send', AUTO_REPLY);
+$('trust-all').onchange = () => setTrustAll($('trust-all').checked);
 $('more-sessions').onclick = () => sessions().catch(error);
 $('theme-toggle').onclick = toggleTheme;
 $('prev-input').onclick = jumpToPrevInput;
+$('to-bottom').onclick = jumpToBottom;
 $('conversation').onscroll = () => {
-  updatePrevInput();
+  updateJumpButtons();
   // Reach the top and load a few more older turns (the initial window is small).
   const scroller = $('conversation');
   if (scroller.scrollTop <= 8 && historyOffset > 0 && !refreshing) history().catch(error);
@@ -945,7 +1019,7 @@ controls();
 applyTheme(initialTheme());
 initPendingDrag();
 initReasoningDrag();
-updatePrevInput();
+updateJumpButtons();
 sessions(true).then(restoreSession).catch(error);
 roles().catch(error);
 models().catch(error);

@@ -451,6 +451,80 @@ func TestModelsAPI(t *testing.T) {
 	}
 }
 
+func TestTrustAllAPI(t *testing.T) {
+	h, m := setup(t, "")
+	if w := request(h, "GET", "/api/trust-all?name=one", "", nil, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"trust_all":false`) {
+		t.Fatalf("initial read: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(h, "POST", "/api/trust-all", `{"name":"one","trust_all":true}`, nil, "http://pai.test"); w.Code != 200 {
+		t.Fatalf("enable: %d %s", w.Code, w.Body.String())
+	}
+	if !m.TrustAll("one") {
+		t.Fatal("manager did not record trust-all")
+	}
+	if w := request(h, "GET", "/api/trust-all?name=one", "", nil, ""); !strings.Contains(w.Body.String(), `"trust_all":true`) {
+		t.Fatalf("read back: %s", w.Body.String())
+	}
+	if w := request(h, "POST", "/api/trust-all", `{"name":"one","trust_all":false}`, nil, "http://pai.test"); w.Code != 200 {
+		t.Fatalf("disable: %d %s", w.Code, w.Body.String())
+	}
+	if m.TrustAll("one") {
+		t.Fatal("disable ignored")
+	}
+
+	for _, tc := range []struct {
+		name, method, body, origin string
+		status                     int
+	}{
+		{"method", "PUT", "", "http://pai.test", 405},
+		{"missing origin", "POST", `{"name":"one","trust_all":true}`, "", 403},
+		{"foreign origin", "POST", `{"name":"one","trust_all":true}`, "http://evil.test", 403},
+		{"blank name", "POST", `{"name":"  ","trust_all":true}`, "http://pai.test", 400},
+		{"long name", "POST", `{"name":"` + strings.Repeat("x", 257) + `","trust_all":true}`, "http://pai.test", 400},
+		{"missing session", "POST", `{"name":"ghost","trust_all":true}`, "http://pai.test", 404},
+		{"unknown field", "POST", `{"name":"one","trust_all":true,"extra":1}`, "http://pai.test", 400},
+		{"wrong type", "POST", `{"name":"one","trust_all":"yes"}`, "http://pai.test", 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if w := request(h, tc.method, "/api/trust-all", tc.body, nil, tc.origin); w.Code != tc.status {
+				t.Fatalf("status %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+// The composer's trust switch and auto-reply button are load-bearing, so guard
+// them in the shipped markup where a Go test can see them (app_test.js only runs
+// when Node is present).
+func TestComposerControlsPresent(t *testing.T) {
+	data, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(data)
+	for _, want := range []string{`id="trust-all"`, `id="trust-all-hint"`, `id="apply-plan"`, `class="switch"`, `class="composer-trust"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("composer markup missing %s", want)
+		}
+	}
+}
+
+// The new-session role control is a radio grid and the timeline carries both jump
+// buttons; guard the load-bearing markup where a Go test can see it (app_test.js
+// only runs when Node is present).
+func TestSessionControlsPresent(t *testing.T) {
+	data, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(data)
+	for _, want := range []string{`id="to-bottom"`, `id="role-fieldset"`, `class="role-options"`, `role="radiogroup"`, `<legend>Role</legend>`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("session markup missing %s", want)
+		}
+	}
+}
+
 func TestDeleteAPI(t *testing.T) {
 	b := &modelBackend{}
 	m := runner.New(context.Background(), b, 1)
@@ -806,6 +880,7 @@ func TestPageLayoutNesting(t *testing.T) {
 		"composer-dock": "main", "composer": "composer-dock", "activity": "app",
 		"session-config": "header", "model-form": "session-config", "role-form": "session-config",
 		"apply-model": "model-form", "reasoning-preview": "conversation-wrapper", "prev-input": "conversation-wrapper",
+		"to-bottom": "conversation-wrapper", "session-role": "role-fieldset",
 		"session-title-row": "header", "workspace": "session-title-row", "token-usage": "session-title-row", "state": "status-row",
 	} {
 		if parents[child] != parent {

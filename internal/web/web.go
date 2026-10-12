@@ -439,6 +439,31 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, http.StatusAccepted, map[string]bool{"ok": true})
+	case "/api/trust-all":
+		switch r.Method {
+		case http.MethodGet:
+			respond(w, 200, map[string]bool{"trust_all": h.manager.TrustAll(r.URL.Query().Get("name"))})
+		case http.MethodPost:
+			var body struct {
+				Name     string `json:"name"`
+				TrustAll bool   `json:"trust_all"`
+			}
+			if !decode(w, r, &body) {
+				return
+			}
+			if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+				fail(w, 400, "session name must contain 1–256 bytes")
+				return
+			}
+			if err := h.manager.SetTrustAll(body.Name, body.TrustAll); err != nil {
+				managerError(w, err)
+				return
+			}
+			respond(w, 200, map[string]bool{"ok": true})
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			fail(w, 405, "method not allowed")
+		}
 	case "/api/send", "/api/steer", "/api/cancel", "/api/reply":
 		if !method(w, r, http.MethodPost) {
 			return

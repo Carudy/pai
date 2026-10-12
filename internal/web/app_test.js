@@ -393,11 +393,12 @@ async function verifyCreate() {
   const p = browser();
   p.run("api=async()=>({roles:['custom','configured'],default_role:'configured'})");
   await p.run('roles()');
-  assert.equal(p.get('session-role').value, 'configured');
-  assert.deepEqual(p.get('session-role').children.map(option => option.value), ['custom','configured']);
-  p.get('session-role').value = 'custom';
+  assert.equal(p.run('selectedRole()'), 'configured', 'the default role is preselected');
+  assert.equal(p.run('JSON.stringify([...$("session-role").children].map(label => label.children[0].value))'), '["custom","configured"]');
+  assert.equal(p.run('$("session-role").children.every(label => label.children[0].type === "radio")'), true, 'choices are radios');
+  p.run('setSelectedRole("custom")');
   await p.run('roles()');
-  assert.equal(p.get('session-role').value, 'custom');
+  assert.equal(p.run('selectedRole()'), 'custom', 'a rerender keeps the unsent pick');
   p.get('session-name').value = ' new '; p.get('session-cwd').value = ' /workspace ';
   p.run("globalThis.calls=[]; api=async (path,body)=>{calls.push([path,body]);return {name:'new',cwd:'/resolved'};}; select=async(name,cwd)=>calls.push(['select',name,cwd]); sessions=async reset=>calls.push(['sessions',reset]);");
   await p.run('createSession({preventDefault(){}})');
@@ -406,7 +407,7 @@ async function verifyCreate() {
   p.run("api=async()=>{throw new Error('not a directory')}");
   await p.run('createSession({preventDefault(){}})');
   assert.match(p.get('error').textContent, /not a directory/);
-  assert.equal(p.get('session-role').value, 'custom');
+  assert.equal(p.run('selectedRole()'), 'custom');
   assert.equal(p.get('session-name').value, ' new '); assert.equal(p.get('session-cwd').value, ' /workspace ');
   p.get('session-cwd').value = 'bad\npath'; p.run('calls=[]');
   await p.run('createSession({preventDefault(){}})');
@@ -638,4 +639,56 @@ async function verifySendFailure() {
   assert.match(p.get('state').textContent, /directory does not exist/, 'SSE reconnect retains the stopped failure snapshot');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+async function verifyComposer() {
+  const p = browser();
+  p.run("selected=''; controls()");
+  assert.equal(p.get('trust-all').disabled, true, 'trust switch needs a session');
+  assert.equal(p.get('apply-plan').disabled, true, 'auto-reply needs a session');
+  p.run("selected='one'; controls()");
+  assert.equal(p.get('trust-all').disabled, false);
+  assert.equal(p.get('apply-plan').disabled, false, 'auto-reply needs no draft');
+  assert.equal(p.get('send').disabled, true, 'send still needs a draft');
+
+  // The server's snapshot is the source of truth for the switch.
+  p.run("snapshot({state:'awaiting',queued:0,trust_all:true})");
+  assert.equal(p.get('trust-all').checked, true, 'snapshot mirrors trust_all');
+  p.run("snapshot({state:'awaiting',queued:0,trust_all:false})");
+  assert.equal(p.get('trust-all').checked, false, 'snapshot clears trust_all');
+
+  // Apply plan sends a canned instruction and leaves the draft alone.
+  const auto = browser();
+  auto.run(`selected='one'; $('message').value='keep me'; globalThis.calls=[];
+    api=async(path,body)=>{calls.push([path,body]); return {};};
+    sessions=async()=>{}; loadSnapshot=async()=>{}; connect=()=>{};`);
+  await auto.run('action("send", AUTO_REPLY)');
+  assert.equal(auto.run('calls.length'), 1, 'one request');
+  assert.equal(auto.run('JSON.stringify(calls[0])'), '[\"send\",{\"name\":\"one\",\"text\":\"Apply your plan.\"}]');
+  assert.equal(auto.get('message').value, 'keep me', 'canned reply preserves the draft');
+
+  // Toggling the switch posts the new state.
+  const toggle = browser();
+  toggle.run(`selected='one'; globalThis.calls=[];
+    api=async(path,body)=>{calls.push([path,body]); return {};};
+    loadSnapshot=async()=>{};`);
+  await toggle.run('setTrustAll(true)');
+  assert.equal(toggle.run('JSON.stringify(calls[0])'), '[\"trust-all\",{\"name\":\"one\",\"trust_all\":true}]');
+  assert.equal(toggle.get('trust-all').checked, true, 'switch reflects the accepted state');
+}
+
+async function verifyJumpButtons() {
+  const p = browser();
+  p.run(`$('conversation').scrollHeight=1000; $('conversation').clientHeight=400; $('conversation').scrollTop=600;
+    $('history').replaceChildren(...[1,2].map(()=>{const d=document.createElement('div');d.className='turn user';return d;}));
+    updateJumpButtons();`);
+  assert.equal(p.get('prev-input').hidden, false, 'Up appears with instructions');
+  assert.equal(p.get('to-bottom').hidden, true, 'Down hides at the newest message');
+  p.run("$('conversation').scrollTop=0; updateJumpButtons()");
+  assert.equal(p.get('to-bottom').hidden, false, 'Down appears when scrolled up');
+  p.run('jumpToBottom()');
+  assert.equal(p.get('to-bottom').hidden, true, 'Down hides after jumping to the end');
+  assert.equal(p.get('conversation').scrollTop, 1000, 'Down scrolls to the end');
+  p.run("$('history').replaceChildren(); updateJumpButtons()");
+  assert.equal(p.get('prev-input').hidden, true, 'Up hides without instructions');
+}
+
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

@@ -116,6 +116,7 @@ func (w *worker) snapshotLocked() Snapshot {
 	s := Snapshot{Name: w.name, Model: w.model, State: w.state, Queued: len(w.tasks) + len(w.steering), Error: w.failure}
 	s.Phase = w.phase
 	s.Reasoning = w.reasoning
+	s.TrustAll = w.m.trustAll[w.name]
 	s.Usage, s.TotalUsage, s.UsageCalls = w.usage, w.totalUsage, w.usageCalls
 	s.ContextTokens = w.contextTokens
 	if w.activeTool != nil {
@@ -214,13 +215,28 @@ func (w *worker) prompt(kind, title string, untrusted []string, target string) (
 	return a, nil
 }
 func (w *worker) Confirm(title string) (bool, error) {
+	if w.approved() {
+		return true, nil
+	}
 	a, err := w.prompt("confirm", title, nil, "")
 	return a.choice != core.TrustDeny, err
+}
+
+// approved reports whether the session is in trust-all mode, in which every
+// confirmation is granted without asking. The flag lives on the manager keyed by
+// session name, so it outlives the worker that is recreated between instructions.
+func (w *worker) approved() bool {
+	w.m.mu.Lock()
+	defer w.m.mu.Unlock()
+	return w.m.trustAll[w.name]
 }
 
 // ConfirmCommand implements core.CommandConfirmer: a command confirmation that
 // also offers to trust the flagged command names for this run or future runs.
 func (w *worker) ConfirmCommand(title string, untrusted []string) (core.TrustChoice, error) {
+	if w.approved() {
+		return core.TrustOnce, nil
+	}
 	a, err := w.prompt("confirm", title, untrusted, "command")
 	if err != nil {
 		return core.TrustDeny, err
@@ -231,6 +247,9 @@ func (w *worker) ConfirmCommand(title string, untrusted []string) (core.TrustCho
 // ConfirmPath implements core.PathConfirmer: a file confirmation that also offers
 // to trust the containing directory.
 func (w *worker) ConfirmPath(title, dir string) (core.TrustChoice, error) {
+	if w.approved() {
+		return core.TrustOnce, nil
+	}
 	a, err := w.prompt("confirm", title, []string{dir}, "path")
 	if err != nil {
 		return core.TrustDeny, err

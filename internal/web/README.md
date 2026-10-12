@@ -87,12 +87,14 @@ Apply; wrapping on narrow screens), a Rename button, and a light/dark theme swit
 first visit). The status bar is a fixed height and truncates, so the header does
 not reflow as the state text changes; the workspace and token usage share one
 line. The conversation loads only the most recent turns and appends older ones as
-the reader scrolls to the top (there is no "More history" button); a floating
-up-arrow jumps to the previous user instruction. Both panels are bounded: the
+the reader scrolls to the top (there is no "More history" button); two floating
+buttons ride over the timeline — ↑ jumps to the previous user instruction and ↓
+to the newest message, each shown only when it would do something. Both panels are bounded: the
 activity log keeps the last 60 cards and the in-memory conversation window is
 capped (older turns reload from the store) so a long session does not grow
 without limit. Confirmation choices render as one aligned row of equal-width
-buttons.
+buttons. The new-session form picks the role from a two-column radio grid, so
+every role is visible at once instead of hidden behind a dropdown.
 
 Snapshots also recover the current reasoning tail (at most 64 KiB); ordinary
 reasoning events carry deltas, not repeated full text. Reasoning is transient
@@ -195,6 +197,13 @@ rejected; there is no URL authentication.
   whose `pending.untrusted` is non-empty additionally offers trusting those
   command names — or the containing directory when `pending.trust_target` is
   `path` — for the run (`session`) or for good (`always`).
+- `GET /api/trust-all?name=...`: `{ "trust_all": bool }`. `POST /api/trust-all`:
+  `{ "name": "...", "trust_all": bool }`; 200 `{ "ok": true }`. Trust-all is a
+  per-session auto-approval toggle that skips every command and file-change
+  confirmation until turned off. It is held in the manager (surviving the worker
+  recreated for each instruction), never persisted to config, and reported as
+  `trust_all` in the snapshot. A blank/over-length name is 400 and a missing
+  session 404. Enabling it also resolves a confirmation already pending.
 
 Send/steer/cancel/reply success is 202 (login/model/working-dir/rename/delete 200, create 201), not a promise that the task completed. Stale
 prompt IDs are 409, missing live workers 404, full capacity/queues 429, closed
@@ -235,6 +244,14 @@ loads, so it need not travel on every request and needs no server state) and
 reopens it on reload if it still exists. Transient `notice` events (a trust
 downgrade, a newly trusted directory) surface as short-lived toasts above the
 composer in addition to the activity log.
+
+The composer is three columns: a per-session **Trust all** switch on the left
+(with a danger hint; while on, no confirmation card appears at all), the
+instruction box in the middle, and a 2×2 action pad on the right — Send and
+**Apply plan** (which sends the canned instruction `Apply your plan.` without
+touching the draft), then Steer and Cancel. The switch mirrors the server's
+`trust_all`, which is the authority; it is disabled until a session is selected.
+Narrow screens stack the columns and keep the button grid.
 
 ## Scripts and validation
 

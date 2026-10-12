@@ -609,6 +609,88 @@ func TestConfirmCommandResolvesTrustChoice(t *testing.T) {
 	}
 }
 
+// Trust-all approves every confirmation without a prompt, and the same live worker
+// stops auto-approving the moment the flag is turned off.
+func TestConfirmHonorsTrustAll(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{}, 1)
+	defer m.Close()
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatal(err)
+	}
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" })
+	m.mu.Lock()
+	w := m.entries["one"]
+	m.mu.Unlock()
+
+	if err := m.SetTrustAll("one", true); err != nil {
+		t.Fatal(err)
+	}
+	if !m.TrustAll("one") {
+		t.Fatal("trust-all not recorded")
+	}
+	if choice, err := w.ConfirmCommand("Execute this command?", []string{"sudo"}); err != nil || choice != core.TrustOnce {
+		t.Fatalf("ConfirmCommand = (%v, %v), want (TrustOnce, nil)", choice, err)
+	}
+	if choice, err := w.ConfirmPath("Write file?", "/tmp"); err != nil || choice != core.TrustOnce {
+		t.Fatalf("ConfirmPath = (%v, %v), want (TrustOnce, nil)", choice, err)
+	}
+	if ok, err := w.Confirm("approve?"); err != nil || !ok {
+		t.Fatalf("Confirm = (%v, %v), want (true, nil)", ok, err)
+	}
+	if s, _ := m.Snapshot("one"); s.Pending != nil || !s.TrustAll {
+		t.Fatalf("trust-all did not skip the prompt: %+v", s)
+	}
+
+	// Off again: the next confirmation blocks on a prompt as before.
+	if err := m.SetTrustAll("one", false); err != nil {
+		t.Fatal(err)
+	}
+	if m.TrustAll("one") {
+		t.Fatal("trust-all not cleared")
+	}
+	done := make(chan core.TrustChoice, 1)
+	go func() { choice, _ := w.ConfirmCommand("Execute this command?", []string{"sudo"}); done <- choice }()
+	s := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
+	if err := m.Reply("one", s.Pending.ID, "", core.TrustDeny); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-done; got != core.TrustDeny {
+		t.Fatalf("choice = %v, want TrustDeny", got)
+	}
+}
+
+// Turning trust-all on answers an approval that is already waiting, so the switch
+// takes effect at once instead of leaving a stale card up.
+func TestTrustAllResolvesPendingApproval(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{question: true}, 1)
+	defer m.Close()
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatal(err)
+	}
+	s := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
+	if s.Pending.Kind != "confirm" {
+		t.Fatal(s)
+	}
+	if err := m.SetTrustAll("one", true); err != nil {
+		t.Fatal(err)
+	}
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" && s.Pending == nil })
+}
+
+func TestSetTrustAllValidatesName(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{}, 1)
+	defer m.Close()
+	if err := m.SetTrustAll("one", true); err != nil {
+		t.Fatalf("known session rejected: %v", err)
+	}
+	if err := m.SetTrustAll("ghost", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown session accepted: %v", err)
+	}
+	if err := m.SetTrustAll("  ", true); err == nil {
+		t.Fatal("blank name accepted")
+	}
+}
+
 func TestConfirmAndSlowSubscriber(t *testing.T) {
 	m := New(context.Background(), &fakeBackend{}, 1)
 	defer m.Close()
