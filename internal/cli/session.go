@@ -101,7 +101,9 @@ func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, *ses
 
 	// Only part of the transcript is replayed into the model. A summary
 	// checkpoint, if any, replaces everything before it; max_turns then caps the
-	// tail after it. The recap reads sess.Turns, so it is unaffected.
+	// tail after it. This overwrites sess.Turns, so the recap the caller prints
+	// (and the resumed history) is drawn from the replayed tail — summary plus the
+	// capped tail — not the full transcript still on disk.
 	sess.Turns = replayTurns(sess.Turns, cfg.SessionMaxTurns)
 	return store, sess, nil
 }

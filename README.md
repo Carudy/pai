@@ -292,7 +292,7 @@ There is a single agent loop — roles differ only by prompt and tool set.
 
 ### `devops` — DevOps (default)
 Autonomous reason→act→observe loop for multi-step sysadmin tasks. Tools:
-- **execute** — Run local shell commands
+- **execute** — Run local shell commands (an optional `dir` runs one in another directory, no `cd … && …` needed)
 - **remote** — Run commands on remote servers via SSH
 - **read** — Read a text file (numbered, bounded) instead of `cat`
 - **edit** — Replace exact text in a file, with a diff to approve
@@ -511,6 +511,11 @@ A step only has a name when running the plain command is the whole story. A loop
 `trusted_cmds` never covers them: they always ask (with no "trust from now on"
 option, since there is nothing to scope the grant to). Add `ls` and `ls -la` runs;
 `ls > f` and `for …; do ls; done` still ask.
+
+Navigation builtins (`cd`, `pushd`, `popd`) are exempt: they run no external
+code, so they are never offered for trust and never prompt on their own.
+`cd /tmp/p && ls` asks only about `ls`, while `cd /x && echo y > f` still asks —
+the write has no name to trust.
 
 To silence every prompt for a run of work, the browser workspace has a **Trust
 all** switch in the composer: while it is on, no confirmation card appears — every

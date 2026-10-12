@@ -637,7 +637,9 @@ function snapshot(s) {
   $('pending').append(title);
   if (p.kind === 'confirm' && p.tool) {
     const tool = p.tool;
-    $('pending').append(text('div', '🔧 ' + (tool.Name || 'Tool') + (tool.Target ? ' · ' + tool.Target : ''), 'confirmation-heading'));
+    let heading = '🔧 ' + (tool.Name || 'Tool') + (tool.Target ? ' · ' + tool.Target : '');
+    if (tool.Dir) heading += ' (in ' + tool.Dir + ')';
+    $('pending').append(text('div', heading, 'confirmation-heading'));
     if (tool.Detail) {
       const shell = ['execute','remote'].includes(tool.Name);
       const segments = Array.isArray(tool.CommandSegments) && tool.CommandSegments.length ? tool.CommandSegments : null;

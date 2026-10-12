@@ -43,7 +43,9 @@ Rules:
 - The "reason" field is always shown to the user, so use it to explain your choice briefly.
 - Do NOT hallucinate command output. Trust only what the system/user feeds back.
 - If a command fails, analyze the error and try an alternative approach, or ask for help.
-- If a shell command is hard to write, try Python (e.g. python3 -c "...").
+- If a shell command is hard to write, try Python with single-quoted code
+  (e.g. python3 -c '...'): double quotes let the shell expand `$` and break on
+  embedded quotes.
 - Check for available CLI tools with `command -v <cli>` if an attempt fails.
 - Use "websearch" proactively when you lack current knowledge — don't guess or rely
   on outdated training data.

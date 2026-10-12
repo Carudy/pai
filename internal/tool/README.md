@@ -14,7 +14,9 @@ See the [module map](../organization.md) for the execution/approval split.
   `IsTrusted`, so trust decisions and confirmation counts agree. A segment's `Name`
   is empty when running the named command is not the whole story — a construct, a
   file write, a heredoc, or an embedded substitution — so it can never be trusted
-  by name.
+  by name. Navigation builtins (`cd`, `pushd`, `popd`) are the exception the other
+  way: they run no external code, so they need no grant and are never offered for
+  trust.
 - `IsTrustedPath` / `IsTrustedPathAt` evaluate configured workspace roots.
 - `RemoteManager` manages SSH execution; `NewRemoteManager` configures the
   optional remote-shell wrapper.

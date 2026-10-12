@@ -73,7 +73,11 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 	switch c.Name {
 	case "execute":
 		o.pair("TagAgent", "[CMD 💬]", "Help", c.Reason)
-		o.command("TagExec", fmt.Sprintf("[CMD 💻 %s]", c.Target), c.Detail, c.UntrustedSegments)
+		label := fmt.Sprintf("[CMD 💻 %s]", c.Target)
+		if c.Dir != "" {
+			label = fmt.Sprintf("[CMD 💻 %s · in %s]", c.Target, c.Dir)
+		}
+		o.command("TagExec", label, c.Detail, c.UntrustedSegments)
 	case "remote":
 		o.pair("TagAgent", "[RMT 💬]", "Help", c.Reason)
 		o.command("TagExec", fmt.Sprintf("[RMT 💻 @%s]", c.Target), c.Detail, c.UntrustedSegments)

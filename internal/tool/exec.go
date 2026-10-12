@@ -58,15 +58,12 @@ func trimCmd(cmd string) string {
 
 // IsTrusted reports whether every command in a chained / piped / multi-line
 // command is covered by the trusted list. An empty trusted list means nothing is
-// trusted.
+// trusted, except navigation builtins, which need no grant (see isNavigation).
 //
 // A segment with no name — a loop, a group, a heredoc, a command that writes a
 // file or embeds a substitution — can never be trusted: the name would not
 // describe all of what runs. See SplitSegments.
 func IsTrusted(cmd string, trusted []string) bool {
-	if len(trusted) == 0 {
-		return false
-	}
 	segs := SplitSegments(cmd)
 	if len(segs) == 0 {
 		return false
@@ -79,9 +76,31 @@ func IsTrusted(cmd string, trusted []string) bool {
 	return true
 }
 
+// navigationBuiltins are shell builtins that only change the working directory.
+// They run no external code, so granting them trust is meaningless and asking
+// about one is pure noise: a segment naming one is treated as already covered.
+var navigationBuiltins = map[string]bool{"cd": true, "pushd": true, "popd": true}
+
+// isNavigation reports whether a segment is a bare directory-change builtin. A
+// nameless segment is never navigation, so this stays safe: a segment is only
+// ever named when running the plain command is the whole story, which is why
+// `cd /x && echo y > f` still asks (the write has no name) and `cd $(untrusted)`
+// has no name either.
+func isNavigation(seg Segment) bool {
+	name := seg.Name
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	return name != "" && navigationBuiltins[name]
+}
+
 // trustedName reports whether a segment is covered by name-based trust. A
-// nameless segment is never covered, so it always needs a fresh approval.
+// navigation builtin needs no grant; a nameless segment is never covered, so it
+// always needs a fresh approval.
 func trustedName(seg Segment, trusted []string) bool {
+	if isNavigation(seg) {
+		return true
+	}
 	return seg.Name != "" && matchTrusted(seg.Name, trusted)
 }
 
@@ -125,12 +144,13 @@ func UntrustedSegments(cmd string, trusted []string) []int {
 // UntrustedNames returns the distinct command names among the chain's untrusted
 // segments, in order and deduplicated. These are the names an "add to trusted"
 // prompt would offer; a nameless segment contributes none, because there is no
-// name to trust.
+// name to trust, and a navigation builtin contributes none, because trusting it
+// would be meaningless.
 func UntrustedNames(cmd string, trusted []string) []string {
 	var out []string
 	seen := map[string]bool{}
 	for _, seg := range SplitSegments(cmd) {
-		if seg.Name == "" || seen[seg.Name] || matchTrusted(seg.Name, trusted) {
+		if seg.Name == "" || isNavigation(seg) || seen[seg.Name] || matchTrusted(seg.Name, trusted) {
 			continue
 		}
 		seen[seg.Name] = true

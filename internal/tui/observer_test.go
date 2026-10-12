@@ -83,3 +83,17 @@ func TestToolCallLongChainIsCapped(t *testing.T) {
 		t.Errorf("missing remainder summary: %q", out)
 	}
 }
+
+// An execute command run in a specific directory says where it runs, and a
+// command with no explicit directory keeps the plain label.
+func TestToolCallRendersWorkingDir(t *testing.T) {
+	withDir := renderToolCall(core.ToolCall{Name: "execute", Target: "bash", Dir: "/var/log", Detail: "df -h"})
+	if !strings.Contains(withDir, "[CMD 💻 bash · in /var/log] df -h") {
+		t.Errorf("unexpected rendering: %q", withDir)
+	}
+
+	plain := renderToolCall(core.ToolCall{Name: "execute", Target: "bash", Detail: "df -h"})
+	if !strings.Contains(plain, "[CMD 💻 bash] df -h") || strings.Contains(plain, "·") {
+		t.Errorf("a command without a dir should not show one: %q", plain)
+	}
+}

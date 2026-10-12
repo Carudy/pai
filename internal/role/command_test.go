@@ -13,9 +13,10 @@ import (
 
 // fakeObserver records the events commands emit.
 type fakeObserver struct {
-	outputs  []string
-	notices  []string
-	sessions []string
+	outputs   []string
+	notices   []string
+	sessions  []string
+	toolCalls []core.ToolCall
 }
 
 func (o *fakeObserver) Reason(string)              {}
@@ -26,7 +27,7 @@ func (o *fakeObserver) Awaiting()                  {}
 func (o *fakeObserver) User(string)                {}
 func (o *fakeObserver) Reasoning(string)           {}
 func (o *fakeObserver) Usage(core.Usage)           {}
-func (o *fakeObserver) ToolCall(core.ToolCall)     {}
+func (o *fakeObserver) ToolCall(c core.ToolCall)   { o.toolCalls = append(o.toolCalls, c) }
 func (o *fakeObserver) ToolOutput(string)          {}
 func (o *fakeObserver) ToolResult(core.ToolResult) {}
 func (o *fakeObserver) Separator()                 {}

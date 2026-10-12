@@ -295,3 +295,43 @@ func TestIsTrusted(t *testing.T) {
 		})
 	}
 }
+
+// Navigation builtins only change directory, so they need no grant and are never
+// offered for trust. The hardening still holds: a write or substitution on the
+// same chain has no name, so it still asks.
+func TestNavigationBuiltinsAreExempt(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+		list []string
+		want bool
+	}{
+		{"cd alone needs no trust", "cd /tmp", nil, true},
+		{"cd then a trusted command", "cd /tmp && ls", []string{"ls"}, true},
+		{"pushd then a trusted command", "pushd /tmp && ls", []string{"ls"}, true},
+		{"popd then a trusted command", "popd && pwd", []string{"pwd"}, true},
+		{"cd does not vouch for an untrusted command", "cd /tmp && rm -rf /", []string{"cd"}, false},
+		// The hardening: the write has no name, so the chain still asks.
+		{"file write on the same chain still asks", "cd /x && echo y > f", []string{"cd", "echo"}, false},
+		{"nameless cd form still asks", "cd /x > f", []string{"cd"}, false},
+		{"substitution still asks", "cd $(x)", []string{"cd"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsTrusted(tc.cmd, tc.list); got != tc.want {
+				t.Errorf("IsTrusted(%q, %q) = %v, want %v", tc.cmd, tc.list, got, tc.want)
+			}
+		})
+	}
+
+	// A nav builtin is neither offered for trust nor flagged as needing approval.
+	if got := UntrustedNames("cd /tmp && ls", nil); !same(got, []string{"ls"}) {
+		t.Errorf("UntrustedNames = %q, want [ls] (cd must not be offered)", got)
+	}
+	if got := UntrustedNames("cd /tmp && ls", []string{"ls"}); len(got) != 0 {
+		t.Errorf("UntrustedNames = %q, want empty", got)
+	}
+	if got := UntrustedSegments("cd /tmp && ls", nil); len(got) != 1 || got[0] != 1 {
+		t.Errorf("UntrustedSegments = %v, want [1] (only ls)", got)
+	}
+}

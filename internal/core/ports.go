@@ -74,6 +74,7 @@ type Usage struct {
 type ToolCall struct {
 	Name    string // "execute" | "remote" | "websearch" | "read" | "edit"
 	Target  string // shell name, SSH host, or file path (empty for websearch)
+	Dir     string // for execute, the working directory the command runs in (empty when unset)
 	Detail  string // the command, query, or change summary
 	Reason  string // why the model chose it
 	Trusted bool   // ran without confirmation

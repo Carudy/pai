@@ -229,6 +229,8 @@ assert.equal(marked.length, 1, 'only the untrusted segment is marked');
 assert.match(marked[0].textContent, /sudo rm x/);
 page.run("selected='one'; snapshot(" + JSON.stringify({state:'busy',queued:0,pending:{id:'pth',kind:'confirm',title:'Create /etc/x?',tool:{Name:'write',Target:'/etc/x'},untrusted:['/etc'],trust_target:'path'}}) + ')');
 assert.match(page.pending().textContent, /outside trusted paths: \/etc/, 'a path confirmation is worded as a path, not a command');
+page.run("selected='one'; snapshot(" + JSON.stringify({state:'busy',queued:0,pending:{id:'dir',kind:'confirm',title:'Execute this command?',tool:{Name:'execute',Target:'bash',Dir:'/var/log',Detail:'df -h'}}}) + ')');
+assert.match(page.pending().textContent, /\(in \/var\/log\)/, 'the confirmation shows the working directory');
 page.run("for(let i=0;i<120;i++) activity({type:'notice',data:'event '+i}); activity({type:'output',data:'x'.repeat(20000)}); activity({type:'output',data:'tail'})");
 assert.equal(page.get('live-progress').children.length, 60, 'activity is bounded');
 assert.equal(page.get('live-progress').lastElementChild.lastElementChild.textContent.length, 16000);

@@ -1,10 +1,12 @@
 package role
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -205,16 +207,73 @@ func report(rt *Runtime, output tool.ExecResult, execErr error, okMsg string) {
 	}
 }
 
+// execPayload is the object form of the execute tool's payload. The plain string
+// form (a bare command) is still accepted and means "no explicit directory".
+type execPayload struct {
+	Cmd string `json:"cmd"`
+	Dir string `json:"dir"`
+}
+
+// parseExecPayload accepts either a JSON string (the command) or the
+// {"cmd":...,"dir":...} object, so the common case stays a bare command.
+func parseExecPayload(payload json.RawMessage) (execPayload, error) {
+	trimmed := bytes.TrimSpace(payload)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		var cmd string
+		if err := json.Unmarshal(trimmed, &cmd); err != nil {
+			return execPayload{}, fmt.Errorf("execute payload: %w", err)
+		}
+		return execPayload{Cmd: cmd}, nil
+	}
+	var p execPayload
+	if err := json.Unmarshal(trimmed, &p); err != nil {
+		return execPayload{}, fmt.Errorf("execute payload: %w", err)
+	}
+	return p, nil
+}
+
+// resolveExecDir resolves the optional directory an execute command runs in. Empty
+// means the run's working directory; a relative dir is joined onto it (or the
+// process cwd when there is none), so the model can name a subdirectory without
+// knowing its absolute path. The result must be an existing directory, so a bad
+// dir is reported before the command runs.
+func resolveExecDir(workingDir, dir string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return workingDir, nil
+	}
+	if !filepath.IsAbs(dir) {
+		if workingDir != "" {
+			dir = filepath.Join(workingDir, dir)
+		} else if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return "", fmt.Errorf("working directory %q: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("working directory %q is not a directory", dir)
+	}
+	return dir, nil
+}
+
 // runExecute runs a shell command locally.
 func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
-	var cmd string
-	if err := json.Unmarshal(payload, &cmd); err != nil {
-		return "", fmt.Errorf("execute payload: %w", err)
+	p, err := parseExecPayload(payload)
+	if err != nil {
+		return "", err
+	}
+	cmd := p.Cmd
+	dir, err := resolveExecDir(rt.WorkingDir, p.Dir)
+	if err != nil {
+		return "", err
 	}
 
 	trusted := rt.trustedList(cfg)
 	isTrusted := tool.IsTrusted(cmd, trusted)
-	rt.Observer.ToolCall(core.ToolCall{
+	call := core.ToolCall{
 		Name:              "execute",
 		Target:            tool.Shell(),
 		Detail:            cmd,
@@ -222,7 +281,13 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 		Trusted:           isTrusted,
 		CommandSegments:   segmentTexts(cmd),
 		UntrustedSegments: tool.UntrustedSegments(cmd, trusted),
-	})
+	}
+	// Surface only a directory the model asked for; the implicit default is not
+	// worth a line in every confirmation.
+	if strings.TrimSpace(p.Dir) != "" {
+		call.Dir = dir
+	}
+	rt.Observer.ToolCall(call)
 
 	if !isTrusted {
 		names := tool.UntrustedNames(cmd, trusted)
@@ -246,7 +311,7 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 		defer cancel()
 	}
 
-	output, execErr := tool.ExecuteCommandAt(ctx, cmd, rt.WorkingDir, toolStream(rt))
+	output, execErr := tool.ExecuteCommandAt(ctx, cmd, dir, toolStream(rt))
 	report(rt, output, execErr, "Command succeeded")
 	return observation("cmd result", cmd, execErr, output, execTruncate(cfg)), nil
 }

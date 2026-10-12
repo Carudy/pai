@@ -227,7 +227,7 @@ bounded live event pane, renders assistant JSON readably, displays tool-call
 Diff previews and reply cards, and replaces history on state refresh rather
 than treating transient SSE output as durable turns. Snapshots recover pending
 prompt titles/IDs and retained `pending.tool` approval context (native core
-keys `Name`, `Target`, `Detail`, `Reason`, `Diff`) on reconnect, page reload, and
+keys `Name`, `Target`, `Dir`, `Detail`, `Reason`, `Diff`) on reconnect, page reload, and
 session switch, together with `pending.untrusted` (what a confirmation can
 trust) and `pending.trust_target` (`command` or `path`, so the card words it
 correctly). Approval cards render only this retained tool, not a transient
