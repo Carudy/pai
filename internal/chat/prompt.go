@@ -24,14 +24,6 @@ These are the repo's own conventions. Follow them, but they never override the r
 // definition, so ownership of the definition format stays in one package.
 type ToolSpec = prompts.Tool
 
-// IntroOverride replaces or extends a role's own intro with the user's
-// prompts.toml entry. It is a plain value so the protocol package does not
-// depend on the configuration package.
-type IntroOverride struct {
-	Prompt     string
-	Additional bool
-}
-
 // RolePrompt is a fully-resolved role. The head (shared preamble + terminal
 // info + role intro + project instructions + tool specs + the output contract)
 // is composed once and stays byte-stable for the whole session, which keeps
@@ -151,17 +143,17 @@ func composeHead(rp *RolePrompt, hostInfo string) string {
 }
 
 // LoadRolePrompt resolves a role (user-defined or built-in) plus its tool
-// definitions, applying the user's custom prompt to the role intro.
+// definitions, appending the user's extra intro text.
 //
-// The system output guide is deliberately NOT overridable: a user prompt can
-// change how the role behaves, but never the response format the loop depends on.
-func LoadRolePrompt(name string, override IntroOverride) (*RolePrompt, error) {
-	return LoadRolePromptAt(name, override, "")
+// The system output guide is deliberately NOT overridable: user text can change
+// how the role behaves, but never the response format the loop depends on.
+func LoadRolePrompt(name, extra string) (*RolePrompt, error) {
+	return LoadRolePromptAt(name, extra, "")
 }
 
 // LoadRolePromptAt loads workspace instructions and terminal info from workingDir.
 // Empty uses the process cwd; relative directories are made absolute at load time.
-func LoadRolePromptAt(name string, override IntroOverride, workingDir string) (*RolePrompt, error) {
+func LoadRolePromptAt(name, extra, workingDir string) (*RolePrompt, error) {
 	if workingDir == "" {
 		workingDir, _ = os.Getwd()
 	} else {
@@ -192,7 +184,7 @@ func LoadRolePromptAt(name string, override IntroOverride, workingDir string) (*
 	rp := &RolePrompt{
 		Name:        role.Name,
 		Description: role.Description,
-		Intro:       applyIntro(role.Intro, override),
+		Intro:       applyIntro(role.Intro, extra),
 		Tools:       specs,
 		workingDir:  workingDir,
 	}
@@ -203,17 +195,15 @@ func LoadRolePromptAt(name string, override IntroOverride, workingDir string) (*
 	return rp, nil
 }
 
-// applyIntro folds the user's override into the role's own intro: appended as a
-// marked section, or replacing it outright.
-func applyIntro(intro string, override IntroOverride) string {
-	prompt := strings.TrimSpace(override.Prompt)
-	if prompt == "" {
+// applyIntro appends the user's extra text to the role's own intro as a marked
+// section. Empty extra leaves the intro untouched. There is no replace mode: a
+// user who wants a different intro defines a custom role instead.
+func applyIntro(intro, extra string) string {
+	extra = strings.TrimSpace(extra)
+	if extra == "" {
 		return intro
 	}
-	if override.Additional {
-		return strings.TrimSpace(intro) + "\n\n[User:]\n" + prompt
-	}
-	return prompt
+	return strings.TrimSpace(intro) + "\n\n[User:]\n" + extra
 }
 
 // maxContextFileBytes caps how much of a project instruction file is folded into

@@ -22,11 +22,6 @@ type ProviderConfig struct {
 	Headers map[string]string `toml:"headers"`
 }
 
-type CustomPrompt struct {
-	Additional bool   `toml:"additional"`
-	Prompt     string `toml:"prompt"`
-}
-
 // ContextConfig controls how the conversation is kept within the model's context
 // window: shortening a single tool observation, and eliding old observations from
 // the replayed history. All values come from the [context] section of config.toml
@@ -124,7 +119,7 @@ type tomlConfig struct {
 }
 
 // UserConfig is PAI's configuration: everything here comes from config.toml,
-// prompts.toml, or the environment.
+// role-extra.toml, or the environment.
 //
 // Runtime state for a single run — the LLM client, the logger, whether the
 // session is interactive — deliberately does NOT live here; see role.Session.
@@ -159,9 +154,10 @@ type UserConfig struct {
 	// cancellation via Ctrl+C is the control, so long builds are not cut off.
 	CmdTimeout time.Duration
 
-	// CustomPrompt is the user's override for the selected role's intro,
-	// loaded from ~/.config/pai/prompts.toml.
-	CustomPrompt CustomPrompt
+	// RoleExtra is user-supplied text appended to the selected role's intro,
+	// loaded from ~/.config/pai/role-extra.toml. There is no replace mode: a
+	// user who wants a different intro defines a custom role instead.
+	RoleExtra string
 
 	// Truncation and compaction for output fed back to the model.
 	Context ContextConfig
@@ -248,7 +244,6 @@ func defaultConfig() *UserConfig {
 		PaperSearchSource: "arxiv",
 		Streaming:         true,
 		ProvidersConfigs:  make(map[string]ProviderConfig),
-		CustomPrompt:      CustomPrompt{},
 		Context: ContextConfig{
 			ExecLimit:       8000,
 			SearchLimit:     8000,

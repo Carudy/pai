@@ -123,7 +123,7 @@ func TestComposeHeadWithoutProjectContext(t *testing.T) {
 // The role declaration is honoured: whatever the coder role resolves at the
 // current working directory is what lands in the prompt.
 func TestLoadRolePromptWiresContextFiles(t *testing.T) {
-	rp, err := LoadRolePrompt("coder", IntroOverride{})
+	rp, err := LoadRolePrompt("coder", "")
 	if err != nil {
 		t.Fatalf("load coder: %v", err)
 	}
@@ -178,11 +178,22 @@ func TestOutputContractPlacement(t *testing.T) {
 
 // A role that declares no context files never reads any.
 func TestLoadRolePromptWithoutContextFiles(t *testing.T) {
-	rp, err := LoadRolePrompt("devops", IntroOverride{})
+	rp, err := LoadRolePrompt("devops", "")
 	if err != nil {
 		t.Fatalf("load devops: %v", err)
 	}
 	if rp.ContextSource != "" || rp.ProjectContext != "" {
 		t.Errorf("devops picked up context: (%q, %q)", rp.ContextSource, rp.ProjectContext)
+	}
+}
+
+// The extra intro text is append-only: empty leaves the intro untouched, and
+// non-empty text is appended under a marker rather than replacing the intro.
+func TestApplyIntroAppendsOnly(t *testing.T) {
+	if got := applyIntro("base", ""); got != "base" {
+		t.Errorf("empty extra changed the intro: %q", got)
+	}
+	if got, want := applyIntro("base", "  extra  "), "base\n\n[User:]\nextra"; got != want {
+		t.Errorf("applyIntro = %q, want %q", got, want)
 	}
 }

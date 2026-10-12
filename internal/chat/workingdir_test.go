@@ -24,7 +24,7 @@ func TestLoadRolePromptAtWorkspaces(t *testing.T) {
 		}
 		t.Run(instructions, func(t *testing.T) {
 			t.Parallel()
-			rp, err := LoadRolePromptAt("coder", IntroOverride{}, sub)
+			rp, err := LoadRolePromptAt("coder", "", sub)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -72,27 +72,32 @@ func loadTOML(path string, dst any) error {
 	return nil
 }
 
-// LoadCustomPrompt reads ~/.config/pai/prompts.toml and returns the custom
-// prompt text for roleName.
-func LoadCustomPrompt(roleName string) (CustomPrompt, error) {
+// roleExtra is the parsed shape of a role's entry in role-extra.toml.
+type roleExtra struct {
+	Text string `toml:"text"`
+}
+
+// LoadRoleExtra reads ~/.config/pai/role-extra.toml and returns the extra intro
+// text for roleName (empty when unset). The text is appended to the role's intro.
+func LoadRoleExtra(roleName string) (string, error) {
 	cfgDir := paths.ConfigDir()
 	if cfgDir == "" {
-		return CustomPrompt{}, nil
+		return "", nil
 	}
-	path := filepath.Join(cfgDir, "prompts.toml")
+	path := filepath.Join(cfgDir, "role-extra.toml")
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return CustomPrompt{}, nil
+		return "", nil
 	}
 	if err != nil {
-		return CustomPrompt{}, fmt.Errorf("failed to read %s: %w", path, err)
+		return "", fmt.Errorf("failed to read %s: %w", path, err)
 	}
-	var entries map[string]CustomPrompt
+	var entries map[string]roleExtra
 	if err := toml.Unmarshal(data, &entries); err != nil {
-		return CustomPrompt{}, fmt.Errorf("failed to parse %s: %w", path, err)
+		return "", fmt.Errorf("failed to parse %s: %w", path, err)
 	}
-	return entries[roleName], nil
+	return entries[roleName].Text, nil
 }
 
 func mergeEnvAPIKeys(cfg *UserConfig) {

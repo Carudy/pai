@@ -262,13 +262,13 @@ func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
 		return cmdHandled, ""
 	}
 
-	// Reload the role's own custom prompt, not the previous role's.
-	custom, err := config.LoadCustomPrompt(name)
+	// Reload the role's own extra text, not the previous role's.
+	extra, err := config.LoadRoleExtra(name)
 	if err != nil {
 		c.notice("%v", err)
 		return cmdHandled, ""
 	}
-	rp, err := chat.LoadRolePromptAt(name, chat.IntroOverride{Prompt: custom.Prompt, Additional: custom.Additional}, c.rt.WorkingDir)
+	rp, err := chat.LoadRolePromptAt(name, extra, c.rt.WorkingDir)
 	if err != nil {
 		c.notice("%v", err)
 		return cmdHandled, ""
@@ -278,7 +278,7 @@ func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
 		return cmdHandled, ""
 	}
 
-	c.cfg.CustomPrompt = custom
+	c.cfg.RoleExtra = extra
 	c.cfg.DefaultRole = name
 	c.rp = rp
 	c.output(fmt.Sprintf("role switched to %s (the system prompt changed, so this turn is not prefix-cached)", name))

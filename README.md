@@ -271,19 +271,41 @@ headers (for example a custom `User-Agent`). PAI always sends a `User-Agent` and
 for the OpenCode Go gateway (`opencode.ai`), generates the `x-opencode-session`
 routing id that gateway requires; a header you set with the same name wins.
 
-### Custom Prompts
+### Extending a role
 
-Create `~/.config/pai/prompts.toml` to customize a role's behavior. The custom
-text is applied to the role's *intro* only — the response format is fixed by the
-app so a custom prompt can never break parsing.
+Append your own instructions to any role's intro with
+`~/.config/pai/role-extra.toml`:
 
 ```toml
 [devops]
-additional = false       # false = replace the role intro, true = append to it
-prompt = """
+text = """
 You are a senior SRE. Always explain why before running commands.
 """
 ```
+
+The text is appended to the role's *intro* under a `[User:]` marker — it never
+replaces the intro, and it cannot change the response format, which is fixed by
+the app. To change more than that (a different intro or tool set), define a
+custom role instead; see the Roles section below.
+
+> **Renamed:** `~/.config/pai/prompts.toml` (with `prompt`/`additional`) is no
+> longer read. Move its text to `role-extra.toml` — it is now always appended.
+
+#### On-demand guides (a poor-man's "skills")
+
+`text` is loaded on every request, so keep it short and let it *point* at detail
+only when it is needed. The cheapest on-demand guide is to name a file in the
+role intro and let the model `read` it when relevant:
+
+```toml
+[devops]
+text = """
+Before triaging a Kubernetes incident, read docs/guides/k8s-triage.md.
+"""
+```
+
+The pointer is always present; the guide's body enters the context only when the
+model reads it. Reads still follow the usual path-trust rules.
 
 ## 📖 Roles
 
@@ -598,7 +620,7 @@ The **head** is composed once per session and then never changes, so provider
 prefix caching stays effective:
 
 1. who PAI is, plus your terminal info (OS, shell, user, time, working directory)
-2. the role's intro — replaced or extended by your `prompts.toml` entry
+2. the role's intro — extended by your `role-extra.toml` entry
 3. the repository's instructions, when the role declares `context_files`
    (`AGENTS.md` / `CLAUDE.md`)
 4. the role's tools, with descriptions and payload schemas

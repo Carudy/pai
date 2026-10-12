@@ -392,7 +392,7 @@ func TestServeBackendSetWorkingDir(t *testing.T) {
 	if dir != newDir || cfg.DefaultRole != "coder" || cfg.DefaultModel != "deepseek:test" || len(history) != 1 || history[0].Content != "keep history" {
 		t.Fatalf("prepared workspace: %q config=%+v history=%+v", dir, cfg, history)
 	}
-	prompt, err := chat.LoadRolePromptAt(cfg.DefaultRole, chat.IntroOverride{Prompt: cfg.CustomPrompt.Prompt, Additional: cfg.CustomPrompt.Additional}, dir)
+	prompt, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.RoleExtra, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

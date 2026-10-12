@@ -84,14 +84,14 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 		return 1
 	}
 
-	// Load the custom prompt for the final role: resolving a session may have
+	// Load the role-extra text for the final role: resolving a session may have
 	// switched it away from the config default (a session keeps its role).
-	customPrompt, err := config.LoadCustomPrompt(cfg.DefaultRole)
+	extra, err := config.LoadRoleExtra(cfg.DefaultRole)
 	if err != nil {
-		log.Errorf("Error loading custom prompt: %v\n", err)
+		log.Errorf("Error loading role extra: %v\n", err)
 		return 1
 	}
-	cfg.CustomPrompt = customPrompt
+	cfg.RoleExtra = extra
 	var history []provider.Message
 	if store != nil {
 		defer store.Close()

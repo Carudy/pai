@@ -28,8 +28,8 @@ live in `role`; a role may only reference implemented tools. The resolved tool
 name is the role's declaration, not a `name` field inside the file, because that
 declaration is what the handler registry and capability check use.
 Keep payload schemas consistent with handlers and use discovery APIs, not
-hardcoded role/tool lists. User role overrides are distinct from intro overrides
-loaded by `config` from `prompts.toml`.
+hardcoded role/tool lists. User role overrides (`~/.config/pai/roles/`) are
+distinct from the extra intro text `config` loads from `role-extra.toml`.
 
 Suggested consumer validation from the repository root:
 

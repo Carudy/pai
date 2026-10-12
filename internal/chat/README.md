@@ -8,7 +8,7 @@ See the [module map](../organization.md) for the surrounding layers.
 - `LoadRolePrompt` / `LoadRolePromptAt` compose role and tool definitions
   (resolved and parsed by `prompts`), project instructions, and the host block
   (from `hostinfo`); the latter scopes them to a workspace.
-- `IntroOverride` carries the user's prompt override as a plain value, so the
+- `LoadRolePromptAt` takes the user's extra intro text as a plain string, so the
   override does not widen this package's dependencies. (The settings aggregate
   `config.UserConfig` is still taken directly for streaming, reasoning, and the
   context budget — see the note below.)

@@ -26,7 +26,7 @@ func (o *paperObserver) ToolResult(r core.ToolResult) { o.results = append(o.res
 func TestPapersearchCapabilities(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	for _, name := range prompts.RoleNames() {
-		rp, err := chat.LoadRolePrompt(name, chat.IntroOverride{})
+		rp, err := chat.LoadRolePrompt(name, "")
 		if err != nil {
 			t.Fatal(err)
 		}

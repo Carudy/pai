@@ -1,8 +1,8 @@
 # DevOps role.
 #
 #   intro  the role's system-prompt section, rendered right after the shared
-#          PAI preamble + terminal info. A user's ~/.config/pai/prompts.toml
-#          entry for [devops] replaces or appends to this (see `additional`).
+#          PAI preamble + terminal info. A user's ~/.config/pai/role-extra.toml
+#          [devops] `text` entry is appended to this.
 #   tools  the tools this role may use, resolved against tools/<name>.toml.
 #
 # The response *format* is not described here: it is system-owned and rendered

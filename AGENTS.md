@@ -6,7 +6,10 @@ Working notes for **PAI**. Read [`internal/organization.md`](internal/organizati
 
 - **One loop, data-defined roles.** `internal/role` is the only agent loop; a
   role is an intro + a tool list in `internal/prompts/roles/<name>.toml`, so
-  adding one is a file, not Go code.
+  adding one is a file, not Go code. Users append to a role's intro (never
+  replace) via `~/.config/pai/role-extra.toml`; there is no separate "skills"
+  feature — an on-demand guide is just a role-intro pointer to a file the model
+  `read`s.
 - **`cli` is the composition root.** Only `cli` imports `tui` and `session`; the
   loop talks to `core` ports and adapters implement them.
 - **The model speaks JSON.** Every response is one object with `action`
