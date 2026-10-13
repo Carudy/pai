@@ -154,7 +154,7 @@ func TestOutputContractPlacement(t *testing.T) {
 		t.Errorf("guide should follow the tool specs: tool=%d guide=%d", tool, guide)
 	}
 	// The detailed contract, with an example per action, lives in the head.
-	for _, want := range []string{`"action":"ask"`, `"action":"done"`, `"action":"terminate"`, ToolExample()} {
+	for _, want := range []string{`"action":"ask"`, `"action":"done"`, `"action":"terminate"`, ToolExample(), ToolObjectExample()} {
 		if !strings.Contains(head, want) {
 			t.Errorf("head is missing %q", want)
 		}

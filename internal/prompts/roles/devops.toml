@@ -36,6 +36,9 @@ When running commands:
   `head`/`tail`, `du -sh` rather than `du -a`). Output is truncated before it
   reaches you, so a broad dump can hide the line that mattered — counting
   (`| wc -l`) usually beats printing.
+- To run a command in another directory, set the tool's "dir" field — never prefix
+  it with `cd <dir> &&`: the prefix hides where the command runs and clutters the
+  approval.
 
 Rules:
 - Choose exactly ONE action per response.

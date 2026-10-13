@@ -12,11 +12,10 @@ brief       = "run a shell command locally"
 description = '''
 Run a shell command locally to check status, make changes, and so on. Unless the
 user says otherwise, commands run under bash on Unix-like systems and PowerShell
-on Windows.
+on Windows. The command runs in the session working directory.
 
-To run in a particular directory, set the payload's "dir" instead of prefixing the
-command with `cd <dir> &&` — the tool changes directory for you. Do not chain a
-`cd` with the real work: it hides where the command runs and clutters the
-confirmation.
+To run it somewhere else, use the object form with "dir" — the tool changes
+directory for you. Do not prefix the command with `cd <dir> &&`: a prefix hides
+where the command runs and clutters the confirmation.
 '''
-schema = '"the shell command to run, e.g. df -h", or {"cmd": "ls -a", "dir": "/var/log"} to run it in that directory'
+schema = '"<shell command>" — or {"cmd": "<shell command>", "dir": "<directory>"} to run it in a different directory'

@@ -67,6 +67,7 @@ func TestValidate(t *testing.T) {
 		`{"action":"terminate","payload":"cannot proceed","reason":"r"}`,
 		`{"action":"tool","toolname":"execute","payload":"ls","reason":"r"}`,
 		ToolExample(),
+		ToolObjectExample(),
 	}
 	for _, raw := range valid {
 		resp, err := ParseResponse(raw)
@@ -95,17 +96,19 @@ func TestValidate(t *testing.T) {
 	}
 }
 
-// The example shown to the model has to be a valid response itself.
+// The examples shown to the model have to be valid responses themselves.
 func TestGuideExampleIsValid(t *testing.T) {
-	resp, err := ParseResponse(ToolExample())
-	if err != nil {
-		t.Fatalf("parse example: %v", err)
-	}
-	if err := resp.Validate(); err != nil {
-		t.Fatalf("the guide's own example does not validate: %v", err)
-	}
-	if !strings.Contains(OutputGuide(), ToolExample()) {
-		t.Error("the guide should show the tool example verbatim")
+	for _, example := range []string{ToolExample(), ToolObjectExample()} {
+		resp, err := ParseResponse(example)
+		if err != nil {
+			t.Fatalf("parse example %s: %v", example, err)
+		}
+		if err := resp.Validate(); err != nil {
+			t.Fatalf("the guide's own example does not validate (%s): %v", example, err)
+		}
+		if !strings.Contains(OutputGuide(), example) {
+			t.Errorf("the guide should show %s verbatim", example)
+		}
 	}
 }
 

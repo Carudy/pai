@@ -49,12 +49,14 @@ it, no markdown code fences. Every response has three fields:
   "payload" the action's content
   "reason"  a short explanation of why you chose this action
 
-One example per action:
+Concrete examples per action:
 
 - tool — run a tool. "toolname" sits at the top level beside "payload"; payload
-  holds the tool's arguments (an object when the tool's schema says so, else a
-  string). Each tool's schema is listed above.
+  holds the tool's arguments, a string or an object per that tool's schema (listed
+  above). For example, execute takes a plain command, or an object naming the
+  directory to run it in:
   ` + ToolExample() + `
+  ` + ToolObjectExample() + `
 
 - ask — ask the user a question; payload is the question string.
   {"action":"ask","payload":"Which host should I deploy to?","reason":"the target host is unclear"}
@@ -75,8 +77,16 @@ func OutputReminder() string {
 	return "Remember: reply with exactly one valid JSON object, no prose and no code fences."
 }
 
-// ToolExample is a literal tool response, embedded in the guide so the one shape
-// with a nested object is shown concretely rather than described.
+// ToolExample is a literal tool response with a plain string payload — the common
+// case — embedded in the guide so the shape is shown rather than described.
 func ToolExample() string {
 	return `{"action":"tool","toolname":"execute","payload":"df -h","reason":"check disk space"}`
+}
+
+// ToolObjectExample is a second literal tool response, showing the object payload
+// shape: a command plus the directory it runs in. "An object when the schema says
+// so" alone did not stop the model from encoding a directory as `cd <dir> && …`,
+// so the exact nested shape is shown beside the string one.
+func ToolObjectExample() string {
+	return `{"action":"tool","toolname":"execute","payload":{"cmd":"ls -la","dir":"/var/log"},"reason":"inspect the nginx log dir"}`
 }

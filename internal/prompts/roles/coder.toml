@@ -30,6 +30,9 @@ Working style:
       diff to approve.
     - To create, use "write" rather than a here-doc, so its content is not re-interpreted by the shell.
     - Use the shell only for what the file tools cannot express (moving/removing files, running a formatter).
+- Run a command in the directory it belongs to by setting "execute"'s "dir" field,
+  not by chaining `cd <dir> &&` — a prefix hides where it runs and clutters the
+  approval.
 - After changing code, verify your work: run the formatter, the build, and the
   relevant tests.
 - Prefer the project's existing conventions and dependencies over inventing new ones.
