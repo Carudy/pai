@@ -693,4 +693,23 @@ async function verifyJumpButtons() {
   assert.equal(p.get('prev-input').hidden, true, 'Up hides without instructions');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+async function verifyAuthGate() {
+  const p = browser();
+  p.run("$('login').hidden=true; $('app').hidden=true");
+  p.run('showApp()');
+  assert.equal(p.get('login').hidden, true, 'the login form hides once authenticated');
+  assert.equal(p.get('app').hidden, false, 'the shell appears once authenticated');
+  p.run('loginNeeded()');
+  assert.equal(p.get('login').hidden, false, 'the login form appears when signed out');
+  assert.equal(p.get('app').hidden, true, 'the shell never shows while signed out');
+  // A failed first probe: a 401 reveals the login form and is not toasted; any other
+  // failure reveals the shell and surfaces the error rather than leaving a blank page.
+  p.run("globalThis.toasted=[]; error=e=>toasted.push(e && e.status); $('login').hidden=true; $('app').hidden=true; bootFailed({status:401})");
+  assert.equal(p.get('login').hidden, false, 'a 401 shows the login form');
+  assert.equal(p.run('toasted.length'), 0, 'a 401 is not toasted');
+  p.run("$('login').hidden=true; $('app').hidden=true; bootFailed({status:500})");
+  assert.equal(p.get('app').hidden, false, 'a non-auth failure reveals the shell');
+  assert.equal(p.run('toasted.length'), 1, 'a non-auth failure is toasted');
+}
+
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

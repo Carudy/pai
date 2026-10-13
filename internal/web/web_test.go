@@ -525,6 +525,19 @@ func TestSessionControlsPresent(t *testing.T) {
 	}
 }
 
+// The workspace shell ships hidden and is revealed only after the first
+// authenticated request, so a signed-out load cannot flash it before the login
+// form appears.
+func TestWorkspaceShellStartsHidden(t *testing.T) {
+	data, err := assets.ReadFile("index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `<div id="app" hidden>`) {
+		t.Error("index.html must ship the workspace shell hidden")
+	}
+}
+
 func TestDeleteAPI(t *testing.T) {
 	b := &modelBackend{}
 	m := runner.New(context.Background(), b, 1)

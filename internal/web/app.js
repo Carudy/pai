@@ -295,7 +295,17 @@ function notify(message) {
 }
 function error(e) { notify(e.message || String(e)); }
 function toast(message) { notify(message); }
+function showApp() { $('login').hidden = true; $('app').hidden = false; }
 function loginNeeded() { $('login').hidden = false; $('app').hidden = true; disconnect(); }
+// The workspace shell starts hidden (see index.html), so a signed-out load never
+// flashes it before the first request is answered. A 401 needs the login form; any
+// other failure reveals the shell, so the user keeps the UI and the error toast
+// rather than a blank page.
+function bootFailed(e) {
+  if (e && e.status === 401) { loginNeeded(); return; }
+  if ($('app').hidden) showApp();
+  error(e);
+}
 // ── Theme ───────────────────────────────────────────────────
 // Light is the default; the switch sets data-theme on <html> and remembers the
 // choice. The system preference only seeds the first visit.
@@ -977,7 +987,7 @@ function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
 }
 // ── Event wiring ────────────────────────────────────────────
-$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; $('login').hidden = true; $('app').hidden = false; const list = await sessions(true); await Promise.all([roles(), models()]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
+$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; showApp(); const list = await sessions(true); await Promise.all([roles(), models()]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
 $('model-form').onsubmit = applyModel;
 $('role-form').onsubmit = applyRole;
 $('working-dir-form').onsubmit = applyWorkingDir;
@@ -1022,6 +1032,6 @@ applyTheme(initialTheme());
 initPendingDrag();
 initReasoningDrag();
 updateJumpButtons();
-sessions(true).then(restoreSession).catch(error);
-roles().catch(error);
-models().catch(error);
+sessions(true).then(list => { showApp(); restoreSession(list); }).catch(bootFailed);
+roles().catch(bootFailed);
+models().catch(bootFailed);

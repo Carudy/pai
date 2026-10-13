@@ -125,6 +125,11 @@ rejected; there is no URL authentication.
   cookie, Secure on TLS or an HTTPS PublicOrigin. Credentials expire after 12 hours, are stored only as
   hashes in memory, and are lost on restart. At most 128 unexpired credentials
   per handler. All API routes except login require this cookie if Token is set.
+  The static assets (`/`, `/app.js`, `/style.css`) are served unauthenticated; the
+  shell ships `hidden` and is revealed only after the first authenticated request
+  succeeds, so a signed-out load cannot flash the workspace before the login form
+  appears. A 401 shows the login form; any other first-request failure reveals the
+  shell so the user still has the UI and an error toast.
 - `GET /api/models`: `{ "models": ["provider:model"], "default_model": "provider:model" }`.
   Discovery uses the configured default and saved session models, not a config
   model list or remote discovery. Only model names are returned, never credentials.
