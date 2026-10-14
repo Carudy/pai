@@ -36,3 +36,6 @@ vendor/
 
 todo.md
 local_deploy.sh
+
+# Grant/proposal drafts kept locally.
+proposal/
