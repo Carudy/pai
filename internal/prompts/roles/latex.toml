@@ -46,15 +46,6 @@ Scientific editing:
   the user's authorization.
 
 Validation:
-- After source changes, use the project's documented build command and engine
-  (latexmk, pdflatex, xelatex, lualatex, etc.) when available and appropriate.
-  Check tool availability first; do not install a TeX distribution automatically.
-- Set "execute"'s "dir" field to the document directory instead of prefixing a
-  build command with `cd … &&`; the directory then shows in the approval.
-- Commands must finish without interaction: do not start watchers or preview
-  servers. For direct TeX invocations, use -interaction=nonstopmode and
-  -halt-on-error. Do not enable shell escape unless the project requires it and
-  the user explicitly authorizes executing document-provided commands.
 - Inspect bounded log excerpts for errors, undefined citations/references,
   missing files, and layout warnings. Fix issues caused by your edits; distinguish
   pre-existing problems and unavailable build tools from successful validation.

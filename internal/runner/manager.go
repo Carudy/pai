@@ -3,11 +3,13 @@ package runner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
 
 	"github.com/Carudy/pai/internal/core"
+	"github.com/Carudy/pai/internal/provider"
 )
 
 var (
@@ -44,6 +46,10 @@ type Manager struct {
 	// worker, because the worker is recreated for each instruction while the
 	// setting must last for the session.
 	trustAll map[string]bool
+	// reasoning is a per-session reasoning-effort override, in memory only. It
+	// lives here for the same reason as trustAll: it must outlast the worker
+	// recreated for each instruction.
+	reasoning map[string]string
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {
@@ -485,6 +491,42 @@ func (m *Manager) Roles() ([]string, string, error) {
 		return b.Roles()
 	}
 	return nil, "", errors.New("backend does not support roles")
+}
+
+// Reasoning returns a session's effective reasoning effort: its in-memory
+// override if set, otherwise the backend's configured default.
+func (m *Manager) Reasoning(name string) (string, error) {
+	m.mu.Lock()
+	v := m.reasoning[name]
+	m.mu.Unlock()
+	if v != "" {
+		return v, nil
+	}
+	if b, ok := m.backend.(ReasoningBackend); ok {
+		return b.ReasoningDefault()
+	}
+	return string(provider.ReasoningEffortNone), nil
+}
+
+// SetReasoning stores a per-session reasoning override and retires the idle
+// worker so the next run picks it up. The override is in-memory only: it is not
+// persisted and is lost when the process restarts.
+func (m *Manager) SetReasoning(name, effort string) error {
+	switch provider.ReasoningEffort(effort) {
+	case provider.ReasoningEffortNone, provider.ReasoningEffortLow, provider.ReasoningEffortMedium, provider.ReasoningEffortHigh:
+	default:
+		return fmt.Errorf("invalid reasoning effort %q", effort)
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if m.reasoning == nil {
+		m.reasoning = make(map[string]string)
+	}
+	m.reasoning[name] = effort
+	return nil
 }
 
 func (m *Manager) Snapshot(name string) (Snapshot, error) {

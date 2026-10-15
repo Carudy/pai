@@ -64,12 +64,14 @@ func AddTrustedPath(dir string) error {
 
 // SetScalar sets `<key> = <value>` inside `[section]` of the TOML file at path,
 // preserving the rest of the file (comments included) by editing only the
-// affected line, inserting the key if absent, or appending the section if it
+// affected lines, inserting the key if absent, or appending the section if it
 // does not exist.
 //
-// value must already be TOML-formatted (e.g. `"x"`, `true`, `42`). Only
-// single-line scalars are supported — this is deliberately not a general TOML
-// writer, so arrays/inline tables are left to hand editing.
+// value must already be TOML-formatted (e.g. `"x"`, `true`, `42`, `["a","b"]`).
+// An existing value is consumed whole even when it spans several lines (a
+// hand-formatted array, say) — its continuation lines are removed, not left
+// behind — so the result stays valid TOML. This is deliberately not a general
+// TOML writer; it just knows where a value ends.
 func SetScalar(path, section, key, value string) error {
 	lines, err := readLines(path)
 	if err != nil {
@@ -84,10 +86,16 @@ func SetScalar(path, section, key, value string) error {
 
 	keyRe := regexp.MustCompile(`^(\s*)` + regexp.QuoteMeta(key) + `\s*=`)
 	for i := start + 1; i < end; i++ {
-		if m := keyRe.FindStringSubmatch(lines[i]); m != nil {
-			lines[i] = m[1] + key + " = " + value
-			return writeLines(path, lines)
+		m := keyRe.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
 		}
+		last := min(valueEnd(lines, i), end-1)
+		out := make([]string, 0, len(lines)-(last-i))
+		out = append(out, lines[:i]...)
+		out = append(out, m[1]+key+" = "+value)
+		out = append(out, lines[last+1:]...)
+		return writeLines(path, out)
 	}
 
 	// Insert directly after the section header.
@@ -96,8 +104,8 @@ func SetScalar(path, section, key, value string) error {
 	return writeLines(path, lines)
 }
 
-// UnsetScalar removes `<key>` from `[section]`. Removing a key that is not
-// present is not an error.
+// UnsetScalar removes `<key>` from `[section]`, consuming a multi-line value
+// whole. Removing a key that is not present is not an error.
 func UnsetScalar(path, section, key string) error {
 	lines, err := readLines(path)
 	if err != nil {
@@ -110,14 +118,86 @@ func UnsetScalar(path, section, key string) error {
 	}
 
 	keyRe := regexp.MustCompile(`^\s*` + regexp.QuoteMeta(key) + `\s*=`)
-	kept := make([]string, 0, len(lines))
-	for i, ln := range lines {
-		if i > start && i < end && keyRe.MatchString(ln) {
+	for i := start + 1; i < end; i++ {
+		if !keyRe.MatchString(lines[i]) {
 			continue
 		}
-		kept = append(kept, ln)
+		last := min(valueEnd(lines, i), end-1)
+		kept := append(append([]string{}, lines[:i]...), lines[last+1:]...)
+		return writeLines(path, kept)
 	}
-	return writeLines(path, kept)
+	return writeLines(path, lines)
+}
+
+// valueEnd returns the index of the last line of the TOML value whose first line
+// is lines[line] (a `key = …` line). A value continues across lines while its
+// brackets/braces are unbalanced or it is inside a multi-line string, so a
+// hand-formatted multi-line array or string is consumed whole rather than
+// truncated. Brackets and '#' inside strings do not count.
+func valueEnd(lines []string, line int) int {
+	depth := 0
+	str := "" // one of "", `"`, `'`, `"""`, `'''`
+	for i := line; i < len(lines); i++ {
+		s := lines[i]
+	scan:
+		for j := 0; j < len(s); {
+			switch str {
+			case `"""`:
+				if strings.HasPrefix(s[j:], `"""`) {
+					str, j = "", j+3
+				} else {
+					j++
+				}
+			case `'''`:
+				if strings.HasPrefix(s[j:], `'''`) {
+					str, j = "", j+3
+				} else {
+					j++
+				}
+			case `"`:
+				switch s[j] {
+				case '\\':
+					j += 2
+				case '"':
+					str, j = "", j+1
+				default:
+					j++
+				}
+			case `'`:
+				if s[j] == '\'' {
+					str = ""
+				}
+				j++
+			default:
+				switch s[j] {
+				case '"':
+					if strings.HasPrefix(s[j:], `"""`) {
+						str, j = `"""`, j+3
+					} else {
+						str, j = `"`, j+1
+					}
+				case '\'':
+					if strings.HasPrefix(s[j:], `'''`) {
+						str, j = `'''`, j+3
+					} else {
+						str, j = `'`, j+1
+					}
+				case '#':
+					break scan // comment: ignore the rest of the line
+				case '[', '{':
+					depth, j = depth+1, j+1
+				case ']', '}':
+					depth, j = depth-1, j+1
+				default:
+					j++
+				}
+			}
+		}
+		if depth <= 0 && str == "" {
+			return i
+		}
+	}
+	return len(lines) - 1
 }
 
 // sectionBounds returns the line range (start, end) of `[section]`, where end is

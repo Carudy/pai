@@ -309,6 +309,36 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, 200, map[string]string{"name": body.NewName})
+	case "/api/reasoning":
+		switch r.Method {
+		case http.MethodGet:
+			effort, err := h.manager.Reasoning(r.URL.Query().Get("name"))
+			if err != nil {
+				managerError(w, err)
+				return
+			}
+			respond(w, 200, map[string]any{"reasoning": effort, "options": []string{"none", "low", "medium", "high"}})
+		case http.MethodPost:
+			var body struct {
+				Name      string `json:"name"`
+				Reasoning string `json:"reasoning"`
+			}
+			if !decode(w, r, &body) {
+				return
+			}
+			if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+				fail(w, 400, "session name must contain 1–256 bytes")
+				return
+			}
+			if err := h.manager.SetReasoning(body.Name, body.Reasoning); err != nil {
+				managerError(w, err)
+				return
+			}
+			respond(w, 200, map[string]bool{"ok": true})
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			fail(w, 405, "method not allowed")
+		}
 	case "/api/roles":
 		if !method(w, r, http.MethodGet) {
 			return

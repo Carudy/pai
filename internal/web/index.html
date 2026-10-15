@@ -69,7 +69,7 @@
                             aria-controls="activity"
                             aria-expanded="false"
                         >
-                            Activities</button
+                            Context</button
                         ><button
                             id="theme-toggle"
                             type="button"
@@ -83,40 +83,47 @@
                         <span id="session-label" class="field-label" hidden>Session:</span>
                         <h2 id="title">Select or create a session</h2>
                         <button id="rename-session" type="button" title="Rename this session" hidden>✎ Rename</button>
-                        <p id="workspace" title="Workspace">Workspace — select a session</p>
+                        <div class="status-row">
+                            <p id="state" aria-live="polite">Ready when you are</p>
+                            <div class="run-progress-slot">
+                                <div id="run-progress" role="status" hidden>
+                                    <span class="busy-indicator" aria-hidden="true">⏳</span>
+                                    <span id="run-elapsed">Running…</span>
+                                </div>
+                            </div>
+                        </div>
                         <p id="token-usage" hidden></p>
                     </div>
                     <div class="session-config">
-                        <form id="role-form" aria-label="Session role">
-                            <label for="session-role-select">Role</label>
-                            <select id="session-role-select" disabled></select>
-                            <button id="apply-role" type="submit" disabled>Apply</button>
-                        </form>
-                        <form id="model-form" aria-label="Session model">
-                            <label for="session-model">Model</label>
-                            <div class="model-field">
-                                <input id="session-model" placeholder="provider:model" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="model-options" aria-autocomplete="list" disabled />
-                                <ul id="model-options" role="listbox" aria-label="Model suggestions" hidden></ul>
-                            </div>
-                            <button id="apply-model" type="submit" disabled>Apply</button>
-                        </form>
-                        <form id="working-dir-form" aria-label="Session working directory">
-                            <label for="session-working-dir">Working dir</label>
-                            <input id="session-working-dir" placeholder="/path/to/project" title="Existing directory on the server; used on the next send" autocomplete="off" required disabled />
-                            <button id="apply-working-dir" type="submit" disabled>Apply</button>
-                        </form>
-                    </div>
-                    <!--<p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>-->
-
-                    <div class="status-row">
-                        <p id="state" aria-live="polite">Ready when you are</p>
-                        <div class="run-progress-slot">
-                            <div id="run-progress" role="status" hidden>
-                                <span class="busy-indicator" aria-hidden="true">⏳</span>
-                                <span id="run-elapsed">Running…</span>
-                            </div>
+                        <div class="config-row">
+                            <form id="role-form" aria-label="Session role">
+                                <label for="session-role-select">Role</label>
+                                <select id="session-role-select" disabled></select>
+                                <button id="apply-role" type="submit" disabled>Apply</button>
+                            </form>
+                            <form id="working-dir-form" aria-label="Session working directory">
+                                <label for="session-working-dir">Working dir</label>
+                                <input id="session-working-dir" placeholder="/path/to/project" title="Existing directory on the server; used on the next send" autocomplete="off" required disabled />
+                                <button id="apply-working-dir" type="submit" disabled>Apply</button>
+                            </form>
+                        </div>
+                        <div class="config-row">
+                            <form id="reasoning-form" aria-label="Session reasoning effort">
+                                <label for="reasoning-select">Reasoning</label>
+                                <select id="reasoning-select" title="Extended thinking effort for this session (in memory); applies to the next run"></select>
+                                <button id="apply-reasoning" type="submit" disabled>Apply</button>
+                            </form>
+                            <form id="model-form" aria-label="Session model">
+                                <label for="session-model">Model</label>
+                                <div class="model-field">
+                                    <input id="session-model" placeholder="provider:model" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="model-options" aria-autocomplete="list" disabled />
+                                    <ul id="model-options" role="listbox" aria-label="Model suggestions" hidden></ul>
+                                </div>
+                                <button id="apply-model" type="submit" disabled>Apply</button>
+                            </form>
                         </div>
                     </div>
+                    <!--<p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>-->
                 </header>
                 <div class="conversation-wrapper">
                     <section id="reasoning-preview" aria-label="Current reasoning" hidden>
@@ -188,10 +195,10 @@
                     </form>
                 </div>
             </main>
-            <aside id="activity" aria-label="Activities">
+            <aside id="activity" aria-label="Context">
                 <header>
-                    <h2>Activities</h2>
-                    <p>Tools, thoughts & progress</p>
+                    <h2>Context</h2>
+                    <p>Reasoning, compaction & context</p>
                 </header>
                 <div id="events" role="log" aria-label="Activities">
                     <div id="live-progress"></div>

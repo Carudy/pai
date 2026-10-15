@@ -81,12 +81,13 @@ focusing the field shows every suggestion, typing filters it, and choosing one
 fills the field. The field still accepts any configured `provider:model`, with
 spaces around the colon normalized; suggestions are not an allowlist.
 
-The header keeps a compact settings grid (Role, Model, and Working dir, each with
-Apply; wrapping on narrow screens), a Rename button, and a light/dark theme switch (remembered in
+The header keeps a compact settings grid (Role, Reasoning, Working dir, and
+Model, each with Apply; it collapses to one column on narrow screens), a Rename
+button, and a light/dark theme switch (remembered in
 `localStorage`; light is the default, seeded from the system preference on a
-first visit). The status bar is a fixed height and truncates, so the header does
-not reflow as the state text changes; the workspace and token usage share one
-line. The conversation loads only the most recent turns and appends older ones as
+first visit). The run status rides in the title row beside the session name: a
+fixed height that truncates, so the header does not reflow as the state text
+changes, with token usage pinned at the end of the line. The conversation loads only the most recent turns and appends older ones as
 the reader scrolls to the top (there is no "More history" button); two floating
 buttons ride over the timeline — ↑ jumps to the previous user instruction and ↓
 to the newest message, each shown only when it would do something. Both panels are bounded: the
@@ -210,6 +211,13 @@ rejected; there is no URL authentication.
   `trust_all` in the snapshot. A blank/over-length name is 400 and a missing
   session 404. Enabling it also resolves a confirmation already pending.
 
+- `GET /api/reasoning?name=...`: `{ "reasoning": "none"|"low"|"medium"|"high",
+  "options": [...] }` — the session's in-memory override, else the configured
+  `[app] reasoning` default. `POST /api/reasoning`: `{ "name": "...",
+  "reasoning": "..." }`; 200 `{ "ok": true }`. Changing it retires the idle
+  worker (like the model) and applies to the next run; the override is
+  per-session and in memory, never written to config. An unknown effort is 400.
+
 Send/steer/cancel/reply success is 202 (login/model/working-dir/rename/delete 200, create 201), not a promise that the task completed. Stale
 prompt IDs are 409, missing live workers 404, full capacity/queues 429, closed
 manager 503, malformed/invalid actions 400. JSON must be a single object with
@@ -230,7 +238,12 @@ parser errors, and replies over 100,000 characters fall back to literal text.
 Other model/history/event content uses DOM textContent. It keeps a
 bounded live event pane, renders assistant JSON readably, displays tool-call
 Diff previews and reply cards, and replaces history on state refresh rather
-than treating transient SSE output as durable turns. Snapshots recover pending
+than treating transient SSE output as durable turns. Turn cards show their
+`turn.At` timestamp, and token counts are compacted to `k`/`M`. The right-hand
+**Context** panel logs only context-lifecycle events — finished reasoning blocks
+and context notices such as compaction — never tools or run progress, so the
+context's evolution stays legible. A Reasoning dropdown sets the session's
+effort (in memory; applies to the next run). Snapshots recover pending
 prompt titles/IDs and retained `pending.tool` approval context (native core
 keys `Name`, `Target`, `Dir`, `Detail`, `Reason`, `Diff`) on reconnect, page reload, and
 session switch, together with `pending.untrusted` (what a confirmation can

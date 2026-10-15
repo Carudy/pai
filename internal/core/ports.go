@@ -16,7 +16,7 @@ import (
 // -ldflags "-X github.com/Carudy/pai/internal/core.Version=<tag>", so a released
 // binary reports the exact tag it was built from. The value here is the fallback
 // for local builds (`go build` / `go install`); keep it at the latest release.
-var Version = "v0.8.4"
+var Version = "v0.8.5"
 
 // ErrAborted is returned by a Prompter when the user cancels a prompt (Ctrl+C,
 // Ctrl+D) rather than the prompt failing. Callers treat it as a clean stop.

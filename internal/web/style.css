@@ -394,19 +394,39 @@ header p {
     margin-top: 0;
 }
 
-/* Session settings wrap together on narrow screens, keeping Apply next to
-   each field rather than stretching controls across the header. */
+/* Session settings: two rows of label / control / Apply, sized to their content
+   rather than stretched across the header. The short selects (Role, Reasoning)
+   share the left column and the longer text inputs (Working dir, Model) the
+   right, so each pair lines up; a third control per row can be added later by
+   leaving the last grid track in place. */
 .session-config {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 4px 20px;
+    flex-direction: column;
+    gap: 4px;
     margin: 6px 0 2px;
+}
+
+/* Each row is its own grid so the two rows' columns line up only because the
+   forms in a column have equal widths. `max-content` keeps the block compact;
+   the empty third track reserves room for a future control. Collapses to one
+   column when the header gets narrow. */
+.config-row {
+    display: grid;
+    grid-template-columns: repeat(3, max-content);
+    gap: 4px 24px;
+    align-items: center;
+}
+
+@media (max-width: 1000px) {
+    .config-row {
+        grid-template-columns: max-content;
+    }
 }
 
 #role-form,
 #model-form,
-#working-dir-form {
+#working-dir-form,
+#reasoning-form {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -414,9 +434,14 @@ header p {
 }
 
 #role-form select,
-#model-form .model-field,
-#working-dir-form input {
-    width: 200px;
+#reasoning-form select {
+    width: 9rem;
+    min-width: 0;
+}
+
+#working-dir-form input,
+#model-form .model-field {
+    width: 17rem;
     min-width: 0;
 }
 
@@ -429,15 +454,27 @@ header p {
 #role-form select,
 #role-form button,
 #working-dir-form input,
-#working-dir-form button {
+#working-dir-form button,
+#reasoning-form select,
+#reasoning-form button {
     padding: 4px 8px;
     font-size: 12px;
 }
 
 #model-form label,
 #role-form label,
-#working-dir-form label {
+#working-dir-form label,
+#reasoning-form label {
     flex-shrink: 0;
+    width: 6.5rem;
+}
+
+/* The session Apply buttons are secondary to the primary actions (Send, Create). */
+#apply-role,
+#apply-model,
+#apply-working-dir,
+#apply-reasoning {
+    background: var(--soft);
 }
 
 /* Combobox: the input plus an always-visible suggestion dropdown. */
@@ -490,10 +527,14 @@ header p {
     opacity: 0.5;
 }
 
+/* The run status now rides in the title row (no separate status line): it takes
+   the leftover width, and its fixed height keeps the row from reflowing as the
+   text changes. */
 .status-row {
     display: flex;
     align-items: center;
     flex-wrap: nowrap;
+    flex: 1 1 auto;
     gap: 4px 12px;
     min-width: 0;
     height: 26px;
@@ -520,15 +561,6 @@ header p {
 #run-elapsed {
     font-variant-numeric: tabular-nums;
     min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-#workspace {
-    flex: 1 1 160px;
-    min-width: 0;
-    font-size: 11px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -694,6 +726,14 @@ header p {
 .turn pre {
     font-size: 13px;
     line-height: 1.75;
+}
+/* A turn's timestamp: a quiet footnote at the bottom of its card. */
+.turn-time {
+    display: block;
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--muted);
+    opacity: 0.85;
 }
 
 .badge {

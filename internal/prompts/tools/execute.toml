@@ -14,8 +14,11 @@ Run a shell command locally to check status, make changes, and so on. Unless the
 user says otherwise, commands run under bash on Unix-like systems and PowerShell
 on Windows. The command runs in the session working directory.
 
-To run it somewhere else, use the object form with "dir" — the tool changes
-directory for you. Do not prefix the command with `cd <dir> &&`: a prefix hides
-where the command runs and clutters the confirmation.
+To run cmds in specific path, use the object form with "dir" param.
+If not necessary, don't prefix the command with `cd <dir> &&`.
+
+Keep command output small. Sometimes cmd's output is truncated before it reaches you,
+so a broad command can silently hide the very line you needed. Prefer line
+ranges, `-A/-B` context, `--max-count`, and `head`/`tail` over dumping.
 '''
-schema = '"<shell command>" — or {"cmd": "<shell command>", "dir": "<directory>"} to run it in a different directory'
+schema = '"<shell command>" — or {"cmd": "<shell command>", "dir": "<directory>"} to run it in a specific directory'

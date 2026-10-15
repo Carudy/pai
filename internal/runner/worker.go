@@ -86,6 +86,9 @@ func (w *worker) run() {
 	}
 	if err == nil && w.ctx.Err() == nil {
 		copyCfg := *cfg
+		if v := w.reasoningOverride(); v != "" {
+			copyCfg.ReasoningEffort = provider.ReasoningEffort(v)
+		}
 		rt := &role.Runtime{WorkingDir: cwd, Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w, Interactive: true, SessionName: w.name}
 		w.m.mu.Lock()
 		w.rt = rt
@@ -131,6 +134,14 @@ func (w *worker) snapshotLocked() Snapshot {
 		}
 	}
 	return s
+}
+
+// reasoningOverride returns the session's in-memory reasoning effort, or "" when
+// it has none (the run then keeps the configured default).
+func (w *worker) reasoningOverride() string {
+	w.m.mu.Lock()
+	defer w.m.mu.Unlock()
+	return w.m.reasoning[w.name]
 }
 
 func (w *worker) Awaiting() {

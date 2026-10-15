@@ -449,6 +449,20 @@ func (r *serveRecorder) AppendTurn(t core.Turn) error {
 	return nil
 }
 
+// ReasoningDefault reports the configured [app] reasoning effort, the default for
+// sessions that carry no in-memory override.
+func (b *serveBackend) ReasoningDefault() (string, error) {
+	cfg, err := config.LoadUserConfig()
+	if err != nil {
+		return "", err
+	}
+	if cfg.ReasoningEffort == "" {
+		return string(provider.ReasoningEffortNone), nil
+	}
+	return string(cfg.ReasoningEffort), nil
+}
+
 var _ runner.Backend = (*serveBackend)(nil)
 var _ runner.ModelBackend = (*serveBackend)(nil)
 var _ runner.WorkingDirSetter = (*serveBackend)(nil)
+var _ runner.ReasoningBackend = (*serveBackend)(nil)

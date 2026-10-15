@@ -61,6 +61,12 @@ type ModelBackend interface {
 	SetModel(name, model string) error
 }
 
+// ReasoningBackend is optional; it reports the configured default reasoning
+// effort (from config.toml), used when a session has no in-memory override.
+type ReasoningBackend interface {
+	ReasoningDefault() (string, error)
+}
+
 // RewindBackend is optional; truncating a session's persisted history must not
 // require a backend that cannot persist. backup requests a snapshot of the
 // dropped turns (nil lets the backend choose its configured default).

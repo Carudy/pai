@@ -33,7 +33,8 @@ function browser() {
       close() { this.closed = true; }
     }
     const storage = new Map();
-    const context = vm.createContext({URL, Date: {now: () => now}, EventSource: MockEventSource,
+    class MockDate extends Date { static now() { return now; } }
+    const context = vm.createContext({URL, Date: MockDate, EventSource: MockEventSource,
       localStorage: {getItem: key => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key)},
       confirm: () => true,
       prompt: () => 'renamed',
@@ -183,7 +184,7 @@ assert.match(page.pending().textContent, /-old\n\+new/, 'session switch recovers
 const reloaded = browser(); show(reloaded);
 assert.match(reloaded.pending().textContent, /-old\n\+new/, 'fresh page recovers snapshot diff');
 const turns = [
-  {Role:'assistant',Content:JSON.stringify({action:'done',payload:'All set.\n```sh\necho ok\n```'})},
+  {Role:'assistant',At:'2026-01-02T03:04:05Z',Content:JSON.stringify({action:'done',payload:'All set.\n```sh\necho ok\n```'})},
   {Role:'assistant',Content:JSON.stringify({action:'tool',toolname:'edit',reason:'Fix typo',payload:{path:'/file',old_string:'old',new_string:'<script>alert(1)</script>'}})},
   {Role:'assistant',Content:'<img src=x onerror=alert(1)>'}
 ];
@@ -194,6 +195,16 @@ assert.match(page.get('history').textContent, /\+<script>alert\(1\)<\/script>/);
 function descendants(node) { return [node, ...node.children.flatMap(descendants)]; }
 assert.match(page.get('history').textContent, /echo ok/);
 assert.ok(!descendants(page.get('history')).some(node => ['script','img'].includes(node.tag)), 'hostile text never becomes markup');
+// A turn's timestamp is rendered from turn.At; a turn without one gets none.
+const stamps = descendants(page.get('history')).filter(node => node.tag === 'time' && node.className === 'turn-time');
+assert.equal(stamps.length, 1, 'only the turn carrying At gets a timestamp');
+assert.match(stamps[0].textContent, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'the timestamp is a formatted date/time');
+// Token totals compact large numbers (k/M).
+page.run("usageSnapshot({usage_calls:2, usage:{Prompt:1500,Completion:20,Total:1520}, total_usage:{Prompt:2500000,Completion:1200,Total:2501200}, context_tokens:512000})");
+assert.match(page.get('token-usage').textContent, /total 2\.5M/, 'large totals use M');
+assert.match(page.get('token-usage').textContent, /received 1\.2k/, 'thousands use k');
+assert.match(page.get('token-usage').textContent, /context 1\.5k \/ 512k/, 'context fill is compact');
+page.run("usageSnapshot({})");
 page.run("activity({type:'reasoning',data:'first '}); activity({type:'reasoning',data:'second'})");
 assert.ok(!page.get('live-progress').textContent.includes('first second'), 'live reasoning stays out of the activity log');
 assert.equal(page.get('reasoning-preview').hidden, false);
@@ -202,18 +213,18 @@ assert.equal(page.get('reasoning-text').scrollTop, 1000);
 page.run("historyTotal=0; activity({type:'tool_call',data:{Name:'execute',Detail:'echo ok'}}); activity({type:'tool_output',data:'ok\\n'}); activity({type:'tool_result',data:{OK:true,Message:'finished'}})");
 assert.equal(page.get('reasoning-preview').hidden, true);
 assert.equal(page.get('reasoning-text').textContent, '');
-assert.equal(page.get('live-progress').children.length, 4, 'finished reasoning block plus three tool cards');
-assert.match(page.get('live-progress').textContent, /first second/, 'finished reasoning is appended to the activity log');
-assert.match(page.get('live-progress').textContent, /echo ok/);
+assert.equal(page.get('live-progress').children.length, 1, 'only the finished reasoning block is logged; tools are not');
+assert.match(page.get('live-progress').textContent, /first second/, 'finished reasoning is appended to the context log');
+assert.ok(!page.get('live-progress').textContent.includes('echo ok'), 'tool calls and output are not logged in the context panel');
 page.run('durable=' + JSON.stringify([{Role:'assistant',Kind:'output',Content:JSON.stringify({action:'tool',toolname:'execute',payload:'echo ok'})},{Role:'user',Kind:'tool_result',Content:'[execute result]\nCMD: echo ok\nok'}]) + '; paintConversation()');
 assert.equal(page.get('history').children.length, 1, 'persisted tool result nests under its call');
-assert.equal(page.get('live-progress').children.length, 4, 'durable refresh preserves the independent activity log');
+assert.equal(page.get('live-progress').children.length, 1, 'durable refresh preserves the independent context log');
 assert.match(page.get('history').textContent, /Execution log/, 'streamed output survives durable refresh');
 page.run('paintConversation()');
 assert.equal(page.get('history').children.length, 1, 'repeat refresh remains idempotent');
 assert.equal(descendants(page.get('history')).filter(n => n.tag === 'summary' && n.textContent === 'Result').length, 1);
 page.run("historyTotal=2; activity({type:'tool_call',data:{Name:'execute',Detail:'echo ok'}})");
-assert.equal(page.get('live-progress').children.length, 5, 'repeated command is a new activity event');
+assert.equal(page.get('live-progress').children.length, 1, 'tool calls are not logged in the context panel');
 assert.equal(page.get('events').scrollTop, 1000, 'activity always follows latest');
 assert.equal(page.get('conversation').scrollTop, 0, 'tool activity does not scroll chat');
 page.get('conversation').scrollTop = 123;
@@ -231,9 +242,13 @@ page.run("selected='one'; snapshot(" + JSON.stringify({state:'busy',queued:0,pen
 assert.match(page.pending().textContent, /outside trusted paths: \/etc/, 'a path confirmation is worded as a path, not a command');
 page.run("selected='one'; snapshot(" + JSON.stringify({state:'busy',queued:0,pending:{id:'dir',kind:'confirm',title:'Execute this command?',tool:{Name:'execute',Target:'bash',Dir:'/var/log',Detail:'df -h'}}}) + ')');
 assert.match(page.pending().textContent, /\(in \/var\/log\)/, 'the confirmation shows the working directory');
-page.run("for(let i=0;i<120;i++) activity({type:'notice',data:'event '+i}); activity({type:'output',data:'x'.repeat(20000)}); activity({type:'output',data:'tail'})");
-assert.equal(page.get('live-progress').children.length, 60, 'activity is bounded');
-assert.equal(page.get('live-progress').lastElementChild.lastElementChild.textContent.length, 16000);
+// Tools are not logged; distinct context cards (a flushed reasoning block each)
+// bound the panel, and consecutive output coalesces into one capped card.
+page.run("$('live-progress').replaceChildren(); liveCard=null; liveText=''; liveType=''; for(let i=0;i<120;i++){ activity({type:'reasoning',data:'consideration '+i}); activity({type:'tool_call',data:{Name:'execute',Detail:'x'}}) }");
+assert.equal(page.get('live-progress').children.length, 60, 'context log is bounded');
+page.run("$('live-progress').replaceChildren(); liveCard=null; liveText=''; liveType=''; activity({type:'output',data:'x'.repeat(20000)}); activity({type:'output',data:'tail'})");
+assert.equal(page.get('live-progress').children.length, 1, 'consecutive output coalesces into one card');
+assert.equal(page.get('live-progress').lastElementChild.lastElementChild.textContent.length, 16000, 'streamed text is capped');
 assert.ok(page.get('live-progress').lastElementChild.textContent.endsWith('tail'), 'stream chunks coalesce');
 page.run("activity({type:'notice',data:'trusted from now on: /srv'}); toast('b'); toast('c')");
 assert.equal(page.run('toastHost.children.length'), 3, 'toasts are bounded');
@@ -369,7 +384,6 @@ async function verifyMetadata() {
   p.run("connect=()=>{}; loadSnapshot=async()=>{}; api=async()=>({turns:[],total:0,cwd:'/fixed',role:'custom',model:'provider:model',api_key:'secret'})");
   await p.run("select('one', '/initial')");
   assert.equal(p.get('title').textContent, 'one');
-  assert.equal(p.get('workspace').textContent, 'Workspace: /fixed');
   assert.equal(p.run('savedRole'), 'custom');
   assert.equal(p.get('session-model').value, 'provider:model');
   p.run("api=()=>new Promise(resolve=>globalThis.finishHistory=resolve)");
@@ -449,6 +463,7 @@ for (const match of markup.matchAll(/<\/?([a-z][a-z0-9-]*)\b[^>]*>/gi)) {
 assert.deepEqual(stack, []);
 assert.match(markup, /Apply<\/button>\s*<\/form>/);
 assert.match(markup, /<input id="session-model"[^>]*placeholder="provider:model"/);
+assert.match(markup, /<select id="reasoning-select"/);
 assert.match(markup, /<ul id="model-options"[^>]*role="listbox"/);
 assert.match(markup, /Suggestions are the configured default and saved session models/);
 assert.match(markup, /Type any configured provider:model/);

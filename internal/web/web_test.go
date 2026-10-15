@@ -891,10 +891,11 @@ func TestPageLayoutNesting(t *testing.T) {
 		"conversation-wrapper": "main", "conversation": "conversation-wrapper",
 		"pending": "conversation-wrapper", "history": "conversation",
 		"composer-dock": "main", "composer": "composer-dock", "activity": "app",
-		"session-config": "header", "model-form": "session-config", "role-form": "session-config",
+		"session-config": "header", "config-row": "session-config", "model-form": "config-row", "role-form": "config-row",
+		"working-dir-form": "config-row", "reasoning-form": "config-row",
 		"apply-model": "model-form", "reasoning-preview": "conversation-wrapper", "prev-input": "conversation-wrapper",
 		"to-bottom": "conversation-wrapper", "session-role": "role-fieldset",
-		"session-title-row": "header", "workspace": "session-title-row", "token-usage": "session-title-row", "state": "status-row",
+		"session-title-row": "header", "token-usage": "session-title-row", "state": "status-row",
 	} {
 		if parents[child] != parent {
 			t.Errorf("%s parent = %q, want %q", child, parents[child], parent)

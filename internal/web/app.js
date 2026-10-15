@@ -9,6 +9,7 @@ let selected = '', generation = 0, stream = null, retry = null, refreshTimer = n
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
 let pendingID = null, pendingSession = null;
 let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
+let savedReasoning = '', reasoningDirty = false, reasoningApplying = false;
 let modelList = [];
 // The browser remembers the open session in localStorage, never a cookie: it is
 // only needed after the page loads, so it need not travel on every request, and
@@ -368,6 +369,7 @@ function controls() {
   // Auto-reply needs only a session: it sends a canned instruction, not the draft.
   $('apply-plan').disabled = !ready;
   trustAllControls();
+  reasoningControls();
   $('rename-session').hidden = !ready;
   $('rename-session').disabled = !ready || sessionBusy;
   $('session-label').hidden = !ready;
@@ -409,6 +411,47 @@ async function setTrustAll(on) {
     if (on) toast('Trusting every command and file change for this session');
   } catch (e) { error(e); $('trust-all').checked = !on; }
   finally { trustAllApplying = false; trustAllControls(); }
+}
+// ── Reasoning effort (per-session, in-memory) ────────────────────
+// Changing it retires the idle runtime, like the model: the override lives on the
+// server for the session (no persistence) and applies to the next run.
+function reasoningControls() {
+  const select = $('reasoning-select');
+  const disabled = !selected || modelBlocked || reasoningApplying;
+  select.disabled = disabled;
+  $('apply-reasoning').disabled = disabled || !select.value || select.value === savedReasoning;
+}
+function reasoningMetadata(value) {
+  savedReasoning = typeof value === 'string' ? value.trim() : '';
+  if (!reasoningDirty) $('reasoning-select').value = savedReasoning || 'none';
+  reasoningControls();
+}
+async function loadReasoning() {
+  const version = generation, name = selected;
+  try {
+    const data = await api('reasoning' + (name ? '?name=' + encodeURIComponent(name) : ''));
+    if (version !== generation || selected !== name) return;
+    const select = $('reasoning-select');
+    const options = Array.isArray(data.options) && data.options.length ? data.options : ['none','low','medium','high'];
+    if (!select.children.length) select.replaceChildren(...options.map(value => { const option = text('option', value); option.value = value; return option; }));
+    reasoningMetadata(data.reasoning);
+  } catch (_) { if (version === generation && selected === name) reasoningControls(); }
+}
+async function applyReasoning(e) {
+  e.preventDefault();
+  if ($('apply-reasoning').disabled) return;
+  const name = selected, effort = $('reasoning-select').value;
+  let version = generation;
+  reasoningApplying = true; reasoningControls(); $('error').textContent = '';
+  try {
+    await api('reasoning', {name, reasoning: effort});
+    if (version !== generation) return;
+    // Retiring the runtime closes SSE; reconnect under a new generation.
+    disconnect(); version = ++generation; historyRequest++;
+    reasoningDirty = false; reasoningMetadata(effort);
+    await loadSnapshot(); if (version === generation) connect();
+  } catch (err) { if (name === selected && version === generation) { error(err); await loadSnapshot(); } }
+  finally { reasoningApplying = false; reasoningControls(); }
 }
 // ── Rendering ───────────────────────────────────────────────
 function diff(value) {
@@ -494,12 +537,24 @@ function response(node, data) {
   if (Object.keys(extra).length) rawDetails(node, extra);
 }
 
+// A turn's timestamp, shown as a compact local date/time on its card.
+function formatTime(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+function stampTime(node, value) {
+  const label = formatTime(value);
+  if (label) node.append(text('time', label, 'turn-time'));
+}
 function renderTurns(turns) {
   let toolCard = null;
   const cards = [];
   (turns || []).forEach((turn, i) => {
     if (turn.Kind === 'tool_result') {
-      if (!toolCard) { toolCard = text('article', '', 'turn assistant tool-card'); toolCard.append(text('div', '⚙ Tool result', 'badge')); $('history').append(toolCard); }
+      if (!toolCard) { toolCard = text('article', '', 'turn assistant tool-card'); toolCard.append(text('div', '⚙ Tool result', 'badge')); stampTime(toolCard, turn.At); $('history').append(toolCard); }
       cards.push(toolCard); logDetails(toolCard, 'Result', turn.Content); toolCard = null; return;
     }
     const parsed = turn.Role === 'assistant' ? parsedResponse(turn.Content) : null;
@@ -515,6 +570,7 @@ function renderTurns(turns) {
       article.append(button);
     }
     if (parsed) response(article, parsed); else article.append(prose(turn.Content));
+    stampTime(article, turn.At);
     $('history').append(article); cards.push(article); toolCard = parsed && parsed.action === 'tool' ? article : null;
   });
   return cards;
@@ -582,8 +638,6 @@ async function history(reset = false, forceBottom = false) {
   if (next.length > historyLimit && follow) { trimmed = next.length - historyLimit; next.splice(0, trimmed); }
   durable = next; historyOffset = offset + trimmed; historyTotal = meta.total;
   if (changed || initial) paintConversation();
-  $('workspace').textContent = 'Workspace: ' + (meta.cwd || 'server working directory');
-  $('workspace').title = $('workspace').textContent;
   sessionMetadata(meta);
   if (!durable.length && (changed || initial)) { const welcome = text('div', '', 'empty'); welcome.append(text('h3', 'Best partner, PAI!'), text('p', 'Give PAI an instruction below.')); $('history').append(welcome); }
   if (forceBottom || initial || (reset && changed && follow)) scrollBottom();
@@ -597,7 +651,12 @@ async function refreshHistory() {
 }
 function scheduleHistory() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshHistory, 150); }
 // ── Snapshot, prompts, live updates ─────────────────────────
-function tokenCount(n) { return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n); }
+function tokenCount(n) {
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return String(n);
+}
 function usageSnapshot(s) {
   const node = $('token-usage');
   node.hidden = !(s.usage_calls > 0);
@@ -610,8 +669,8 @@ function usageSnapshot(s) {
   const budget = s.context_tokens > 0
     ? `context ${tokenCount(latest.Prompt)} / ${tokenCount(s.context_tokens)} (${Math.round(100 * latest.Prompt / s.context_tokens)}%) · `
     : '';
-  node.textContent = `Tokens · ${budget}sent ${total.Prompt} · received ${total.Completion} · total ${total.Total} (this run)`;
-  node.title = `Latest request: sent ${latest.Prompt} · received ${latest.Completion} · total ${latest.Total}.`
+  node.textContent = `Tokens · ${budget}sent ${tokenCount(total.Prompt)} · received ${tokenCount(total.Completion)} · total ${tokenCount(total.Total)} (this run)`;
+  node.title = `Latest request: sent ${tokenCount(latest.Prompt)} · received ${tokenCount(latest.Completion)} · total ${tokenCount(latest.Total)}.`
     + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${s.context_tokens} tokens.` : '')
     + ' This run covers this worker runtime only; resuming a retired runtime starts fresh.';
 }
@@ -731,14 +790,15 @@ function connect() {
 async function select(name, cwd) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
   try { localStorage.setItem(SESSION_KEY, name); } catch {}
-  clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; modelBlocked = true; sessionMetadata();
-    $('title').textContent = name; $('workspace').textContent = 'Workspace: ' + (cwd || 'server working directory');
+  clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = true; sessionMetadata();
+    $('title').textContent = name;
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
     $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   updateJumpButtons();
   $('conversation').scrollTop = 0; controls();
   loadTrustAll();
+  loadReasoning();
   for (const row of $('sessions').children) { const active = row.dataset?.name === name; row.classList.toggle('selected', active); const open = row.firstElementChild; if (open) open.setAttribute('aria-current', active ? 'page' : 'false'); }
   $('app').classList.remove('sessions-open'); $('toggle-sessions').setAttribute('aria-expanded', 'false');
   try { await history(true, true); } catch (e) { if (e.status !== 404) error(e); }
@@ -821,12 +881,12 @@ function clearWorkspace() {
   try { localStorage.removeItem(SESSION_KEY); } catch {}
   durable = []; liveSteps = []; currentStep = null; thinking = '';
   liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0;
-  sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; modelBlocked = false;
+  sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = false;
   $('trust-all').checked = false;
   $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   clearReasoning(); usageSnapshot({});
+  reasoningMetadata('');
   $('title').textContent = 'Select or create a session';
-  $('workspace').textContent = 'Workspace — select a session';
   sessionMetadata();
   const empty = text('div', '', 'empty');
   empty.append(text('h3', 'Best partner, PAI!'), text('p', 'Open a named session to start working with PAI.'));
@@ -835,6 +895,10 @@ function clearWorkspace() {
   controls();
 }
 // ── Activity feed ───────────────────────────────────────────
+// The right panel logs only context-lifecycle events — what changes the prompt the
+// model sees (reasoning, compaction, context notices). Tools and run progress
+// drive the conversation and the run indicator instead of this panel.
+const contextEventTypes = new Set(['output']);
 function activity(event) {
   const type = event.type, data = event.data;
   // Phased snapshots are authoritative even when event output is stale.
@@ -857,17 +921,19 @@ function activity(event) {
     return;
   }
   if (type !== 'notice' && type !== 'snapshot') flushReasoning();
-  const streaming = ['tool_output','output'].includes(type);
-  if (!streaming || liveType !== type || !liveCard) {
-    liveCard = text('article', '', 'activity-card');
-    liveCard.append(text('div', type.replaceAll('_', ' '), 'card-heading'), text('pre', ''));
-    $('live-progress').append(liveCard); liveText = ''; liveType = type;
-    while ($('live-progress').children.length > activityLimit) $('live-progress').firstElementChild.remove();
+  if (contextEventTypes.has(type)) {
+    const streaming = ['tool_output','output'].includes(type);
+    if (!streaming || liveType !== type || !liveCard) {
+      liveCard = text('article', '', 'activity-card');
+      liveCard.append(text('div', type.replaceAll('_', ' '), 'card-heading'), text('pre', ''));
+      $('live-progress').append(liveCard); liveText = ''; liveType = type;
+      while ($('live-progress').children.length > activityLimit) $('live-progress').firstElementChild.remove();
+    }
+    liveText = (liveText + (typeof data === 'string' ? data : JSON.stringify(data, null, 2))).slice(-liveTextLimit);
+    liveCard.lastElementChild.textContent = liveText;
+    liveCard.lastElementChild.scrollTop = liveCard.lastElementChild.scrollHeight;
+    activityScroll();
   }
-  liveText = (liveText + (typeof data === 'string' ? data : JSON.stringify(data, null, 2))).slice(-liveTextLimit);
-  liveCard.lastElementChild.textContent = liveText;
-  liveCard.lastElementChild.scrollTop = liveCard.lastElementChild.scrollHeight;
-  activityScroll();
   if (type === 'tool_call') {
     currentStep = {call:data, floor:Math.max(0, historyTotal - 1), output:'', result:null};
     liveSteps.push(currentStep); if (liveSteps.length > 100) liveSteps.shift(); scheduleHistory();
@@ -987,8 +1053,10 @@ function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
 }
 // ── Event wiring ────────────────────────────────────────────
-$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; showApp(); const list = await sessions(true); await Promise.all([roles(), models()]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
+$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; showApp(); const list = await sessions(true); await Promise.all([roles(), models(), loadReasoning()]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
 $('model-form').onsubmit = applyModel;
+$('reasoning-form').onsubmit = applyReasoning;
+$('reasoning-select').onchange = () => { reasoningDirty = true; reasoningControls(); };
 $('role-form').onsubmit = applyRole;
 $('working-dir-form').onsubmit = applyWorkingDir;
 $('session-working-dir').oninput = () => { cwdDirty = true; workingDirControls(); };
@@ -1035,3 +1103,4 @@ updateJumpButtons();
 sessions(true).then(list => { showApp(); restoreSession(list); }).catch(bootFailed);
 roles().catch(bootFailed);
 models().catch(bootFailed);
+loadReasoning();
