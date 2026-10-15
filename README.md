@@ -362,13 +362,12 @@ Helps read, write, refactor, and test code in the current repository. Tools:
 - **edit** — Replace exact text in a file, reviewed as a diff before it is written
 - **write** — Create a new file from data, not a shell here-doc (never overwrites)
 - **websearch** — Look up libraries, APIs, and error messages
-- **papersearch** — Find research papers, original abstracts, and identifiers
 
 It deliberately has no **remote** tool: a role's tool list is its capability
 boundary, not just a prompt hint.
 
 It also folds the repository's own instructions into its system prompt: if
-`AGENTS.md` (or `CLAUDE.md`) exists in the working directory or any parent, its
+`AGENTS.md` exists in the working directory or any parent, its
 contents are appended as *project instructions* — subordinate to the role rules
 and to the response format. See `context_files` under Custom roles.
 

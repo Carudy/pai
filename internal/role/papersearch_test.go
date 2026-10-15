@@ -34,11 +34,11 @@ func TestPapersearchCapabilities(t *testing.T) {
 			t.Fatal(err)
 		}
 		switch name {
-		case "devops":
+		case "coder", "devops":
 			if rp.HasTool("papersearch") {
-				t.Error("devops should not have papersearch")
+				t.Errorf("%s should not have papersearch", name)
 			}
-		case "coder", "latex":
+		case "latex":
 			if !rp.HasTool("papersearch") {
 				t.Errorf("research-capable role %s lacks papersearch", name)
 			}
