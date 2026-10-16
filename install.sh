@@ -59,12 +59,14 @@ else
 fi
 
 # headers URL — response headers on stdout. Never fails: a 3xx is expected here,
-# and an empty result is reported by the caller.
+# and an empty result is reported by the caller. stdin is /dev/null so no client
+# can consume it: xh otherwise treats a non-TTY stdin as the request body, which
+# would eat the rest of this script when it runs as `curl … | sh`.
 headers() {
 	if [ "$HTTP" = xh ]; then
-		xh --print=h GET "$1" 2>/dev/null || true
+		xh --print=h GET "$1" </dev/null 2>/dev/null || true
 	else
-		curl -fsSI "$1" 2>/dev/null || true
+		curl -fsSI "$1" </dev/null 2>/dev/null || true
 	fi
 }
 
@@ -72,12 +74,12 @@ headers() {
 # xh's download chatter goes to stderr and is shown only when the fetch fails.
 download() {
 	if [ "$HTTP" = xh ]; then
-		if ! xh_err="$(xh --check-status --follow --download --output "$2" GET "$1" 2>&1 >/dev/null)"; then
+		if ! xh_err="$(xh --check-status --follow --download --output "$2" GET "$1" </dev/null 2>&1 >/dev/null)"; then
 			printf '%s\n' "$xh_err" >&2
 			err "download failed: $1"
 		fi
 	else
-		curl -fsSL -o "$2" "$1" || err "download failed: $1"
+		curl -fsSL -o "$2" "$1" </dev/null || err "download failed: $1"
 	fi
 }
 
