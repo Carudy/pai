@@ -1298,6 +1298,159 @@ header p {
     flex-shrink: 0;
 }
 
+#show-context {
+    margin-top: 8px;
+    padding: 2px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--soft);
+    color: var(--muted);
+}
+
+/* ── Context inspector ─────────────────────────────────────── */
+/* A read-only view of the exact message list a send would use. It overlays the
+   conversation but stays below #pending (z-index 2), so an approval card is
+   never hidden behind it. */
+#context-view {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: none;
+    flex-direction: column;
+    background: var(--bg);
+}
+
+#app.context-open #context-view {
+    display: flex;
+}
+
+#context-view > header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 28px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+#context-view > header h2 {
+    margin: 0;
+    font-size: 15px;
+}
+
+#context-meta {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#context-close {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--soft);
+    color: var(--muted);
+}
+
+#context-body {
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 16px 28px 32px;
+    min-height: 0;
+}
+
+#context-body .ctx-config {
+    margin: 0 0 12px;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+#context-body .ctx-card {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel);
+    overflow: hidden;
+}
+
+#context-body .ctx-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 11px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+}
+
+#context-body .ctx-kind {
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+#context-body .ctx-seq,
+#context-body .ctx-size {
+    font-variant-numeric: tabular-nums;
+}
+
+#context-body .ctx-size {
+    margin-left: auto;
+}
+
+#context-body .ctx-badge {
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--soft);
+}
+
+#context-body .ctx-badge.state-elided,
+#context-body .ctx-badge.state-edited {
+    color: var(--accent);
+}
+
+#context-body .ctx-badge.state-dropped,
+#context-body .ctx-badge.state-summarized_away,
+#context-body .ctx-badge.state-capped {
+    opacity: 0.65;
+}
+
+#context-body .ctx-body {
+    padding: 8px 10px;
+    max-height: 320px;
+    overflow: auto;
+}
+
+#context-body .ctx-body pre,
+#context-body .ctx-body .prose {
+    margin: 0;
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+#context-body .ctx-muted {
+    margin-bottom: 4px;
+    font-size: 11px;
+    opacity: 0.55;
+}
+
+#context-body .ctx-system .ctx-body {
+    color: var(--muted);
+}
+
+#context-body details summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--muted);
+}
+
 #events {
     flex: 1 1 0;
     min-height: 0;

@@ -60,6 +60,12 @@ func (rp *RolePrompt) Messages(history []provider.Message) []provider.Message {
 	return msgs
 }
 
+// Head returns the byte-stable prompt head sent before the history.
+func (rp *RolePrompt) Head() string { return rp.head }
+
+// Tail returns the per-turn reminder sent after the history.
+func (rp *RolePrompt) Tail() string { return rp.tail() }
+
 // HasTool reports whether the role may use the named tool. This is the role's
 // capability boundary, not just a hint for the prompt.
 func (rp *RolePrompt) HasTool(name string) bool {

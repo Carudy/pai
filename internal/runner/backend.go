@@ -26,6 +26,38 @@ type History struct {
 	Total int         `json:"total"`
 }
 
+// ContextView is the ordered message list a session would send on its next
+// request: the system Head, one Card per stored turn, and the system Tail, plus
+// the model and compaction settings in effect. The context inspector renders it.
+type ContextView struct {
+	Head   string          `json:"head"`
+	Tail   string          `json:"tail"`
+	Cards  []ContextCard   `json:"cards"`
+	Model  string          `json:"model"`
+	Config ContextSettings `json:"config"`
+}
+
+// ContextCard is one stored turn's place in that list. Sent is empty when the
+// turn is not sent at all; State says why (see chat's State* constants).
+type ContextCard struct {
+	Seq      int    `json:"seq"`
+	Role     string `json:"role"`
+	Kind     string `json:"kind"`
+	Original string `json:"original"`
+	Sent     string `json:"sent"`
+	State    string `json:"state"`
+}
+
+// ContextSettings is the compaction configuration applied to a session, so a
+// client can show the knobs that produced the view.
+type ContextSettings struct {
+	KeepTurns       int `json:"keep_turns"`
+	ElideAfterTurns int `json:"elide_after_turns"`
+	ElideMinBytes   int `json:"elide_min_bytes"`
+	ElideHeadLines  int `json:"elide_head_lines"`
+	MaxTurns        int `json:"max_turns"`
+}
+
 // Prepare transfers ownership of its resources to the worker. Cleanup is called
 // exactly once, including when Prepare returns an error with a cleanup function.
 // Backend methods must be concurrency-safe; Prepare must return promptly.
@@ -65,6 +97,13 @@ type ModelBackend interface {
 // effort (from config.toml), used when a session has no in-memory override.
 type ReasoningBackend interface {
 	ReasoningDefault() (string, error)
+}
+
+// ContextBackend is optional; it reports the exact context a session would send,
+// for inspection. It reads persisted state only, so it must not require a live
+// runtime.
+type ContextBackend interface {
+	Context(name string) (ContextView, error)
 }
 
 // RewindBackend is optional; truncating a session's persisted history must not

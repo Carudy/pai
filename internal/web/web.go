@@ -388,6 +388,16 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, 200, history)
+	case "/api/context":
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		view, err := h.manager.Context(r.URL.Query().Get("name"))
+		if err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, view)
 	case "/api/snapshot":
 		if !method(w, r, http.MethodGet) {
 			return

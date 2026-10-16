@@ -177,6 +177,12 @@ rejected; there is no URL authentication.
   field.
 - `GET /api/history?name=...&offset=0&limit=100`: `runner.History` (native core
   turn keys `Role`, `Kind`, `Content`, `At`; metadata uses runner's JSON tags).
+- `GET /api/context?name=...`: `runner.ContextView` — the exact message list the
+  session would send: the role's system `head`, one `cards` entry per stored turn
+  (`original`, `sent`, and a `state` of `sent` | `elided` | `edited` | `dropped` |
+  `summarized_away` | `capped`), the system `tail`, the `model`, and the
+  compaction `config` in effect. It reads persisted state only, so it works with
+  or without a live runtime; 404 for an unknown session.
 - `GET /api/snapshot?name=...`: `runner.Snapshot`; live state, or a retained
   stopped/error snapshot after a failure (including initialization failures that
   happened before SSE subscribed). The manager retains at most 32 failed-session
@@ -242,7 +248,12 @@ than treating transient SSE output as durable turns. Turn cards show their
 `turn.At` timestamp, and token counts are compacted to `k`/`M`. The right-hand
 **Context** panel logs only context-lifecycle events — finished reasoning blocks
 and context notices such as compaction — never tools or run progress, so the
-context's evolution stays legible. A Reasoning dropdown sets the session's
+context's evolution stays legible. An **Inspect** button in that panel's header
+opens an overlay of the exact messages a send would use — the system head, one
+card per turn showing the original and what is actually sent (with a state badge
+for elided, edited, dropped, summarized-away and capped turns), and the tail,
+with the compaction settings that produced them. It is read-only and reconstructed
+from the store, so it shows what compaction did rather than a guess. A Reasoning dropdown sets the session's
 effort (in memory; applies to the next run). Snapshots recover pending
 prompt titles/IDs and retained `pending.tool` approval context (native core
 keys `Name`, `Target`, `Dir`, `Detail`, `Reason`, `Diff`) on reconnect, page reload, and

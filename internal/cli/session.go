@@ -104,7 +104,7 @@ func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, *ses
 	// tail after it. This overwrites sess.Turns, so the recap the caller prints
 	// (and the resumed history) is drawn from the replayed tail — summary plus the
 	// capped tail — not the full transcript still on disk.
-	sess.Turns = replayTurns(sess.Turns, cfg.SessionMaxTurns)
+	sess.Turns = chat.ReplayTurns(sess.Turns, cfg.SessionMaxTurns)
 	return store, sess, nil
 }
 
@@ -175,41 +175,6 @@ func toMessages(turns []core.Turn) []provider.Message {
 		msgs = append(msgs, provider.Message{Role: t.Role, Content: t.Content, Kind: t.Kind})
 	}
 	return msgs
-}
-
-// replayTurns selects the turns to replay into the model. A summary checkpoint
-// stands in for every turn before it, so only the last summary and the turns
-// after it are replayed — the summarized turns are neither resent nor
-// re-summarized, though they stay on disk. maxTurns then caps the tail, never
-// dropping the summary itself.
-func replayTurns(turns []core.Turn, maxTurns int) []core.Turn {
-	start := lastSummaryIndex(turns)
-	if start < 0 {
-		if maxTurns > 0 && len(turns) > maxTurns {
-			return turns[len(turns)-maxTurns:]
-		}
-		return turns
-	}
-
-	summary := turns[start]
-	rest := turns[start+1:]
-	if maxTurns > 0 && len(rest) > maxTurns {
-		rest = rest[len(rest)-maxTurns:]
-	}
-
-	out := make([]core.Turn, 0, len(rest)+1)
-	out = append(out, summary)
-	return append(out, rest...)
-}
-
-// lastSummaryIndex returns the index of the most recent summary checkpoint, or -1.
-func lastSummaryIndex(turns []core.Turn) int {
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Kind == core.KindSummary {
-			return i
-		}
-	}
-	return -1
 }
 
 // runSession handles `pai session <list|show|rm|rename>`.

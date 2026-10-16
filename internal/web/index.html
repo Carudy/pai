@@ -130,6 +130,14 @@
                         <h3>Thinking…</h3>
                         <div id="reasoning-text"></div>
                     </section>
+                    <section id="context-view" aria-label="Context to send">
+                        <header>
+                            <h2>Context to send</h2>
+                            <span id="context-meta"></span>
+                            <button id="context-close" type="button" title="Close the inspector">✕ Close</button>
+                        </header>
+                        <div id="context-body"></div>
+                    </section>
                     <div id="conversation">
                         <section id="history" aria-label="Conversation">
                             <div class="empty">
@@ -198,6 +206,15 @@
             <aside id="activity" aria-label="Context">
                 <header>
                     <h2>Context</h2>
+                    <button
+                        id="show-context"
+                        type="button"
+                        aria-controls="context-view"
+                        aria-expanded="false"
+                        title="Inspect the messages that will be sent"
+                    >
+                        Inspect
+                    </button>
                     <p>Reasoning, compaction & context</p>
                 </header>
                 <div id="events" role="log" aria-label="Activities">

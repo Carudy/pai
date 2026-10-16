@@ -71,6 +71,20 @@ func (backend) History(name string, offset, limit int) (runner.History, error) {
 func (b backend) Prepare(string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), error) {
 	return &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}, &questionProvider{confirm: b.confirm}, nil, nil, nil, nil
 }
+func (backend) Context(name string) (runner.ContextView, error) {
+	if name == "missing" {
+		return runner.ContextView{}, runner.ErrNotFound
+	}
+	return runner.ContextView{
+		Head:   "SYSTEM HEAD",
+		Tail:   "SYSTEM TAIL",
+		Model:  "test:model",
+		Cards:  []runner.ContextCard{{Seq: 1, Role: "user", Kind: "input", Original: "hello", Sent: "hello", State: "sent"}},
+		Config: runner.ContextSettings{KeepTurns: 3, MaxTurns: 20},
+	}, nil
+}
+
+var _ runner.ContextBackend = backend{}
 
 type failedPreparationBackend struct{ backend }
 
@@ -114,6 +128,28 @@ func TestSendPreparationFailureSnapshot(t *testing.T) {
 	}
 	if s.State != "stopped" || !strings.Contains(s.Error, "directory does not exist") {
 		t.Fatalf("failure was lost: %+v", s)
+	}
+}
+
+// The context inspector endpoint returns the view the backend supplies.
+func TestContextAPI(t *testing.T) {
+	h, _ := setup(t, "")
+	w := request(h, http.MethodGet, "/api/context?name=one", "", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("context: %d %s", w.Code, w.Body.String())
+	}
+	var v runner.ContextView
+	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	if v.Head == "" || v.Tail == "" || len(v.Cards) != 1 || v.Cards[0].Seq != 1 || v.Config.MaxTurns != 20 {
+		t.Fatalf("view = %+v", v)
+	}
+	if w := request(h, http.MethodGet, "/api/context?name=missing", "", nil, ""); w.Code != http.StatusNotFound {
+		t.Errorf("missing session = %d, want 404", w.Code)
+	}
+	if w := request(h, http.MethodPost, "/api/context?name=one", "", nil, "http://pai.test"); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST = %d, want 405", w.Code)
 	}
 }
 

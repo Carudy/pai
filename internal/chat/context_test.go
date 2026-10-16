@@ -151,3 +151,156 @@ func TestDescribeCompactionReportsFootprint(t *testing.T) {
 		t.Error("nothing old enough should report nothing")
 	}
 }
+
+func summaryTurn(body string) core.Turn {
+	return core.Turn{Role: "system", Kind: core.KindSummary, Content: "[conversation summary so far]\n" + body}
+}
+
+func turn(kind, content string) core.Turn { return core.Turn{Kind: kind, Content: content} }
+
+// A summary checkpoint stands in for everything before it, so replaying a session
+// sends the summary plus only the turns after it — not the turns it summarizes.
+func TestReplayTurnsStartsAtSummary(t *testing.T) {
+	turns := []core.Turn{
+		turn("input", "old request"),
+		turn("output", "old reply"),
+		turn("tool_result", "old observation"),
+		summaryTurn("what happened so far"),
+		turn("input", "new request"),
+		turn("output", "new reply"),
+	}
+
+	got := ReplayTurns(turns, 0)
+	if len(got) != 3 {
+		t.Fatalf("got %d turns, want summary + 2", len(got))
+	}
+	if got[0].Kind != core.KindSummary {
+		t.Errorf("first turn = %q, want the summary", got[0].Kind)
+	}
+	if got[1].Content != "new request" {
+		t.Errorf("replayed a summarized turn: %q", got[1].Content)
+	}
+}
+
+// The newest checkpoint wins; older ones are superseded and dropped.
+func TestReplayTurnsUsesLastSummary(t *testing.T) {
+	turns := []core.Turn{
+		summaryTurn("first"),
+		turn("input", "middle"),
+		summaryTurn("second"),
+		turn("input", "latest"),
+	}
+	got := ReplayTurns(turns, 0)
+	if len(got) != 2 || !strings.Contains(got[0].Content, "second") {
+		t.Fatalf("expected the second summary + latest, got %+v", got)
+	}
+}
+
+// max_turns caps the tail but never discards the checkpoint itself.
+func TestReplayTurnsCapsTailKeepingSummary(t *testing.T) {
+	turns := []core.Turn{
+		turn("input", "old"),
+		summaryTurn("so far"),
+		turn("input", "a"),
+		turn("output", "b"),
+		turn("input", "c"),
+	}
+	got := ReplayTurns(turns, 2)
+	if len(got) != 3 {
+		t.Fatalf("got %d turns, want summary + 2", len(got))
+	}
+	if got[0].Kind != core.KindSummary {
+		t.Errorf("summary was dropped by max_turns: %+v", got)
+	}
+	if got[1].Content != "b" || got[2].Content != "c" {
+		t.Errorf("tail = %q,%q, want b,c", got[1].Content, got[2].Content)
+	}
+}
+
+// Without a checkpoint, replay is the whole transcript capped to the tail.
+func TestReplayTurnsWithoutSummary(t *testing.T) {
+	turns := []core.Turn{turn("input", "a"), turn("output", "b"), turn("input", "c")}
+
+	if got := ReplayTurns(turns, 0); len(got) != 3 {
+		t.Errorf("max_turns=0 should replay everything, got %d", len(got))
+	}
+	got := ReplayTurns(turns, 2)
+	if len(got) != 2 || got[0].Content != "b" {
+		t.Errorf("tail = %+v, want b,c", got)
+	}
+}
+
+// ContextCards reports, per stored turn, what a request would send and why.
+func TestContextCardsStates(t *testing.T) {
+	big := "[cmd result]\nCOMMAND: df -h\nOUTPUT:\n" + strings.Repeat("row\n", 50)
+	cfg := config.ContextConfig{KeepTurns: 1, ElideMinBytes: 10, ElideHeadLines: 2}
+	turns := []core.Turn{
+		{Seq: 1, Role: "user", Kind: core.KindInput, Content: "pre"},
+		{Seq: 2, Role: "user", Kind: core.KindToolResult, Content: "[cmd result]\nok"},
+		{Seq: 3, Role: "system", Kind: core.KindSummary, Content: "[conversation summary so far]\nx"},
+		{Seq: 4, Role: "user", Kind: core.KindInput, Content: "old task"},
+		{Seq: 5, Role: "user", Kind: core.KindToolResult, Content: big},
+		{Seq: 6, Role: "user", Kind: core.KindInput, Content: "now"},
+	}
+	cards := ContextCards(turns, nil, cfg, 0)
+	want := map[int]string{
+		1: StateSummarizedAway, 2: StateSummarizedAway, 3: StateSent,
+		4: StateSent, 5: StateElided, 6: StateSent,
+	}
+	for _, c := range cards {
+		if want[c.Seq] != c.State {
+			t.Errorf("seq %d state = %q, want %q", c.Seq, c.State, want[c.Seq])
+		}
+	}
+	elided := cards[4]
+	if elided.Original != big || len(elided.Sent) >= len(big) || !strings.Contains(elided.Sent, "elided") {
+		t.Errorf("elided card should keep the original and show the trimmed send: %+v", elided)
+	}
+	for _, c := range cards {
+		if c.State == StateSummarizedAway && c.Sent != "" {
+			t.Errorf("a summarized-away card must not send anything: %+v", c)
+		}
+	}
+}
+
+// max_turns caps the replayed tail; those turns are reported as capped, not sent.
+func TestContextCardsCapped(t *testing.T) {
+	cfg := config.ContextConfig{}
+	turns := []core.Turn{
+		{Seq: 1, Kind: core.KindInput, Content: "a"},
+		{Seq: 2, Kind: core.KindOutput, Content: "b"},
+		{Seq: 3, Kind: core.KindInput, Content: "c"},
+		{Seq: 4, Kind: core.KindOutput, Content: "d"},
+	}
+	cards := ContextCards(turns, nil, cfg, 2)
+	if cards[0].State != StateCapped || cards[1].State != StateCapped {
+		t.Errorf("the first two should be capped: %+v", cards)
+	}
+	if cards[2].State != StateSent || cards[3].State != StateSent {
+		t.Errorf("the last two should be sent: %+v", cards)
+	}
+}
+
+// An override edits or drops a turn; a replaced body is what gets sent.
+func TestContextCardsOverrides(t *testing.T) {
+	cfg := config.ContextConfig{KeepTurns: 1, ElideMinBytes: 100}
+	turns := []core.Turn{
+		{Seq: 1, Kind: core.KindInput, Content: "a"},
+		{Seq: 2, Kind: core.KindToolResult, Content: "long output"},
+		{Seq: 3, Kind: core.KindInput, Content: "b"},
+	}
+	overrides := map[int]Override{
+		1: {Action: OverrideDrop},
+		2: {Action: OverrideReplace, Content: "short"},
+	}
+	cards := ContextCards(turns, overrides, cfg, 0)
+	if cards[0].State != StateDropped || cards[0].Sent != "" {
+		t.Errorf("dropped card = %+v", cards[0])
+	}
+	if cards[1].State != StateEdited || cards[1].Sent != "short" || cards[1].Original != "long output" {
+		t.Errorf("edited card = %+v", cards[1])
+	}
+	if cards[2].State != StateSent {
+		t.Errorf("untouched card = %+v", cards[2])
+	}
+}

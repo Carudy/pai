@@ -110,6 +110,167 @@ func keepFrom(history []provider.Message, turns int) int {
 	return 0
 }
 
+// ReplayTurns selects the turns to replay into the model. A summary checkpoint
+// stands in for every turn before it, so only the last summary and the turns
+// after it are replayed — the summarized turns are neither resent nor
+// re-summarized, though they stay on disk. maxTurns then caps the tail, never
+// dropping the summary itself. Callers on every frontend share this, so what the
+// CLI replays and what a served runtime replays cannot drift apart.
+func ReplayTurns(turns []core.Turn, maxTurns int) []core.Turn {
+	start := lastSummaryIndex(turns)
+	if start < 0 {
+		if maxTurns > 0 && len(turns) > maxTurns {
+			return turns[len(turns)-maxTurns:]
+		}
+		return turns
+	}
+
+	summary := turns[start]
+	rest := turns[start+1:]
+	if maxTurns > 0 && len(rest) > maxTurns {
+		rest = rest[len(rest)-maxTurns:]
+	}
+
+	out := make([]core.Turn, 0, len(rest)+1)
+	out = append(out, summary)
+	return append(out, rest...)
+}
+
+// lastSummaryIndex returns the index of the most recent summary checkpoint, or -1.
+func lastSummaryIndex(turns []core.Turn) int {
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].Kind == core.KindSummary {
+			return i
+		}
+	}
+	return -1
+}
+
+// ContextCard is one turn's place in the context-to-send: the stored Original,
+// what the model would actually receive (Sent, empty when nothing is sent), and
+// why they differ (State).
+type ContextCard struct {
+	Seq      int
+	Role     string
+	Kind     string
+	Original string
+	Sent     string
+	State    string // see State* below
+}
+
+// Context-card states. Everything except sent/elided/edited is *not* sent.
+const (
+	StateSent           = "sent"            // sent verbatim
+	StateElided         = "elided"          // sent with old tool output trimmed
+	StateEdited         = "edited"          // a user override replaced the text
+	StateDropped        = "dropped"         // a user override removed it
+	StateSummarizedAway = "summarized_away" // stands before the last summary checkpoint
+	StateCapped         = "capped"          // past session.max_turns
+)
+
+// Override action labels for Override.Action.
+const (
+	OverrideReplace = "replace"
+	OverrideDrop    = "drop"
+)
+
+// Override is a user's surgery on one stored turn, keyed by Turn.Seq.
+type Override struct {
+	Action  string // OverrideReplace | OverrideDrop
+	Content string // replacement text for OverrideReplace
+}
+
+// ApplyOverrides returns turns with user overrides applied: a replace swaps the
+// content, a drop removes the turn. Turns are matched by Seq, so order and
+// identity are preserved for everything that survives.
+func ApplyOverrides(turns []core.Turn, overrides map[int]Override) []core.Turn {
+	if len(overrides) == 0 {
+		return turns
+	}
+	out := make([]core.Turn, 0, len(turns))
+	for _, t := range turns {
+		o, ok := overrides[t.Seq]
+		if ok && o.Action == OverrideDrop {
+			continue
+		}
+		if ok && o.Action == OverrideReplace {
+			t.Content = o.Content
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// ContextCards reports, for every stored turn, what the next request would send
+// and why. It is the read-only half of the context inspector: the same selection
+// (ReplayTurns) and the same trimming (CompactHistory) the loop applies, reported
+// per turn instead of as one message list. The system head and tail are not
+// included — the role prompt composes those.
+//
+// A turn that is not in the replay window is summarized_away (it precedes the
+// last summary checkpoint) or capped (past max_turns); an override on such a turn
+// changes nothing about the send, so the card reports what is actually sent.
+func ContextCards(turns []core.Turn, overrides map[int]Override, cfg config.ContextConfig, maxTurns int) []ContextCard {
+	lastSummary := lastSummaryIndex(turns)
+	summarySeq := -1
+	if lastSummary >= 0 {
+		summarySeq = turns[lastSummary].Seq
+	}
+
+	replayed := ReplayTurns(turns, maxTurns)
+	inReplay := make(map[int]bool, len(replayed))
+	for _, t := range replayed {
+		inReplay[t.Seq] = true
+	}
+
+	// Compute what is actually sent by running the same pipeline the loop does:
+	// overrides, then deterministic elision. Index parity between overridden and
+	// compacted holds because CompactHistory preserves length and order.
+	overridden := ApplyOverrides(replayed, overrides)
+	compacted := CompactHistory(messagesFromTurns(overridden), cfg)
+	sent := make(map[int]string, len(overridden))
+	for i, t := range overridden {
+		sent[t.Seq] = compacted[i].Content
+	}
+
+	cards := make([]ContextCard, len(turns))
+	for i, t := range turns {
+		c := ContextCard{Seq: t.Seq, Role: t.Role, Kind: t.Kind, Original: t.Content}
+		o, hasOverride := overrides[t.Seq]
+		switch {
+		case !inReplay[t.Seq]:
+			if summarySeq >= 0 && t.Seq < summarySeq {
+				c.State = StateSummarizedAway
+			} else {
+				c.State = StateCapped
+			}
+		case hasOverride && o.Action == OverrideDrop:
+			c.State = StateDropped
+		case hasOverride && o.Action == OverrideReplace:
+			c.Sent = sent[t.Seq]
+			c.State = StateEdited
+		default:
+			c.Sent = sent[t.Seq]
+			if c.Sent != c.Original {
+				c.State = StateElided
+			} else {
+				c.State = StateSent
+			}
+		}
+		cards[i] = c
+	}
+	return cards
+}
+
+// messagesFromTurns maps turns to the wire messages the provider sees.
+func messagesFromTurns(turns []core.Turn) []provider.Message {
+	msgs := make([]provider.Message, 0, len(turns))
+	for _, t := range turns {
+		msgs = append(msgs, provider.Message{Role: t.Role, Content: t.Content, Kind: t.Kind})
+	}
+	return msgs
+}
+
 // CompactHistory returns a copy of history in which old tool observations are
 // elided down to their header, so a long session does not resend stale command
 // output on every request. The most recent KeepTurns user turns are replayed

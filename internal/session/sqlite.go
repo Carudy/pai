@@ -93,7 +93,7 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 	}
 	m.CreatedAt, m.UpdatedAt = time.Unix(createdAt, 0), time.Unix(updatedAt, 0)
 
-	rows, err := s.db.Query(`SELECT role, kind, content, at FROM turns WHERE name = ? ORDER BY seq`, name)
+	rows, err := s.db.Query(`SELECT seq, role, kind, content, at FROM turns WHERE name = ? ORDER BY seq`, name)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 			t  core.Turn
 			at int64
 		)
-		if err := rows.Scan(&t.Role, &t.Kind, &t.Content, &at); err != nil {
+		if err := rows.Scan(&t.Seq, &t.Role, &t.Kind, &t.Content, &at); err != nil {
 			return nil, err
 		}
 		t.At = time.Unix(at, 0)

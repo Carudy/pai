@@ -65,6 +65,59 @@ func (b *serveBackend) History(name string, offset, limit int) (runner.History, 
 	return runner.History{Meta: serveMeta(s.Meta), Turns: turns, Total: len(s.Turns)}, nil
 }
 
+// Context reports the messages a session would send on its next request: the
+// stored turns projected through the same replay, override and elision the loop
+// applies per request, plus the role's head and tail. It reads only persisted
+// state, so it never needs a live runtime.
+func (b *serveBackend) Context(name string) (runner.ContextView, error) {
+	if !session.ValidName(name) {
+		return runner.ContextView{}, errors.New("invalid session name")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s, err := b.store.Get(name)
+	if errors.Is(err, session.ErrNotFound) {
+		return runner.ContextView{}, runner.ErrNotFound
+	}
+	if err != nil {
+		return runner.ContextView{}, fmt.Errorf("get session: %w", err)
+	}
+	cfg, err := config.LoadUserConfig()
+	if err != nil {
+		return runner.ContextView{}, fmt.Errorf("load config: %w", err)
+	}
+	role := s.Meta.Role
+	if role == "" {
+		role = cfg.DefaultRole
+	}
+	extra, err := config.LoadRoleExtra(role)
+	if err != nil {
+		return runner.ContextView{}, fmt.Errorf("load role extra: %w", err)
+	}
+	rp, err := chat.LoadRolePromptAt(role, extra, s.Meta.Cwd)
+	if err != nil {
+		return runner.ContextView{}, fmt.Errorf("load role: %w", err)
+	}
+	cards := chat.ContextCards(s.Turns, nil, cfg.Context, cfg.SessionMaxTurns)
+	view := runner.ContextView{
+		Head:  rp.Head(),
+		Tail:  rp.Tail(),
+		Model: s.Meta.Model,
+		Cards: make([]runner.ContextCard, len(cards)),
+		Config: runner.ContextSettings{
+			KeepTurns:       cfg.Context.KeepTurns,
+			ElideAfterTurns: cfg.Context.ElideAfterTurns,
+			ElideMinBytes:   cfg.Context.ElideMinBytes,
+			ElideHeadLines:  cfg.Context.ElideHeadLines,
+			MaxTurns:        cfg.SessionMaxTurns,
+		},
+	}
+	for i, c := range cards {
+		view.Cards[i] = runner.ContextCard{Seq: c.Seq, Role: c.Role, Kind: c.Kind, Original: c.Original, Sent: c.Sent, State: c.State}
+	}
+	return view, nil
+}
+
 func (b *serveBackend) Prepare(name string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), error) {
 	cfg, p, rec, history, cleanup, _, err := b.PrepareWorkspace(name, "")
 	return cfg, p, rec, history, cleanup, err
@@ -432,7 +485,7 @@ func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, p
 			return fail(fmt.Errorf("create session: %w", err))
 		}
 	}
-	return cfg, client, &serveRecorder{backend: b, name: name}, toMessages(replayTurns(s.Turns, cfg.SessionMaxTurns)), func() {}, cwd, nil
+	return cfg, client, &serveRecorder{backend: b, name: name}, toMessages(chat.ReplayTurns(s.Turns, cfg.SessionMaxTurns)), func() {}, cwd, nil
 }
 
 type serveRecorder struct {
@@ -463,6 +516,7 @@ func (b *serveBackend) ReasoningDefault() (string, error) {
 }
 
 var _ runner.Backend = (*serveBackend)(nil)
+var _ runner.ContextBackend = (*serveBackend)(nil)
 var _ runner.ModelBackend = (*serveBackend)(nil)
 var _ runner.WorkingDirSetter = (*serveBackend)(nil)
 var _ runner.ReasoningBackend = (*serveBackend)(nil)

@@ -10,7 +10,7 @@ class Element {
     this.scrollTop = 0; this.scrollHeight = 1000; this.clientHeight = 400; this.offsetHeight = 20;
     this.style = {};
     this.classes = new Set();
-    this.classList = {toggle: (name, force) => { const on = force === undefined ? !this.classes.has(name) : force; if (on) this.classes.add(name); else this.classes.delete(name); return on; }, remove: name => this.classes.delete(name)};
+    this.classList = {toggle: (name, force) => { const on = force === undefined ? !this.classes.has(name) : force; if (on) this.classes.add(name); else this.classes.delete(name); return on; }, remove: name => this.classes.delete(name), contains: name => this.classes.has(name)};
   }
   set innerHTML(value) { throw new Error('innerHTML is forbidden'); }
     get textContent() { return this._text + this.children.map(node => node.textContent).join(''); }
@@ -320,6 +320,35 @@ assert.match(readText, /\/a\/b\.go/, 'read shows the path');
 assert.match(readText, /Lines/, 'read labels the line window');
 assert.match(readText, /100:249/, 'read shows one inclusive line range');
 assert.ok(!/offset/.test(readText) && !/limit/.test(readText), 'read does not show offset/limit rows');
+
+// The context inspector renders the reconstructed message list: a head card, one
+// card per turn with its state, the tail, and the settings strip. loadContext is
+// async, so its synchronous renderer is what is exercised here.
+const inspector = browser();
+inspector.run("selected='one'");
+inspector.run('renderContext(' + JSON.stringify({
+  head: 'HEAD TEXT', tail: 'TAIL TEXT', model: 'deepseek:test',
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  cards: [
+    {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'hello', state: 'sent'},
+    {seq: 2, role: 'user', kind: 'tool_result', original: 'LONG BODY', sent: 'LONG', state: 'elided'},
+    {seq: 3, role: 'user', kind: 'input', original: 'old words', sent: '', state: 'summarized_away'},
+  ],
+}) + ')');
+const ctxText = inspector.get('context-body').textContent;
+assert.match(ctxText, /HEAD TEXT/, 'the head is rendered');
+assert.match(ctxText, /TAIL TEXT/, 'the tail is rendered');
+assert.match(ctxText, /#1/, 'cards are numbered');
+assert.match(ctxText, /elided/, 'an elided card shows its state');
+assert.match(ctxText, /summarized away/, 'a not-sent card states why');
+assert.match(inspector.get('context-meta').textContent, /keep 3/, 'the settings strip is rendered');
+// The toggle drives the app class and aria; a never-settling api keeps the async
+// loadContext out of the way, since the class flip is what is under test.
+inspector.run('api=()=>new Promise(()=>{}); setContextOpen(true)');
+assert.equal(inspector.get('app').classes.has('context-open'), true, 'opening adds the app class');
+assert.equal(inspector.get('show-context').attributes['aria-expanded'], 'true');
+inspector.run('setContextOpen(false)');
+assert.equal(inspector.get('app').classes.has('context-open'), false, 'closing removes it');
 
 // Optional test-only dependency, installed outside the repository. No build or
 // production dependency; do not count the minimal DOM above as sanitizer tests.

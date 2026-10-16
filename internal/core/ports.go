@@ -39,6 +39,11 @@ type Turn struct {
 	Kind    string // see Kind* above
 	Content string
 	At      time.Time
+	// Seq is the turn's dense, 1-based position within its session, assigned by
+	// the store. It is a stable identity: turns are only appended or truncated
+	// from the tail, so a Seq never shifts. Callers that annotate or edit a turn
+	// (context overrides) key on it. Zero means "not persisted yet".
+	Seq int
 }
 
 // Recorder persists conversation turns. A nil Recorder means "ephemeral".

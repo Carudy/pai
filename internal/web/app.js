@@ -793,6 +793,7 @@ function connect() {
       activity(event);
     }
     if (['snapshot','busy','awaiting','done','terminate','stopped','prompt','prompt_replied','user','session'].includes(event.type)) scheduleHistory();
+    if (contextOpen()) scheduleContext();
   };
   stream.onerror = () => {
     if (version !== generation || stream !== connection) return;
@@ -801,6 +802,82 @@ function connect() {
     // A missing/evicted runtime is normal. Polling also discovers later sends.
     retry = setTimeout(async () => { if (version !== generation) return; await loadSnapshot(); scheduleHistory(); if (version === generation) connect(); }, 2500);
   };
+}
+// ── Context inspector ───────────────────────────────────────
+// The drawer shows the exact message list a send would use: the system head, one
+// card per stored turn with why it is (or is not) sent, and the system tail. It
+// reads /api/context, which reconstructs the same replay, override and elision
+// the loop applies — what compaction did, not a guess.
+const contextLabels = {sent:'sent', elided:'elided', edited:'edited', dropped:'dropped', summarized_away:'summarized away', capped:'capped'};
+let contextTimer = null;
+function contextOpen() { return $('app').classList.contains('context-open'); }
+function setContextOpen(on) {
+  $('app').classList.toggle('context-open', on);
+  $('show-context').setAttribute('aria-expanded', String(on));
+  if (on) loadContext();
+}
+function scheduleContext() {
+  clearTimeout(contextTimer);
+  contextTimer = setTimeout(() => { if (contextOpen() && selected) loadContext(); }, 200);
+}
+function byteSize(value) { return tokenCount(String(value || '').length) + ' B'; }
+function contextCard(card) {
+  const node = text('article', '', 'ctx-card');
+  const head = text('div', '', 'ctx-head');
+  const sent = card.state === 'sent' || card.state === 'edited';
+  head.append(
+    text('span', '#' + card.seq, 'ctx-seq'),
+    text('span', statusText((card.kind || card.role || 'turn').replaceAll('_', ' ')), 'ctx-kind'),
+    text('span', byteSize(sent ? card.sent : card.original), 'ctx-size'),
+    text('span', contextLabels[card.state] || card.state, 'ctx-badge state-' + card.state),
+  );
+  const body = text('div', '', 'ctx-body');
+  if (sent) {
+    body.append(prose(card.sent));
+  } else if (card.state === 'elided') {
+    body.append(prose(card.sent));
+    const detail = document.createElement('details');
+    detail.append(text('summary', 'show the original (' + byteSize(card.original) + ')'), prose(card.original));
+    body.append(detail);
+  } else {
+    body.append(text('div', 'not sent — ' + (contextLabels[card.state] || card.state), 'ctx-muted'), prose(card.original));
+  }
+  node.append(head, body);
+  return node;
+}
+function contextSystemCard(title, content, note) {
+  const node = text('article', '', 'ctx-card ctx-system');
+  const head = text('div', '', 'ctx-head');
+  head.append(text('span', title, 'ctx-kind'), text('span', byteSize(content), 'ctx-size'));
+  const body = text('div', '', 'ctx-body');
+  const detail = document.createElement('details');
+  detail.append(text('summary', note), text('pre', content));
+  body.append(detail);
+  node.append(head, body);
+  return node;
+}
+function renderContext(view) {
+  const cfg = view.config || {};
+  $('context-meta').textContent = (view.model || '') + ' · keep ' + cfg.keep_turns + ' · max ' + (cfg.max_turns || '∞') +
+    ' turns · elide >' + cfg.elide_min_bytes + 'B after ' + cfg.elide_after_turns + ' turns';
+  const nodes = [contextSystemCard('system head', view.head || '', 'The role, tools and output contract, sent first.')];
+  nodes.push(text('p', (view.cards || []).length + ' stored turn(s)', 'ctx-config'));
+  for (const card of view.cards || []) nodes.push(contextCard(card));
+  nodes.push(contextSystemCard('system tail', view.tail || '', 'The per-turn reminder, sent last.'));
+  $('context-body').replaceChildren(...nodes);
+}
+async function loadContext() {
+  const body = $('context-body');
+  if (!selected) { $('context-meta').textContent = ''; body.replaceChildren(text('p', 'Open a session to inspect its context.', 'ctx-config')); return; }
+  const version = generation, name = selected;
+  try {
+    const view = await api('context?name=' + encodeURIComponent(name));
+    if (version !== generation || selected !== name) return;
+    renderContext(view);
+  } catch (e) {
+    if (version !== generation || selected !== name) return;
+    body.replaceChildren(text('p', 'Could not load the context: ' + e.message, 'ctx-config'));
+  }
 }
 // ── Session actions ─────────────────────────────────────────
 async function select(name, cwd) {
@@ -820,6 +897,7 @@ async function select(name, cwd) {
   try { await history(true, true); } catch (e) { if (e.status !== 404) error(e); }
   if (version !== generation) return;
   await loadSnapshot(); if (version === generation) connect();
+  if (version === generation && contextOpen()) loadContext();
 }
 // Reopen the remembered session on load, if it still exists in the listed set.
 function restoreSession(list) {
@@ -904,6 +982,7 @@ function clearWorkspace() {
   reasoningMetadata('');
   $('title').textContent = 'Select or create a session';
   sessionMetadata();
+  if (contextOpen()) loadContext();
   const empty = text('div', '', 'empty');
   empty.append(text('h3', 'Best partner, PAI!'), text('p', 'Open a named session to start working with PAI.'));
   $('history').append(empty);
@@ -1089,6 +1168,8 @@ $('apply-plan').onclick = () => action('send', AUTO_REPLY);
 $('trust-all').onchange = () => setTrustAll($('trust-all').checked);
 $('more-sessions').onclick = () => sessions().catch(error);
 $('theme-toggle').onclick = toggleTheme;
+$('show-context').onclick = () => setContextOpen(!contextOpen());
+$('context-close').onclick = () => setContextOpen(false);
 $('prev-input').onclick = jumpToPrevInput;
 $('to-bottom').onclick = jumpToBottom;
 $('conversation').onscroll = () => {
