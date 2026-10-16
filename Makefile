@@ -1,7 +1,9 @@
 BINARY  := pai
 LDFLAGS := -s -w
+# Where `make local` installs the built binary.
+BINDIR  ?= $(HOME)/.local/bin
 
-.PHONY: build install test fmt vet deps clean
+.PHONY: build install local test fmt vet deps clean
 
 # SQLite session backend (pure Go, cgo-free).
 build:
@@ -9,6 +11,12 @@ build:
 
 install:
 	go install -ldflags="$(LDFLAGS)" ./cmd/pai
+
+# Build and copy the binary into BINDIR (default ~/.local/bin) for local use.
+# `make local BINDIR=/usr/local/bin` to deploy elsewhere.
+local: build
+	install -d "$(BINDIR)"
+	install -m 0755 $(BINARY) "$(BINDIR)/$(BINARY)"
 
 # Pre-fill the module cache. Run once after changing dependencies: without it,
 # the first build can stall for ~30s if the module proxy is unreachable. Uses
