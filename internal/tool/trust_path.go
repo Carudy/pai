@@ -56,21 +56,29 @@ func expandHome(p string) string {
 }
 
 // resolveExisting returns p as an absolute, symlink-free path. The file itself
-// may not exist yet (a create), so when it does not, the nearest existing
-// ancestor is resolved and the remaining components are rejoined onto it.
+// may not exist yet (a create), so the nearest existing ancestor is resolved and
+// the remaining components are rejoined onto it. Walking all the way up matters:
+// resolving only one level would leave a target under a path whose parent is also
+// missing unresolved, so on macOS (where /var and /tmp are symlinks) a create
+// several levels below a trusted root would be resolved differently from the root
+// itself and wrongly denied.
 func resolveExisting(p string) string {
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return filepath.Clean(p)
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
+	remainder := ""
+	for dir := abs; ; {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(resolved, remainder)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir { // nothing above resolved; keep the clean absolute path
+			return filepath.Join(dir, remainder)
+		}
+		remainder = filepath.Join(filepath.Base(dir), remainder)
+		dir = parent
 	}
-	dir, base := filepath.Dir(abs), filepath.Base(abs)
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		return filepath.Join(resolved, base)
-	}
-	return abs
 }
 
 // within reports whether target is root itself or a descendant of it. filepath.Rel

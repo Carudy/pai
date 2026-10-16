@@ -69,3 +69,26 @@ func TestIsTrustedPathExpandsHome(t *testing.T) {
 		t.Error("a path outside ~/work was trusted")
 	}
 }
+
+// A target several levels below a trusted root, where none of those levels exist
+// yet, must still match it — including when an ancestor is a symlink. Resolving
+// only one level up leaves the target unresolved while the root resolves, so the
+// two are compared as different locations and a legitimate create is denied.
+func TestIsTrustedPathResolvesDeepNewPaths(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "linked")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	root := filepath.Join(link, "work")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if !IsTrustedPath(filepath.Join(root, "a", "b", "c.txt"), []string{root}) {
+		t.Error("a new file several levels under the root was denied")
+	}
+	if IsTrustedPath(filepath.Join(link, "other", "c.txt"), []string{root}) {
+		t.Error("a sibling of the root was trusted")
+	}
+}
