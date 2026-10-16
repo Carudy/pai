@@ -30,28 +30,34 @@ lives in data (`prompts`), not in Go.
    `web` streams its events to the browser over SSE; in terminal mode `tui`
    renders the same `core.Observer` events inline. `cli` wires both.
 
-## Layers
+## Layout
 
-```
-  cmd/pai ─ main: flags and signals only
-     │
-    cli ───── composition root: parses, wires, runs
-     │
-     ├── tui ──────────────┐          terminal frontend
-     │                     ▼
-     └── web ──► runner ─► role ─ the single agent loop
-                             │
-        ┌────────┬───────────┼──────────┬────────────┐
-        ▼        ▼           ▼          ▼            ▼
-      chat     tool      prompts    config      session
-        │        │           │          │            │
-        └────────┴───────────┴──────────┴────────────┘
-                             │
-                core ────────┴──── paths, provider, hostinfo
+```mermaid
+flowchart TB
+  entry["cmd/pai — flags and signals"]
+  comp["cli — composition root: parses, wires, runs"]
+  term["tui — terminal frontend"]
+  serve["web — HTTP/SSE and browser UI"]
+  runtimes["runner — per-session runtimes"]
+  loop["role — the single agent loop"]
+  helpers["chat · tool · prompts · config · session"]
+  base["core · paths · provider · hostinfo"]
+
+  entry --> comp
+  comp --> term
+  comp --> serve
+  comp --> helpers
+  term --> loop
+  serve --> runtimes
+  runtimes --> loop
+  loop --> helpers
+  helpers --> base
 ```
 
-The bands are a reading aid; `session` is reached only through `cli`, and the
-authoritative graph is [Dependency rules](#dependency-rules) below.
+A reading aid, not the whole graph: `cli` may import any of these (that is what
+makes it the composition root), `session` is reached only through it, and
+[How a turn flows](#how-a-turn-flows) below traces the runtime path. The exact
+edges are listed under [Dependency rules](#dependency-rules).
 
 ## Packages
 
