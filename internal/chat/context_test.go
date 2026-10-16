@@ -130,3 +130,24 @@ func TestCompactHistoryLeavesSmallObservations(t *testing.T) {
 		t.Errorf("small observation was elided: %q", out[0].Content)
 	}
 }
+
+// Elision is deterministic and silent on the wire; DescribeCompaction reports its
+// footprint so the role loop can show it in the context log, and reports nothing
+// when there is nothing old enough to elide.
+func TestDescribeCompactionReportsFootprint(t *testing.T) {
+	c := config.ContextConfig{KeepTurns: 1, ElideAfterTurns: 0, ElideMinBytes: 10, ElideHeadLines: 3}
+	big := "[cmd result]\nCOMMAND: df -h\nEXIT_ERROR: <nil>\nOUTPUT:\n" + strings.Repeat("row\n", 100)
+
+	history := []provider.Message{
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"},
+		toolResult(big),
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "now fix it"},
+	}
+	note := DescribeCompaction(history, c)
+	if !strings.Contains(note, "elided 1 older tool observation") {
+		t.Errorf("note should report the elision: %q", note)
+	}
+	if DescribeCompaction(history[:1], c) != "" {
+		t.Error("nothing old enough should report nothing")
+	}
+}

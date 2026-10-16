@@ -122,18 +122,47 @@ func keepFrom(history []provider.Message, turns int) int {
 // text stays in the session store regardless; only the model's replay is
 // compressed, so attaching later still shows everything.
 func CompactHistory(history []provider.Message, c config.ContextConfig) []provider.Message {
+	out, _ := compact(history, c)
+	return out
+}
+
+// CompactionInfo reports what deterministic elision did to a history: how many
+// old tool observations were replaced with a header and how many lines that
+// dropped. The zero value means nothing was elided.
+type CompactionInfo struct {
+	Observations int
+	Lines        int
+	KeptTurns    int
+}
+
+// DescribeCompaction renders the deterministic elision CompactHistory would apply
+// to history as a short one-line notice, or "" when nothing is elided. The role
+// loop logs it when its footprint changes, so a reader can see why older turns
+// stop being resent every request.
+func DescribeCompaction(history []provider.Message, c config.ContextConfig) string {
+	if _, info := compact(history, c); info.Observations > 0 {
+		return fmt.Sprintf("context: elided %d older tool observation(s), dropping %d line(s); last %d turn(s) kept verbatim",
+			info.Observations, info.Lines, info.KeptTurns)
+	}
+	return ""
+}
+
+// compact is CompactHistory plus a report of what it did; it returns the input
+// slice unchanged (and a zero report) whenever nothing is old enough to elide.
+func compact(history []provider.Message, c config.ContextConfig) ([]provider.Message, CompactionInfo) {
 	if len(history) == 0 {
-		return history
+		return history, CompactionInfo{}
 	}
 	if c.ElideAfterTurns > 0 && userTurns(history) <= c.ElideAfterTurns {
-		return history
+		return history, CompactionInfo{}
 	}
 
 	cutoff := keepFrom(history, c.KeepTurns)
 	if cutoff <= 0 {
-		return history
+		return history, CompactionInfo{}
 	}
 
+	info := CompactionInfo{KeptTurns: c.KeepTurns}
 	out := make([]provider.Message, len(history))
 	copy(out, history)
 	for i := 0; i < cutoff; i++ {
@@ -141,23 +170,31 @@ func CompactHistory(history []provider.Message, c config.ContextConfig) []provid
 		if m.Kind != core.KindToolResult || len(m.Content) <= c.ElideMinBytes {
 			continue
 		}
-		m.Content = elideObservation(m.Content, c.ElideHeadLines)
+		elided, dropped := elideObservation(m.Content, c.ElideHeadLines)
+		if dropped <= 0 {
+			continue
+		}
+		m.Content = elided
+		info.Observations++
+		info.Lines += dropped
 	}
-	return out
+	return out, info
 }
 
 // elideObservation keeps the first headLines of a tool observation — its label,
-// command and exit status — and replaces the body with a marker. The header is
-// what the model needs to decide whether to re-run the command.
-func elideObservation(content string, headLines int) string {
+// command and exit status — and replaces the body with a marker, returning the
+// number of lines dropped. The header is what the model needs to decide whether
+// to re-run the command.
+func elideObservation(content string, headLines int) (string, int) {
 	if headLines <= 0 {
 		headLines = 8
 	}
 	lines := strings.Split(content, "\n")
 	if len(lines) <= headLines {
-		return content
+		return content, 0
 	}
+	dropped := len(lines) - headLines
 	return strings.Join(lines[:headLines], "\n") +
 		fmt.Sprintf("\n%s [%d lines of earlier output elided; re-run the command if you need them]",
-			elisionMarker, len(lines)-headLines)
+			elisionMarker, dropped), dropped
 }

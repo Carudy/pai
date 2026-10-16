@@ -62,6 +62,11 @@ type Runtime struct {
 	// an estimate before the first call). It drives LLM summarization.
 	promptTokens int
 
+	// compactionNote is the last deterministic-elision notice emitted this run, so
+	// the loop logs the elision footprint only when it changes rather than on every
+	// request (elision is deterministic and would otherwise repeat verbatim).
+	compactionNote string
+
 	mu         sync.Mutex
 	cancelStep context.CancelFunc
 }
@@ -273,6 +278,16 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 					Kind:    core.KindInput,
 					Content: steeringMessage(msg),
 				})
+			}
+		}
+
+		// First compression layer: deterministic elision of old observations. It is
+		// silent on the wire, so surface its footprint in the context log once per
+		// change (a turn aging out of the verbatim window), not every request.
+		if note := chat.DescribeCompaction(cc.history, cfg.Context); note != rt.compactionNote {
+			rt.compactionNote = note
+			if note != "" {
+				rt.Observer.Output(note)
 			}
 		}
 
