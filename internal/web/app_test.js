@@ -48,7 +48,7 @@ function browser() {
     }
     const storage = new Map();
     class MockDate extends Date { static now() { return now; } }
-    const context = vm.createContext({URL, Date: MockDate, EventSource: MockEventSource,
+    const context = vm.createContext({URL, Date: MockDate, EventSource: MockEventSource, TextEncoder,
       localStorage: {getItem: key => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key)},
       confirm: () => true,
       prompt: () => 'renamed',
@@ -341,7 +341,7 @@ assert.ok(!/offset/.test(readText) && !/limit/.test(readText), 'read does not sh
 const inspector = browser();
 inspector.run("selected='one'");
 inspector.run('renderContext(' + JSON.stringify({
-  head: 'HEAD TEXT', tail: 'TAIL TEXT', model: 'deepseek:test',
+  head: 'HEAD TEXT', tail: 'TAIL TEXT', model: 'deepseek:test', total: 3, offset: 0,
   config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
   cards: [
     {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'hello', state: 'sent'},
@@ -356,14 +356,45 @@ assert.match(ctxText, /#1/, 'cards are numbered');
 assert.match(ctxText, /elided/, 'an elided card shows its state');
 assert.match(ctxText, /summarized away/, 'a not-sent card states why');
 assert.match(inspector.get('context-meta').textContent, /keep 3/, 'the settings strip is rendered');
-// Surgery controls appear only where they can change the send: a card in the
-// replay window offers Edit/Drop, one outside it explains why it cannot.
+assert.match(ctxText, /messages 1–3 of 3/, 'the strip names the loaded slice');
+assert.match(ctxText, /start of the conversation/, 'a whole-transcript view says so');
+// A card's size is UTF-8 bytes, the unit the compaction knobs use, so multi-byte
+// text is not under-reported by a code-unit length.
+inspector.run("renderContext({head:'H', tail:'T', model:'m', total:1, offset:0, config:{keep_turns:3,max_turns:20,elide_min_bytes:8000,elide_after_turns:5}, cards:[{seq:1,role:'user',kind:'input',original:'x',sent:'日本語',state:'sent'}]})");
+const ctxWindow = descendants(inspector.get('context-body')).find(n => n.className === 'ctx-window');
+assert.match(descendants(ctxWindow).find(n => n.className === 'ctx-size').textContent, /^9 B$/, 'sizes count UTF-8 bytes');
 const inspectorButtons = () => descendants(inspector.get('context-body')).filter(n => n.tag === 'button');
 const inspectorNotes = () => descendants(inspector.get('context-body')).filter(n => n.className === 'ctx-note').map(n => n.textContent);
+// Card bodies are raw text, never Markdown: this is the payload the model gets, so
+// nothing may interpret or reformat it. A fenced block must survive verbatim.
+inspector.run("renderContext({head:'H', tail:'T', model:'m', total:1, offset:0, config:{keep_turns:3,max_turns:20,elide_min_bytes:8000,elide_after_turns:5}, cards:[{seq:1,role:'user',kind:'input',original:'x',sent:'```js\\nlet a = 1;\\n```',state:'sent'}]})");
+assert.equal(descendants(inspector.get('context-body')).filter(n => n.className === 'prose').length, 0, 'the inspector never renders Markdown');
+assert.match(inspector.get('context-body').textContent, /```js\nlet a = 1;\n```/, 'code fences are shown verbatim');
+// A windowed view offers the page above it and names its slice.
+inspector.run('renderContext(' + JSON.stringify({
+  head: 'H', tail: 'T', model: 'm', total: 90, offset: 60,
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  cards: [{seq: 61, role: 'user', kind: 'input', original: 'hi', sent: 'hi', state: 'sent'}],
+}) + ')');
+assert.match(inspector.get('context-body').textContent, /messages 61–61 of 90/, 'a window names its slice');
+assert.deepEqual(inspectorNotes(), [], 'the window strip uses its own class, not the card reason');
+// Surgery controls appear only where they can change the send: a card in the
+// replay window offers Edit/Drop, one outside it explains why it cannot.
+const loadEarlier = () => inspectorButtons().find(b => b.textContent.startsWith('Load '));
+assert.equal(loadEarlier().textContent, 'Load 60 earlier messages', 'the strip offers the earlier page');
+inspector.run('renderContext(' + JSON.stringify({
+  head: 'HEAD TEXT', tail: 'TAIL TEXT', model: 'deepseek:test', total: 3, offset: 0,
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  cards: [
+    {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'hello', state: 'sent'},
+    {seq: 2, role: 'user', kind: 'tool_result', original: 'LONG BODY', sent: 'LONG', state: 'elided'},
+    {seq: 3, role: 'user', kind: 'input', original: 'old words', sent: '', state: 'summarized_away'},
+  ],
+}) + ')');
 assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', 'Edit…', 'Drop'], 'sent and elided cards are editable');
 assert.deepEqual(inspectorNotes(), ['not editable — before the last summary'], 'a summarized-away card says why it is frozen');
 inspector.run('renderContext(' + JSON.stringify({
-  head: 'H', tail: 'T', model: 'deepseek:test',
+  head: 'H', tail: 'T', model: 'deepseek:test', total: 3, offset: 0,
   config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
   cards: [
     {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'trimmed', state: 'edited'},
@@ -605,7 +636,7 @@ async function verifyModels() {
   await p.run("applyModel({preventDefault(){}})");
   assert.equal(p.get('session-model').value, 'test:custom');
   assert.equal(p.run('modelDirty'), false);
-  p.run("$('session-model').value='test:unsaved'; modelDirty=true; api=()=>new Promise(resolve=>globalThis.finishModel=resolve); modelControls();");
+  p.run("$('session-model').value='test:unsaved'; modelDirty=true; api=path=>path==='model'?new Promise(resolve=>globalThis.finishModel=resolve):Promise.resolve({}); modelControls();");
   const stale = p.run("applyModel({preventDefault(){}})");
   p.run("history=async()=>sessionMetadata({model:'test:other'});");
   await p.run("select('two')");
@@ -733,13 +764,59 @@ async function verifyWorkingDir() {
   assert.equal(p.get('session-working-dir').disabled, true);
 
   const stale = browser();
-  stale.run("selected='one'; modelBlocked=false; sessionMetadata({cwd:'/old'}); $('session-working-dir').value='/new'; cwdDirty=true; workingDirControls(); api=()=>new Promise(resolve=>globalThis.finishApply=resolve); history=async()=>sessionMetadata({cwd:'/two'}); loadSnapshot=async()=>{}; connect=()=>{};");
+  stale.run("selected='one'; modelBlocked=false; sessionMetadata({cwd:'/old'}); $('session-working-dir').value='/new'; cwdDirty=true; workingDirControls(); api=path=>path==='working-dir'?new Promise(resolve=>globalThis.finishApply=resolve):Promise.resolve({}); history=async()=>sessionMetadata({cwd:'/two'}); loadSnapshot=async()=>{}; connect=()=>{};");
   const applying = stale.run("applyWorkingDir({preventDefault(){}})");
   assert.equal(stale.get('apply-working-dir').disabled, true, 'Apply is disabled while the request is pending');
   await stale.run("select('two')");
   stale.run('finishApply({ok:true})');
   await applying;
   assert.equal(stale.get('session-working-dir').value, '/two', 'a stale Apply response cannot replace another session workspace');
+}
+
+// The inspector pages backwards through the transcript: the first load anchors on
+// the newest page, and pulling in the page above it keeps the reader's place.
+async function verifyContext() {
+  const p = browser();
+  p.run(`selected='one'; $('app').classList.toggle('context-open', true);
+    globalThis.turns = Array.from({length: 70}, (_, i) => ({seq: i+1, role:'user', kind:'input', original:'m'+(i+1), sent:'m'+(i+1), state:'sent'}));
+    globalThis.calls = [];
+    globalThis.apiPage = async path => {
+      calls.push(path);
+      const m = path.match(/offset=(\\d+)&limit=(\\d+)/);
+      const offset = Number(m[1]), limit = Number(m[2]), start = Math.min(offset, turns.length);
+      return {head:'H', tail:'T', model:'m', total: turns.length, offset: start,
+        cards: turns.slice(start, Math.min(start+limit, turns.length)),
+        config: {keep_turns:3, max_turns:20, elide_min_bytes:8000, elide_after_turns:5}};
+    };
+    api = apiPage;`);
+  await p.run('loadContext()');
+  assert.equal(p.run('calls[0]'), 'context?name=one&offset=0&limit=1', 'the length is probed first');
+  assert.equal(p.run('calls[1]'), 'context?name=one&offset=40&limit=30', 'then the newest page loads');
+  assert.equal(p.run('contextTotal'), 70, 'the whole transcript length is known');
+  assert.equal(p.run('contextOffset'), 40, 'the window starts at the newest page');
+  assert.equal(p.run('contextCards.length'), 30, 'one page is loaded');
+  assert.equal(p.run('contextCards[29].seq'), 70, 'the newest card is included');
+  assert.match(p.get('context-body').textContent, /messages 41–70 of 70/, 'the strip names the loaded slice');
+  const loadButton = () => descendants(p.get('context-body')).filter(n => n.tag === 'button').find(b => b.textContent.startsWith('Load '));
+  assert.equal(loadButton().textContent, 'Load 40 earlier messages', 'the older page is one click away');
+
+  // Loading the page above prepends it and shifts the window down, keeping Seq
+  // numbering so nothing renumbers under the reader.
+  await p.run('loadEarlierContext()');
+  assert.equal(p.run('calls[2]'), 'context?name=one&offset=10&limit=30', 'the page above is fetched');
+  assert.equal(p.run('contextOffset'), 10, 'the window moved down');
+  assert.equal(p.run('contextCards.length'), 60, 'the pages are contiguous');
+  assert.equal(p.run('contextCards[0].seq'), 11, 'the older page is at the front');
+
+  // Reaching the top loads the rest without a click, and then stops.
+  p.run('$("context-body").scrollTop = 0; onContextScroll()');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(p.run('contextOffset'), 0, 'the top scroll loads the remaining page');
+  assert.equal(p.run('contextCards.length'), 70, 'the whole transcript is now loaded');
+  assert.equal(loadButton(), undefined, 'no earlier page is offered at the start');
+  p.run('$("context-body").scrollTop = 0; globalThis.calls.length = 0; onContextScroll()');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(p.run('calls.length'), 0, 'the top of the transcript is not refetched');
 }
 
 async function verifySendFailure() {
@@ -828,4 +905,4 @@ async function verifyAuthGate() {
   assert.equal(p.run('toasted.length'), 1, 'a non-auth failure is toasted');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

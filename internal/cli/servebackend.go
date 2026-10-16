@@ -65,13 +65,19 @@ func (b *serveBackend) History(name string, offset, limit int) (runner.History, 
 	return runner.History{Meta: serveMeta(s.Meta), Turns: turns, Total: len(s.Turns)}, nil
 }
 
-// Context reports the messages a session would send on its next request: the
-// stored turns projected through the same replay, override and elision the loop
-// applies per request, plus the role's head and tail. It reads only persisted
-// state, so it never needs a live runtime.
-func (b *serveBackend) Context(name string) (runner.ContextView, error) {
+// Context reports a window of the messages a session would send on its next
+// request: the stored turns projected through the same replay, override and
+// elision the loop applies per request, plus the role's head and tail. offset and
+// limit window the cards (their Seq is dense and 1-based, so offset is the index
+// of the first card), and the whole projection is still computed over every turn
+// — elision and the replay window depend on the full transcript, not the window.
+// It reads only persisted state, so it never needs a live runtime.
+func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextView, error) {
 	if !session.ValidName(name) {
 		return runner.ContextView{}, errors.New("invalid session name")
+	}
+	if offset < 0 || offset > 1000000 || limit < 1 || limit > 200 {
+		return runner.ContextView{}, errors.New("invalid context pagination")
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -99,11 +105,16 @@ func (b *serveBackend) Context(name string) (runner.ContextView, error) {
 		return runner.ContextView{}, fmt.Errorf("load role: %w", err)
 	}
 	cards := chat.ContextCards(s.Turns, toChatOverrides(s.Overrides), cfg.Context, cfg.SessionMaxTurns)
+	start := min(offset, len(cards))
+	end := min(start+limit, len(cards))
+	window := cards[start:end]
 	view := runner.ContextView{
-		Head:  rp.Head(),
-		Tail:  rp.Tail(),
-		Model: s.Meta.Model,
-		Cards: make([]runner.ContextCard, len(cards)),
+		Head:   rp.Head(),
+		Tail:   rp.Tail(),
+		Model:  s.Meta.Model,
+		Total:  len(cards),
+		Offset: start,
+		Cards:  make([]runner.ContextCard, len(window)),
 		Config: runner.ContextSettings{
 			KeepTurns:       cfg.Context.KeepTurns,
 			ElideAfterTurns: cfg.Context.ElideAfterTurns,
@@ -112,7 +123,7 @@ func (b *serveBackend) Context(name string) (runner.ContextView, error) {
 			MaxTurns:        cfg.SessionMaxTurns,
 		},
 	}
-	for i, c := range cards {
+	for i, c := range window {
 		view.Cards[i] = runner.ContextCard{Seq: c.Seq, Role: c.Role, Kind: c.Kind, Original: c.Original, Sent: c.Sent, State: c.State}
 	}
 	return view, nil

@@ -396,7 +396,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/api/context":
 		switch r.Method {
 		case http.MethodGet:
-			view, err := h.manager.Context(r.URL.Query().Get("name"))
+			offset, limit, ok := pagination(w, r)
+			if !ok {
+				return
+			}
+			view, err := h.manager.Context(r.URL.Query().Get("name"), offset, limit)
 			if err != nil {
 				managerError(w, err)
 				return

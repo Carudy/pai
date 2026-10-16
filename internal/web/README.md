@@ -182,14 +182,18 @@ rejected; there is no URL authentication.
   field.
 - `GET /api/history?name=...&offset=0&limit=100`: `runner.History` (native core
   turn keys `Role`, `Kind`, `Content`, `At`; metadata uses runner's JSON tags).
-- `GET /api/context?name=...`: `runner.ContextView` — the exact message list the
-  session would send: the role's system `head`, one `cards` entry per stored turn
-  (`original`, `sent`, and a `state` of `sent` | `elided` | `edited` | `dropped` |
-  `summarized_away` | `capped`), the system `tail`, the `model`, and the
-  compaction `config` in effect. It reads persisted state only, so it works with
-  or without a live runtime; 404 for an unknown session. The projection applies the
-  user's overrides, so an edited or dropped turn reports what would actually be
-  sent.
+- `GET /api/context?name=...&offset=0&limit=100`: `runner.ContextView` — the
+  message list the session would send: the role's system `head`, one `cards`
+  entry per stored turn (`original`, `sent`, and a `state` of `sent` | `elided` |
+  `edited` | `dropped` | `summarized_away` | `capped`), the system `tail`, the
+  `model`, and the compaction `config` in effect. `cards` is a window, not the
+  whole transcript: `offset` is the index of its first card and `total` the
+  number of stored turns, both normalized, so a client can walk back a page at a
+  time (the projection is still computed over every turn, since the replay window
+  and elision depend on the full history). It reads persisted state only, so it
+  works with or without a live runtime; 404 for an unknown session, 400 for
+  invalid pagination. The projection applies the user's overrides, so an edited or
+  dropped turn reports what would actually be sent.
 - `POST /api/context`: `{ "name": "...", "seq": N, "action":
   "replace"|"drop"|"reset", "content": "..." }`; 200 `{ "ok": true }`. Records
   the user's surgery on one turn — `replace` swaps its text (capped at 32 KiB,
@@ -263,11 +267,16 @@ than treating transient SSE output as durable turns. Turn cards show their
 **Context** panel logs only context-lifecycle events — finished reasoning blocks
 and context notices such as compaction — never tools or run progress, so the
 context's evolution stays legible. An **Inspect** switch in that panel's header
-opens an overlay of the exact messages a send would use — the system head, one
-card per message showing the original and what is actually sent (with a state
-badge for elided, edited, dropped, summarized-away and capped messages), and the
-tail, with the compaction settings that produced them. Messages are grouped by
-user turn — the unit compaction and `max_turns` count — and the floating jump
+opens an overlay of the messages a send would use — the system head, one card per
+message showing the original and what is actually sent (with a state badge for
+elided, edited, dropped, summarized-away and capped messages), and the tail, with
+the compaction settings that produced them. The overlay is windowed: it opens
+anchored on the newest page, names the slice it holds, offers the page above, and
+loads it when the reader clicks or scrolls to the top, so a long transcript is
+never fetched whole and the reader's place is held across a prepend. Cards are
+raw text — never Markdown — because the point is to see exactly the bytes a send
+would use. Messages are grouped by user turn — the unit compaction and
+`max_turns` count — and the floating jump
 arrows are hidden while the overlay is open. Cards that are in the replay window
 offer per-message **Edit…** (an inline textarea seeded from the sent text),
 **Drop**, and — when overridden — **Reset**; an edited card hides its stored
@@ -315,8 +324,12 @@ Optional actual sanitizer tests: install a current compatible jsdom in a tempora
 directory outside the repository, then run
 `PAI_WEB_JSDOM=/absolute/path/to/node_modules/jsdom node internal/web/app_test.js`.
 Without that variable the dependency-free harness tests URL policy, renderer
-wiring and literal fallbacks, and explicitly skips actual DOM sanitization tests.
-It does not claim its minimal fake DOM validates DOMPurify.
+wiring, literal fallbacks, and the async flows (context paging, model/role/workspace
+apply, rewind, session list), and explicitly skips actual DOM sanitization tests.
+It does not claim its minimal fake DOM validates DOMPurify. The harness's async
+suites hang forever — silently swallowing their own assertion failures — if a
+stubbed `api` resolver is stored on a shared global while another call is in
+flight, so stub it per path.
 
 Validation: `go test ./internal/web`.
 Security/action tests use httptest and a local fake provider, never real API

@@ -26,15 +26,21 @@ type History struct {
 	Total int         `json:"total"`
 }
 
-// ContextView is the ordered message list a session would send on its next
-// request: the system Head, one Card per stored turn, and the system Tail, plus
-// the model and compaction settings in effect. The context inspector renders it.
+// ContextView is the message list a session would send on its next request: the
+// system Head, one Card per stored turn, and the system Tail, plus the model and
+// compaction settings in effect. The context inspector renders it.
+//
+// Cards is a window over the full list, not all of it: Offset is the index of
+// its first card and Total is the number of stored turns, so a client can walk
+// back through a long transcript instead of receiving all of it at once.
 type ContextView struct {
 	Head   string          `json:"head"`
 	Tail   string          `json:"tail"`
 	Cards  []ContextCard   `json:"cards"`
 	Model  string          `json:"model"`
 	Config ContextSettings `json:"config"`
+	Total  int             `json:"total"`
+	Offset int             `json:"offset"`
 }
 
 // ContextCard is one stored turn's place in that list. Sent is empty when the
@@ -99,11 +105,12 @@ type ReasoningBackend interface {
 	ReasoningDefault() (string, error)
 }
 
-// ContextBackend is optional; it reports the exact context a session would send,
-// for inspection. It reads persisted state only, so it must not require a live
-// runtime.
+// ContextBackend is optional; it reports the context a session would send, for
+// inspection. offset and limit window the cards exactly like History does, so a
+// long transcript is never returned whole. It reads persisted state only, so it
+// must not require a live runtime.
 type ContextBackend interface {
-	Context(name string) (ContextView, error)
+	Context(name string, offset, limit int) (ContextView, error)
 }
 
 // ContextSetter is optional; it persists the user's surgery on one turn's place

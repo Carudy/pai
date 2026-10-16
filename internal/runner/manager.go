@@ -66,14 +66,15 @@ func (m *Manager) History(name string, offset, limit int) (History, error) {
 	return m.backend.History(name, offset, limit)
 }
 
-// Context reports the context a session would send on its next request. It reads
-// persisted state only, so it works whether or not a runtime is live.
-func (m *Manager) Context(name string) (ContextView, error) {
+// Context reports a window of the context a session would send on its next
+// request. It reads persisted state only, so it works whether or not a runtime
+// is live.
+func (m *Manager) Context(name string, offset, limit int) (ContextView, error) {
 	b, ok := m.backend.(ContextBackend)
 	if !ok {
 		return ContextView{}, errors.New("backend does not expose context")
 	}
-	return b.Context(name)
+	return b.Context(name, offset, limit)
 }
 
 // SetOverride records the user's surgery on one stored turn and retires the idle

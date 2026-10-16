@@ -77,15 +77,20 @@ func (backend) History(name string, offset, limit int) (runner.History, error) {
 func (b backend) Prepare(string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), error) {
 	return &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}, &questionProvider{confirm: b.confirm}, nil, nil, nil, nil
 }
-func (backend) Context(name string) (runner.ContextView, error) {
+func (backend) Context(name string, offset, limit int) (runner.ContextView, error) {
 	if name == "missing" {
 		return runner.ContextView{}, runner.ErrNotFound
 	}
+	cards := []runner.ContextCard{{Seq: 1, Role: "user", Kind: "input", Original: "hello", Sent: "hello", State: "sent"}}
+	start := min(offset, len(cards))
+	end := min(start+limit, len(cards))
 	return runner.ContextView{
 		Head:   "SYSTEM HEAD",
 		Tail:   "SYSTEM TAIL",
 		Model:  "test:model",
-		Cards:  []runner.ContextCard{{Seq: 1, Role: "user", Kind: "input", Original: "hello", Sent: "hello", State: "sent"}},
+		Total:  len(cards),
+		Offset: start,
+		Cards:  cards[start:end],
 		Config: runner.ContextSettings{KeepTurns: 3, MaxTurns: 20},
 	}, nil
 }
@@ -171,8 +176,22 @@ func TestContextAPI(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
 		t.Fatal(err)
 	}
-	if v.Head == "" || v.Tail == "" || len(v.Cards) != 1 || v.Cards[0].Seq != 1 || v.Config.MaxTurns != 20 {
+	if v.Head == "" || v.Tail == "" || len(v.Cards) != 1 || v.Cards[0].Seq != 1 || v.Config.MaxTurns != 20 || v.Total != 1 || v.Offset != 0 {
 		t.Fatalf("view = %+v", v)
+	}
+	if w := request(h, http.MethodGet, "/api/context?name=one&offset=1&limit=5", "", nil, ""); w.Code != http.StatusOK {
+		t.Errorf("windowed context = %d", w.Code)
+	} else {
+		var windowed runner.ContextView
+		if err := json.Unmarshal(w.Body.Bytes(), &windowed); err != nil {
+			t.Fatal(err)
+		}
+		if windowed.Offset != 1 || len(windowed.Cards) != 0 || windowed.Total != 1 {
+			t.Errorf("windowed view = %+v", windowed)
+		}
+	}
+	if w := request(h, http.MethodGet, "/api/context?name=one&limit=0", "", nil, ""); w.Code != http.StatusBadRequest {
+		t.Errorf("limit 0 = %d, want 400", w.Code)
 	}
 	if w := request(h, http.MethodGet, "/api/context?name=missing", "", nil, ""); w.Code != http.StatusNotFound {
 		t.Errorf("missing session = %d, want 404", w.Code)

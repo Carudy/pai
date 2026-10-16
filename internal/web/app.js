@@ -835,20 +835,42 @@ function connect() {
 // The drawer shows the exact message list a send would use: the system head, one
 // card per stored turn with why it is (or is not) sent, and the system tail. It
 // reads /api/context, which reconstructs the same replay, override and elision
-// the loop applies — what compaction did, not a guess.
+// the loop applies — what compaction did, not a guess. The cards are windowed:
+// the newest page loads first and older pages are fetched as the reader reaches
+// the top, so a long transcript is never sent whole.
 const contextLabels = {sent:'sent', elided:'elided', edited:'edited', dropped:'dropped', summarized_away:'summarized away', capped:'capped'};
+const contextPage = 30;
 let contextTimer = null;
+// The loaded window: cards is contiguous, offset is the index of its first card,
+// total is the transcript length. offset > 0 means older cards exist above it.
+let contextCards = [], contextOffset = 0, contextTotal = 0, contextBox = null, contextLoading = false;
 function contextOpen() { return $('app').classList.contains('context-open'); }
 function setContextOpen(on) {
   $('app').classList.toggle('context-open', on);
   $('show-context').checked = on;
   if (on) loadContext();
 }
+function contextURL(name, offset, limit) {
+  return 'context?name=' + encodeURIComponent(name) + '&offset=' + offset + '&limit=' + limit;
+}
+// Follow the tail only while the reader is at the bottom of it: once they have
+// scrolled back, a background refresh must not yank the view away from them.
+function atContextTail() { return contextOffset + contextCards.length >= contextTotal; }
+function atContextBottom() { const b = $('context-body'); return b.scrollHeight - b.scrollTop - b.clientHeight < 120; }
 function scheduleContext() {
   clearTimeout(contextTimer);
-  contextTimer = setTimeout(() => { if (contextOpen() && selected) loadContext(); }, 200);
+  contextTimer = setTimeout(() => {
+    if (contextOpen() && selected && atContextTail() && atContextBottom()) loadContext();
+  }, 200);
 }
-function byteSize(value) { return tokenCount(String(value || '').length) + ' B'; }
+// Card size in bytes, counting UTF-8 like the server does: compaction's
+// elide_min_bytes and the tool-output caps compare Go's len(), and String.length
+// counts UTF-16 code units, so it under-reports anything outside the BMP.
+function byteSize(value) { return tokenCount(new TextEncoder().encode(String(value ?? '')).length) + ' B'; }
+// The inspector shows the bytes a send would use, so every card body is raw text:
+// no Markdown, no fence handling. What is rendered here has to be exactly what the
+// model receives, or the view cannot be trusted to compare against.
+function contextRaw(value) { return text('pre', String(value ?? '')); }
 // Surgery is only meaningful on a card that is actually sent; a summarized-away
 // or capped turn is outside the replay window, so an override on it would change
 // nothing. The inspector says so instead of offering a control that is a no-op.
@@ -868,21 +890,21 @@ function contextCard(card) {
   );
   const body = text('div', '', 'ctx-body');
   if (sent) {
-    body.append(prose(card.sent));
+    body.append(contextRaw(card.sent));
     // An edit hides the stored text; keep it one click away so the surgery is
     // always reversible against what it replaced.
     if (card.state === 'edited') {
       const detail = document.createElement('details');
-      detail.append(text('summary', 'show the stored original'), prose(card.original));
+      detail.append(text('summary', 'show the stored original'), contextRaw(card.original));
       body.append(detail);
     }
   } else if (card.state === 'elided') {
-    body.append(prose(card.sent));
+    body.append(contextRaw(card.sent));
     const detail = document.createElement('details');
-    detail.append(text('summary', 'show the original (' + byteSize(card.original) + ')'), prose(card.original));
+    detail.append(text('summary', 'show the original (' + byteSize(card.original) + ')'), contextRaw(card.original));
     body.append(detail);
   } else {
-    body.append(text('div', 'not sent — ' + (contextLabels[card.state] || card.state), 'ctx-muted'), prose(card.original));
+    body.append(text('div', 'not sent — ' + (contextLabels[card.state] || card.state), 'ctx-muted'), contextRaw(card.original));
   }
   const actions = text('div', '', 'ctx-actions');
   node.append(head, body, actions);
@@ -969,33 +991,111 @@ function contextSystemCard(title, content, note) {
   node.append(head, body);
   return node;
 }
+// The strip that heads the window: it names the loaded slice and is the explicit
+// way to pull in the page above it (reaching the top scrolls it in too).
+function contextStrip() {
+  const strip = text('div', '', 'ctx-earlier');
+  if (contextOffset > 0) {
+    const more = text('button', 'Load ' + contextOffset + ' earlier message' + (contextOffset === 1 ? '' : 's'), 'ctx-btn');
+    more.type = 'button';
+    more.disabled = contextLoading;
+    more.onclick = () => loadEarlierContext().catch(error);
+    strip.append(more);
+  } else {
+    strip.append(text('span', 'start of the conversation', 'ctx-hint'));
+  }
+  return strip;
+}
+function contextRange() {
+  if (!contextCards.length) return contextTotal + ' stored messages';
+  return 'messages ' + (contextOffset + 1) + '–' + (contextOffset + contextCards.length) + ' of ' + contextTotal;
+}
+// The window container holds the strip then the cards, and is replaced wholesale
+// when a page is added, so cards never need inserting between existing ones.
+function contextWindowNode() {
+  const box = text('div', '', 'ctx-window');
+  box.append(contextStrip());
+  for (const card of contextCards) box.append(contextCard(card));
+  return box;
+}
 function renderContext(view) {
   const cfg = view.config || {};
   const cards = view.cards || [];
-  const userTurns = cards.filter(c => c.kind === 'input').length;
+  const offset = Number(view.offset) || 0;
+  contextCards = cards;
+  contextOffset = offset;
+  contextTotal = Number.isFinite(view.total) ? view.total : offset + cards.length;
   $('context-meta').textContent = (view.model || '') + ' · keep ' + cfg.keep_turns + ' user turns · max ' + (cfg.max_turns || '∞') +
     ' turns · elide >' + cfg.elide_min_bytes + 'B after ' + cfg.elide_after_turns + ' turns';
-  const nodes = [contextSystemCard('system head', view.head || '', 'The role, tools and output contract, sent first.')];
-  nodes.push(text('p', cards.length + ' messages · ' + userTurns + ' user turns (compaction counts user turns)', 'ctx-config'));
-  for (const card of cards) nodes.push(contextCard(card));
-  nodes.push(contextSystemCard('system tail', view.tail || '', 'The per-turn reminder, sent last.'));
-  $('context-body').replaceChildren(...nodes);
+  contextBox = contextWindowNode();
+  const body = $('context-body');
+  body.replaceChildren(
+    contextSystemCard('system head', view.head || '', 'The role, tools and output contract, sent first.'),
+    text('p', contextRange(), 'ctx-config'),
+    contextBox,
+    contextSystemCard('system tail', view.tail || '', 'The per-turn reminder, sent last.'),
+  );
+  // Open at the newest end, which is what "what would the next send look like"
+  // usually means; older pages are one scroll away.
+  body.scrollTop = body.scrollHeight;
 }
 async function loadContext() {
   const body = $('context-body');
-  if (!selected) { $('context-meta').textContent = ''; body.replaceChildren(text('p', 'Open a session to inspect its context.', 'ctx-config')); return; }
+  if (!selected) {
+    $('context-meta').textContent = '';
+    contextCards = []; contextOffset = 0; contextTotal = 0; contextBox = null;
+    body.replaceChildren(text('p', 'Open a session to inspect its context.', 'ctx-config'));
+    return;
+  }
   const version = generation, name = selected;
   // Show the spinner only when there is nothing yet; a refresh keeps the current
   // view until the new one arrives instead of flashing.
   if (!body.children.length) body.replaceChildren(loadingNote('Loading the context…'));
   try {
-    const view = await api('context?name=' + encodeURIComponent(name));
+    // Probe the length, then load the newest page: like history(), the window is
+    // anchored to the tail rather than the start.
+    const probe = await api(contextURL(name, 0, 1));
+    if (version !== generation || selected !== name) return;
+    const total = Number.isFinite(probe.total) ? probe.total : (probe.cards || []).length;
+    const offset = Math.max(0, total - contextPage);
+    const view = await api(contextURL(name, offset, contextPage));
     if (version !== generation || selected !== name) return;
     renderContext(view);
   } catch (e) {
     if (version !== generation || selected !== name) return;
     body.replaceChildren(text('p', 'Could not load the context: ' + e.message, 'ctx-config'));
   }
+}
+// loadEarlierContext pulls in the page just above the window and keeps the reader
+// where they were by holding the distance from the bottom across the prepend.
+async function loadEarlierContext() {
+  if (!selected || contextLoading || contextOffset <= 0) return;
+  const version = generation, name = selected;
+  const offset = Math.max(0, contextOffset - contextPage);
+  const limit = contextOffset - offset;
+  const body = $('context-body');
+  contextLoading = true;
+  try {
+    const view = await api(contextURL(name, offset, limit));
+    if (version !== generation || selected !== name) return;
+    const fromBottom = body.scrollHeight - body.scrollTop;
+    contextCards = [...(view.cards || []), ...contextCards];
+    contextOffset = Number.isFinite(view.offset) ? view.offset : offset;
+    contextTotal = Number.isFinite(view.total) ? view.total : contextTotal;
+    if (contextBox) contextBox.replaceChildren(contextStrip(), ...contextCards.map(contextCard));
+    else renderContext(view);
+    body.scrollTop = body.scrollHeight - fromBottom;
+  } catch (e) {
+    if (version === generation && selected === name) error(e);
+  } finally {
+    contextLoading = false;
+  }
+}
+// Scrolling to the top of the panel loads the next older page, so walking back
+// through a long transcript needs no clicks.
+function onContextScroll() {
+  if (!contextOpen() || contextLoading || contextOffset <= 0) return;
+  if ($('context-body').scrollTop < 80) loadEarlierContext().catch(error);
 }
 // ── Session actions ─────────────────────────────────────────
 async function select(name, cwd) {
@@ -1288,6 +1388,7 @@ $('more-sessions').onclick = () => sessions().catch(error);
 $('theme-toggle').onclick = toggleTheme;
 $('show-context').onchange = () => setContextOpen($('show-context').checked);
 $('context-close').onclick = () => setContextOpen(false);
+$('context-body').onscroll = onContextScroll;
 $('prev-input').onclick = jumpToPrevInput;
 $('to-bottom').onclick = jumpToBottom;
 $('conversation').onscroll = () => {
