@@ -7,6 +7,11 @@
 const $ = id => document.getElementById(id);
 let selected = '', generation = 0, stream = null, retry = null, lastEventAt = 0, refreshTimer = null, sessionBusy = false;
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
+// Whether the reader is following the tail. A real scroll event sets it, and only
+// scrollBottom re-arms it; it is never measured at paint time, because a layout
+// shift (the reasoning card appearing, a card growing) moves the bottom without the
+// reader scrolling, and measuring there would silently stop the follow mid-run.
+let followTail = true;
 let pendingID = null, pendingSession = null;
 let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
 let savedReasoning = '', reasoningDirty = false, reasoningApplying = false;
@@ -23,6 +28,7 @@ let toastHost = null;
 let savedRole = '', roleDirty = false;
 let savedCwd = '', cwdDirty = false, cwdApplying = false;
 const THEME_KEY = 'pai.theme';
+const CONFIG_KEY = 'pai.config-collapsed';
 const REASONING_POS_KEY = 'pai.reasoning-position';
 // ── Model controls ──────────────────────────────────────────
 function normalizeModel(value) { return value.trim().replace(/\s*:\s*/, ':'); }
@@ -127,7 +133,11 @@ let runTimer = null, runStarted = 0, runState = '', runLabel = '';
 function paintRunProgress() {
   const seconds = Math.max(0, Math.floor((Date.now() - runStarted) / 1000));
   const elapsed = seconds < 60 ? seconds + 's' : Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
-  $('run-elapsed').textContent = runLabel + ' · ' + elapsed + ' (this browser)';
+  // The clock is all this adds: the phase it belongs to is the status line beside
+  // it, so repeating the label here would say the same thing twice. It stays in the
+  // tooltip, where the full wording is always available.
+  $('run-elapsed').textContent = elapsed + ' (this browser)';
+  $('run-progress').title = runLabel + ' · ' + elapsed + ' (this browser)';
   watchStream();
 }
 // The server's heartbeat is a comment, invisible to EventSource, so a stalled
@@ -144,7 +154,7 @@ function watchStream() {
 function stopRunProgress() {
   if (runTimer !== null) clearInterval(runTimer);
   runTimer = null; runState = ''; runLabel = ''; runStarted = 0;
-  $('run-progress').hidden = true; $('run-elapsed').textContent = '';
+  $('run-progress').hidden = true; $('run-elapsed').textContent = ''; $('run-progress').title = '';
 }
 function runPhase(label, reset = false) {
   if (runTimer === null || reset || label !== runLabel) runStarted = Date.now();
@@ -161,14 +171,14 @@ function phaseLabel(s) {
     const tool = s.active_tool;
     return 'Running ' + statusText(tool.Name || 'tool') + (tool.Target ? ' · ' + statusText(tool.Target) : '');
   }
-  return ({starting:'Starting…', waiting_model:'Waiting for model response', reasoning:'Receiving reasoning', tool:'Running tool', waiting_approval:'Waiting for approval', waiting_question:'Waiting for answer', awaiting:'Awaiting instruction', stopped:'Stopped'})[s.phase || s.state] || 'Waiting for model response';
+  return ({starting:'Starting…', waiting_model:'Waiting for model response', reasoning:'Receiving reasoning', tool:'Running tool', compacting:'Compressing history…', waiting_approval:'Waiting for approval', waiting_question:'Waiting for answer', awaiting:'Awaiting instruction', stopped:'Stopped'})[s.phase || s.state] || 'Waiting for model response';
 }
 function runSnapshot(s) {
   if (s.pending) {
+    // A waiting prompt is the status line's job ("Waiting for approval · 2
+    // queued"), and there is no clock to measure while nothing runs, so the chip
+    // goes away rather than printing the same words a second time.
     stopRunProgress();
-    $('run-progress').hidden = false;
-    $('run-progress').firstElementChild.hidden = true;
-    $('run-elapsed').textContent = s.pending.kind === 'confirm' ? 'Waiting for approval' : 'Waiting for answer';
     return;
   }
   if (!['busy','starting'].includes(s.state) || ['awaiting','stopped'].includes(s.phase)) { stopRunProgress(); return; }
@@ -180,6 +190,7 @@ function activityScroll() { $('events').scrollTop = $('events').scrollHeight; }
 function scrollBottom() {
   const scroller = $('conversation');
   scroller.scrollTop = scroller.scrollHeight;
+  followTail = true;
   updateJumpButtons();
 }
 // Two floating jump buttons ride over the timeline: ↑ to the user turn just above
@@ -342,6 +353,15 @@ function toggleTheme() {
   try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
   applyTheme(next);
 }
+// The settings grid is collapsed on demand and the choice is remembered, like the
+// theme: it is a preference of this browser, not of the session.
+function configCollapsed() { return !!$('config-body').hidden; }
+function applyConfigCollapsed(collapsed) {
+  $('config-body').hidden = collapsed;
+  $('toggle-config').setAttribute('aria-expanded', String(!collapsed));
+  try { localStorage.setItem(CONFIG_KEY, collapsed ? '1' : '0'); } catch (_) {}
+}
+function storedConfigCollapsed() { try { return localStorage.getItem(CONFIG_KEY) === '1'; } catch (_) { return false; } }
 async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
   const response = await fetch('/api/' + path, options);
@@ -389,6 +409,16 @@ function controls() {
   reasoningControls();
   $('rename-session').hidden = !ready;
   $('rename-session').disabled = !ready || sessionBusy;
+  // Compressing spends a model call and rewrites what is sent, so it needs an idle
+  // worker — the same reason the inspector disables its surgery controls while a
+  // run is in flight. Whether there is anything to compress is *not* a disabled
+  // state: nothing older than the keep_turns window is a fact about the session,
+  // and a control that explains itself on press beats one greyed out for a reason
+  // the reader cannot see.
+  $('compress-now').disabled = !ready || sessionBusy;
+  $('compress-now').title = ready && contextEstimate && contextEstimate.compact === 0
+    ? compactionReason()
+    : 'Summarize older turns into one message now, instead of waiting for the size threshold';
   $('session-label').hidden = !ready;
   // Changing session settings requires an idle worker (it retires the runtime).
   const configReady = ready && !modelBlocked;
@@ -700,7 +730,7 @@ async function loadHistory(reset = false, forceBottom = false) {
     const changed = historyOffset !== offset || JSON.stringify(next) !== JSON.stringify(durable);
     const initial = blank;
     const top = scroller.scrollTop, height = scroller.scrollHeight;
-    const follow = height - scroller.clientHeight - top <= 80;
+    const follow = followTail;
     // Bound the window when the reader is at the bottom; older turns reload from
     // the store on scroll-up, so a very long session does not grow without limit.
     let trimmed = 0;
@@ -709,7 +739,7 @@ async function loadHistory(reset = false, forceBottom = false) {
     if (changed || initial) paintConversation();
     sessionMetadata(meta);
     if (!durable.length && (changed || initial)) { const welcome = text('div', '', 'empty'); welcome.append(text('h3', 'Best partner, PAI!'), text('p', 'Give PAI an instruction below.')); $('history').append(welcome); }
-    if (forceBottom || initial || (reset && changed && follow)) scrollBottom();
+    if (forceBottom || initial || (changed && follow)) scrollBottom();
     else if (changed) scroller.scrollTop = reset ? top : top + scroller.scrollHeight - height;
   } finally {
     if (blank && $('history').firstElementChild && $('history').firstElementChild.className === 'loading') $('history').replaceChildren();
@@ -733,37 +763,42 @@ function tokenCount(n) {
 // numbers can be painted from one place.
 let usageState = {};
 function usageSnapshot(s) { usageState = s || {}; paintTokens(); }
-// The provider's own numbers are the only exact source, and they only exist once
-// a run has reported them. A session opened from storage has no live runtime, so
-// without the estimate from its context projection the line would simply be
-// absent until the next instruction — which is exactly when it is least useful.
+// Provider-reported spend, this round and for the run. The context figure is not
+// here: it belongs to the context panel, and it is the projection's rather than
+// the last request's prompt size (see paintContextUsage).
 function paintTokens() {
   const s = usageState;
   const node = $('token-usage'), round = $('token-round'), run = $('token-total');
   round.textContent = ''; run.textContent = ''; node.title = ''; node.hidden = true;
   if (s.usage_calls > 0) {
-    // The latest prompt size is the current context; against the compaction
-    // threshold it answers "am I about to compress?", not just "how much have I
-    // spent". Only shown when compaction is configured (context_tokens > 0).
     const total = s.total_usage, latest = s.usage;
-    const budget = s.context_tokens > 0
-      ? ` · context ${tokenCount(latest.Prompt)} / ${tokenCount(s.context_tokens)} (${Math.round(100 * latest.Prompt / s.context_tokens)}%)`
-      : '';
-    round.textContent = `Round · in ${tokenCount(latest.Prompt)} · out ${tokenCount(latest.Completion)}${budget}`;
+    round.textContent = `Round · in ${tokenCount(latest.Prompt)} · out ${tokenCount(latest.Completion)}`;
     run.textContent = `Run · in ${tokenCount(total.Prompt)} · out ${tokenCount(total.Completion)} · total ${tokenCount(total.Total)}`;
     node.title = `Latest request: sent ${tokenCount(latest.Prompt)} · received ${tokenCount(latest.Completion)} · total ${tokenCount(latest.Total)}.`
-      + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${s.context_tokens} tokens.` : '')
       + ' This run covers this worker runtime only; resuming a retired runtime starts fresh.';
     node.hidden = false;
-    return;
   }
-  if (!contextEstimate || !contextEstimate.turns) return;
+  paintContextUsage();
+}
+
+// The panel's context figure is the projection of what the next request would
+// send. The provider's own prompt size is exact but only changes on the next
+// request, so right after a manual compress it still counts the span that was just
+// summarized and the context looks larger than before. The projection is
+// recomputed from the stored turns, so it answers "am I about to compress?"
+// immediately after a compaction or a card edit.
+function paintContextUsage() {
+  const s = usageState, estimate = contextEstimate;
+  const block = $('context-usage'), line = $('context-size');
+  line.textContent = ''; block.title = '';
+  if (!estimate || !estimate.turns) return;
   const budget = s.context_tokens > 0
-    ? ` / ${tokenCount(s.context_tokens)} (${Math.round(100 * contextEstimate.tokens / s.context_tokens)}%)`
+    ? ` / ${tokenCount(s.context_tokens)} (${Math.round(100 * estimate.tokens / s.context_tokens)}%)`
     : '';
-  round.textContent = `Context · ~${tokenCount(contextEstimate.tokens)}${budget} · estimated · ${contextEstimate.turns} turns`;
-  node.title = 'No run has reported usage for this session yet, so this is the size its next request would send, estimated at four bytes per token — code and non-Latin text are undercounted. Send an instruction for the provider’s exact count.';
-  node.hidden = false;
+  line.textContent = `Context · ~${tokenCount(estimate.tokens)}${budget} · estimated · ${estimate.turns} turns`;
+  block.title = 'The size the next request would send, estimated at four bytes per token — code and non-Latin text are undercounted.'
+    + (s.usage_calls > 0 ? ` The last request reported ${tokenCount(s.usage.Prompt)} prompt tokens.` : '')
+    + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${tokenCount(s.context_tokens)} tokens.` : '');
 }
 function snapshot(s) {
   usageSnapshot(s);
@@ -870,7 +905,7 @@ function connect() {
       activity(event);
     }
     if (['snapshot','busy','awaiting','done','terminate','stopped','prompt','prompt_replied','user','session'].includes(event.type)) scheduleHistory();
-    if (contextOpen()) scheduleContext();
+    scheduleContext();
   };
   stream.onerror = () => {
     if (version !== generation || stream !== connection) return;
@@ -918,7 +953,11 @@ function atContextBottom() { const b = $('context-body'); return b.scrollHeight 
 function scheduleContext() {
   clearTimeout(contextTimer);
   contextTimer = setTimeout(() => {
-    if (contextOpen() && selected && atContextTail() && atContextBottom()) loadContext();
+    if (!selected) return;
+    // The panel's context figure is the projection, so the probe earns its request
+    // even with the inspector closed; only the page itself needs the overlay open.
+    if (!contextOpen()) { loadContext(false).catch(error); return; }
+    if (atContextTail() && atContextBottom()) loadContext();
   }, 200);
 }
 // Card size in bytes, counting UTF-8 like the server does: compaction's
@@ -1103,6 +1142,7 @@ async function loadContext(full = true) {
     $('context-meta').textContent = '';
     contextCards = []; contextOffset = 0; contextTotal = 0; contextBox = null; contextEstimate = null;
     paintTokens();
+    controls();
     body.replaceChildren(text('p', 'Open a session to inspect its context.', 'ctx-config'));
     return;
   }
@@ -1117,8 +1157,18 @@ async function loadContext(full = true) {
     const probe = await api(contextURL(name, 0, 1));
     if (version !== generation || selected !== name) return;
     const total = Number.isFinite(probe.total) ? probe.total : (probe.cards || []).length;
-    contextEstimate = {tokens: Number(probe.estimated_tokens) || 0, turns: total};
+    const probeConfig = probe.config || {};
+    // The size alone is not enough: a compress needs to know whether anything is
+    // older than the keep_turns window, which the same projection already computed.
+    contextEstimate = {
+      tokens: Number(probe.estimated_tokens) || 0,
+      turns: total,
+      compact: Number(probe.compact_turns) || 0,
+      userTurns: Number(probe.user_turns) || 0,
+      keepTurns: Number(probeConfig.keep_turns) || 0,
+    };
     paintTokens();
+    controls();
     if (!full) return;
     const offset = Math.max(0, total - contextPage);
     const view = await api(contextURL(name, offset, contextPage));
@@ -1172,7 +1222,7 @@ async function select(name, cwd, replaceURL = false) {
   liveCard = null; liveType = ''; liveText = '';
     $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   updateJumpButtons();
-  $('conversation').scrollTop = 0; controls();
+  $('conversation').scrollTop = 0; followTail = true; controls();
   loadTrustAll();
   loadReasoning();
   for (const row of $('sessions').children) { const active = row.dataset?.name === name; row.classList.toggle('selected', active); const open = row.firstElementChild; if (open) open.setAttribute('aria-current', active ? 'page' : 'false'); }
@@ -1274,6 +1324,26 @@ async function rewind(index, content) {
     sessions(true).catch(error);
   } catch (e) { error(e); }
 }
+// Compaction folds the user turns older than keep_turns into one summary, so a
+// session whose turns all still fit inside that window has nothing to do. A
+// command that exits early is indistinguishable from a dead button unless it says
+// which of the two it was.
+function compactionReason() {
+  const estimate = contextEstimate;
+  if (!estimate || !estimate.turns) return 'Nothing to compact: this session has no stored turns.';
+  const keep = estimate.keepTurns ? 'keep_turns = ' + estimate.keepTurns : 'keep_turns';
+  return `Nothing to compact: this session has ${estimate.userTurns} user turn${estimate.userTurns === 1 ? '' : 's'} and ${keep}, so every turn is still sent verbatim.`;
+}
+// Force the compaction that summarize_after_tokens would otherwise trigger on a
+// later request: the same /compact the CLI exposes, sent as an instruction (a
+// command is dispatched wherever an instruction is read). It costs one model
+// call; nothing is lost, because the full transcript stays on disk.
+async function compressNow() {
+  if (!selected || sessionBusy) return;
+  if (contextEstimate && contextEstimate.compact === 0) { error(new Error(compactionReason())); return; }
+  if (!confirm('Summarize older turns into one message now? This makes one extra model call; the full transcript is kept.')) return;
+  await action('send', '/compact');
+}
 async function action(kind, override) {
   if (!selected) { error(new Error('Open a named session first')); return; }
   const name = selected, message = override === undefined ? $('message').value : override;
@@ -1305,7 +1375,7 @@ function clearWorkspace() {
   try { localStorage.removeItem(SESSION_KEY); } catch {}
   setSessionURL('', true);
   durable = []; liveSteps = []; currentStep = null; thinking = '';
-  liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0;
+  liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0; followTail = true;
   sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = false;
   $('trust-all').checked = false;
   $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
@@ -1505,11 +1575,14 @@ $('more-sessions').onclick = () => sessions().catch(error);
 $('theme-toggle').onclick = toggleTheme;
 $('show-context').onchange = () => setContextOpen($('show-context').checked);
 $('context-close').onclick = () => setContextOpen(false);
+$('compress-now').onclick = () => { compressNow().catch(error); };
+$('toggle-config').onclick = () => applyConfigCollapsed(!configCollapsed());
 $('context-body').onscroll = onContextScroll;
 globalThis.onpopstate = () => { onPopState().catch(error); };
 $('prev-input').onclick = jumpToPrevInput;
 $('to-bottom').onclick = jumpToBottom;
 $('conversation').onscroll = () => {
+  followTail = atConversationBottom();
   updateJumpButtons();
   // Reach the top and load a few more older turns (the initial window is small).
   const scroller = $('conversation');
@@ -1531,6 +1604,7 @@ $('toggle-activity').onclick = () => {
 
 controls();
 applyTheme(initialTheme());
+applyConfigCollapsed(storedConfigCollapsed());
 initPendingDrag();
 initReasoningDrag();
 updateJumpButtons();

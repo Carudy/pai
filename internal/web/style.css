@@ -185,7 +185,16 @@ main {
     min-height: 0;
 }
 
+/* The actions, title row and settings each own a grid cell rather than floating:
+   a float is out of flow, so a long status line would be laid out underneath the
+   buttons and run off the header. Column 1 is minmax(0, 1fr), which lets the
+   title row shrink so the status ellipsizes before it reaches them. */
 main > header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 6px 10px;
     padding: 14px 22px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
@@ -198,7 +207,8 @@ main > header h2,
 }
 
 .header-actions {
-    float: right;
+    grid-column: 2;
+    grid-row: 1;
     display: flex;
     gap: 6px;
 }
@@ -381,16 +391,27 @@ header p {
 /* ── Session header: title, meta, model, run status ────────── */
 
 .session-title-row {
+    /* Both status readouts live in one capped box below. Their length must not
+       decide the layout: a long "Running execute · …" otherwise squeezes the
+       session name and the two readouts fight over the same space. Past the cap
+       they clip inside it. */
+    --status-width: clamp(16ch, 40%, 46ch);
+    grid-column: 1;
+    grid-row: 1;
     display: flex;
     align-items: center;
     flex-wrap: nowrap;
     gap: 6px 8px;
     min-width: 0;
+    overflow: hidden;
 }
 
 /* The title stays on one ellipsized line so the header never changes height; the
    sidebar carries the full name. */
 .session-title-row h2 {
+    /* The name hugs its text: growing it would push Rename away from the name it
+       belongs to. The slack collects in the status box's auto margin instead. */
+    flex: 0 1 auto;
     min-width: 0;
     white-space: nowrap;
     overflow: hidden;
@@ -409,10 +430,54 @@ header p {
    right, so each pair lines up; a third control per row can be added later by
    leaving the last grid track in place. */
 .session-config {
+    grid-column: 1 / -1;
+    grid-row: 2;
     display: flex;
     flex-direction: column;
     gap: 4px;
     margin: 6px 0 2px;
+}
+
+/* The settings grid collapses to give the conversation its height back; the
+   toggle itself stays, so a collapsed block can always be reopened. */
+.config-toggle {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--muted);
+    background: none;
+    border-color: transparent;
+}
+
+.config-toggle:hover {
+    color: var(--ink);
+    background: var(--soft);
+    border-color: var(--border);
+}
+
+.config-caret {
+    display: inline-block;
+    transition: transform 0.15s;
+}
+
+.config-toggle[aria-expanded="false"] .config-caret {
+    transform: rotate(-90deg);
+}
+
+#config-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* #config-body sets display, which would otherwise beat the [hidden] rule. */
+#config-body[hidden] {
+    display: none;
 }
 
 /* Each row is its own grid so the two rows' columns line up only because the
@@ -543,10 +608,16 @@ header p {
     display: flex;
     align-items: center;
     flex-wrap: nowrap;
-    flex: 1 1 auto;
+    /* Capped, not content-sized: the phase text and the run clock share this box,
+       it keeps its width however long they get, and clips what does not fit, so
+       nothing to its left is pushed or overlapped. The auto margin parks it against
+       the right edge, which keeps the name and its Rename button together. */
+    flex: 0 1 var(--status-width);
+    margin-left: auto;
     gap: 4px 12px;
     min-width: 0;
     height: 26px;
+    overflow: hidden;
 }
 
 /* The run-status slot sits in the fixed-height status bar; its own height never
@@ -579,6 +650,12 @@ header p {
    status can never reflow the header. Two lines: this round, and the run total. */
 .config-tokens {
     flex: 0 0 auto;
+    /* One row: the two figures are small and adjacent in meaning, so they share a
+       line and only wrap when the header runs out of width. */
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 14px;
     margin: 2px 0 0;
     font-size: 11px;
     color: var(--muted);
@@ -1346,6 +1423,38 @@ header p {
     margin: 2px 0 0;
 }
 
+/* The panel owns the context figure. It is the projection of what the next
+   request would send, not the last request's prompt size: the projection is
+   recomputed from the stored turns, so it moves the moment a compaction or a card
+   edit lands, while a reported prompt size goes stale. */
+.context-usage {
+    flex: 1 1 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.context-usage p {
+    margin: 0;
+    font-size: 12px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.compress-btn {
+    font-size: 11px;
+    padding: 2px 10px;
+    border-radius: 999px;
+    background: var(--soft);
+    color: var(--ink);
+}
+
+.compress-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 /* A switch rather than a button: the inspector is a mode, and the track shows
    whether it is on. Colored with the accent, unlike the red "Trust all" switch. */
 #activity > header .switch {
@@ -1806,7 +1915,23 @@ header p {
         display: flex;
     }
     main > header {
+        /* One column on a narrow screen: the actions sit above the title row, as
+           they did when they were floated. */
+        grid-template-columns: minmax(0, 1fr);
         padding: 16px;
+    }
+    .header-actions {
+        grid-column: 1;
+        grid-row: 1;
+        margin-bottom: 10px;
+        position: relative;
+        z-index: 5;
+    }
+    .session-title-row {
+        grid-row: 2;
+    }
+    .session-config {
+        grid-row: 3;
     }
     #conversation {
         padding: 16px;

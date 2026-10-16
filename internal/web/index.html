@@ -88,38 +88,49 @@
                             <div class="run-progress-slot">
                                 <div id="run-progress" role="status" hidden>
                                     <span class="busy-indicator" aria-hidden="true">⏳</span>
-                                    <span id="run-elapsed">Running…</span>
+                                    <span id="run-elapsed"></span>
                                 </div>
                             </div>
                         </div>
                     </div>
                     <div class="session-config">
-                        <div class="config-row">
-                            <form id="role-form" aria-label="Session role">
-                                <label for="session-role-select">Role</label>
-                                <select id="session-role-select" disabled></select>
-                                <button id="apply-role" type="submit" disabled>Apply</button>
-                            </form>
-                            <form id="working-dir-form" aria-label="Session working directory">
-                                <label for="session-working-dir">Working dir</label>
-                                <input id="session-working-dir" placeholder="/path/to/project" title="Existing directory on the server; used on the next send" autocomplete="off" required disabled />
-                                <button id="apply-working-dir" type="submit" disabled>Apply</button>
-                            </form>
-                        </div>
-                        <div class="config-row">
-                            <form id="reasoning-form" aria-label="Session reasoning effort">
-                                <label for="reasoning-select">Reasoning</label>
-                                <select id="reasoning-select" title="Extended thinking effort for this session (in memory); applies to the next run"></select>
-                                <button id="apply-reasoning" type="submit" disabled>Apply</button>
-                            </form>
-                            <form id="model-form" aria-label="Session model">
-                                <label for="session-model">Model</label>
-                                <div class="model-field">
-                                    <input id="session-model" placeholder="provider:model" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="model-options" aria-autocomplete="list" disabled />
-                                    <ul id="model-options" role="listbox" aria-label="Model suggestions" hidden></ul>
-                                </div>
-                                <button id="apply-model" type="submit" disabled>Apply</button>
-                            </form>
+                        <button
+                            id="toggle-config"
+                            type="button"
+                            class="config-toggle"
+                            aria-controls="config-body"
+                            aria-expanded="true"
+                        >
+                            <span class="config-caret" aria-hidden="true">▾</span> Session settings
+                        </button>
+                        <div id="config-body">
+                            <div class="config-row">
+                                <form id="role-form" aria-label="Session role">
+                                    <label for="session-role-select">Role</label>
+                                    <select id="session-role-select" disabled></select>
+                                    <button id="apply-role" type="submit" disabled>Apply</button>
+                                </form>
+                                <form id="working-dir-form" aria-label="Session working directory">
+                                    <label for="session-working-dir">Working dir</label>
+                                    <input id="session-working-dir" placeholder="/path/to/project" title="Existing directory on the server; used on the next send" autocomplete="off" required disabled />
+                                    <button id="apply-working-dir" type="submit" disabled>Apply</button>
+                                </form>
+                            </div>
+                            <div class="config-row">
+                                <form id="reasoning-form" aria-label="Session reasoning effort">
+                                    <label for="reasoning-select">Reasoning</label>
+                                    <select id="reasoning-select" title="Extended thinking effort for this session (in memory); applies to the next run"></select>
+                                    <button id="apply-reasoning" type="submit" disabled>Apply</button>
+                                </form>
+                                <form id="model-form" aria-label="Session model">
+                                    <label for="session-model">Model</label>
+                                    <div class="model-field">
+                                        <input id="session-model" placeholder="provider:model" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="model-options" aria-autocomplete="list" disabled />
+                                        <ul id="model-options" role="listbox" aria-label="Model suggestions" hidden></ul>
+                                    </div>
+                                    <button id="apply-model" type="submit" disabled>Apply</button>
+                                </form>
+                            </div>
                         </div>
                         <div id="token-usage" class="config-tokens" hidden>
                             <p id="token-round"></p>
@@ -215,6 +226,18 @@
                         <span class="switch-text">Inspect</span>
                     </label>
                     <p>Reasoning, compaction & context</p>
+                    <div id="context-usage" class="context-usage">
+                        <p id="context-size"></p>
+                        <button
+                            id="compress-now"
+                            type="button"
+                            class="compress-btn"
+                            title="Summarize older turns into one message now, rather than waiting for the size threshold"
+                            disabled
+                        >
+                            Compress now
+                        </button>
+                    </div>
                 </header>
                 <div id="events" role="log" aria-label="Activities">
                     <div id="live-progress"></div>

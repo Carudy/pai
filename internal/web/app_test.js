@@ -82,28 +82,29 @@ assert.equal(recovery.get('reasoning-preview').hidden, true);
 const progress = browser();
 progress.run("selected='one'; $('login').hidden=true; snapshot({state:'starting',queued:0})");
 assert.equal(progress.get('run-progress').hidden, false);
-assert.match(progress.get('run-elapsed').textContent, /Starting… · 0s \(this browser\)/);
+assert.equal(progress.get('run-elapsed').textContent, '0s (this browser)', 'the chip carries the clock, not the phase');
+assert.match(progress.get('run-progress').title, /Starting…/, 'the phase it belongs to stays in the tooltip');
 assert.equal(progress.timers(), 1);
 progress.tick(65000);
-assert.match(progress.get('run-elapsed').textContent, /1m 5s/);
+assert.equal(progress.get('run-elapsed').textContent, '1m 5s (this browser)');
 progress.run("snapshot({state:'starting',queued:1})");
-assert.match(progress.get('run-elapsed').textContent, /1m 5s/, 'repeated snapshots preserve clock');
+assert.equal(progress.get('run-elapsed').textContent, '1m 5s (this browser)', 'repeated snapshots preserve clock');
 progress.run("snapshot({state:'busy',queued:0}); activity({type:'tool_call',data:{Name:'execute',Detail:'secret command'}})");
-assert.match(progress.get('run-elapsed').textContent, /Running execute… · 0s/);
-assert.ok(!progress.get('run-elapsed').textContent.includes('secret'));
+assert.equal(progress.get('run-elapsed').textContent, '0s (this browser)');
+assert.match(progress.get('run-progress').title, /Running execute…/, 'the status line names the phase');
+assert.ok(!progress.get('run-progress').title.includes('secret'));
 progress.tick(3000);
 progress.run("snapshot({state:'busy',queued:0})");
-assert.match(progress.get('run-elapsed').textContent, /Running execute… · 3s/);
+assert.equal(progress.get('run-elapsed').textContent, '3s (this browser)');
 progress.run("activity({type:'tool_call',data:{Name:'execute'}})");
-assert.match(progress.get('run-elapsed').textContent, /0s/, 'each tool call resets even for same tool');
+assert.equal(progress.get('run-elapsed').textContent, '0s (this browser)', 'each tool call resets even for same tool');
 assert.equal(progress.timers(), 1);
 progress.tick(2000);
 progress.run("activity({type:'tool_result',data:{OK:true}})");
-assert.match(progress.get('run-elapsed').textContent, /Thinking… · 0s/);
+assert.equal(progress.get('run-elapsed').textContent, '0s (this browser)');
 progress.run("snapshot({state:'busy',queued:0,pending:{id:'p',kind:'confirm'}}); activity({type:'tool_call',data:{Name:'execute'}})");
-assert.equal(progress.get('run-progress').hidden, false);
-assert.equal(progress.get('run-progress').firstElementChild.hidden, true, 'approval must not show spinner');
-assert.equal(progress.get('run-elapsed').textContent, 'Waiting for approval');
+assert.equal(progress.get('run-progress').hidden, true, 'a waiting prompt has no clock, and the status line already names it');
+assert.equal(progress.get('state').textContent, 'Waiting for approval');
 assert.equal(progress.timers(), 0);
 for (const state of ['awaiting','idle','stopped']) {
   progress.run("snapshot({state:'busy',queued:0}); snapshot({state:" + JSON.stringify(state) + ",queued:0})");
@@ -130,27 +131,28 @@ assert.equal(progress.timers(), 0, 'selection clears old timer immediately');
 for (const name of ['execute','remote','read','write','edit','websearch','custom']) {
   const tool = browser();
   tool.run("snapshot({state:'busy',queued:0}); activity({type:'tool_call',data:{Name:" + JSON.stringify(name) + "}})");
-  assert.match(tool.get('run-elapsed').textContent, new RegExp('Running ' + name + '… · 0s'));
+  assert.equal(tool.get('run-elapsed').textContent, '0s (this browser)');
+  assert.match(tool.get('run-progress').title, new RegExp('Running ' + name + '…'), 'the chip names the phase it times');
   assert.equal(tool.get('run-progress').firstElementChild.hidden, false);
   tool.tick(2000);
   tool.run("snapshot({state:'busy',queued:0}); activity({type:'tool_output',data:'log'})");
   assert.match(tool.get('run-elapsed').textContent, /2s/);
   tool.run("activity({type:'tool_result',data:{OK:true}})");
-  assert.match(tool.get('run-elapsed').textContent, /Thinking… · 0s/);
+  assert.equal(tool.get('run-elapsed').textContent, '0s (this browser)');
 }
 const waiting = browser();
 waiting.run("snapshot({state:'busy',queued:0,pending:{id:'answer',kind:'ask'}})");
 waiting.tick(5000);
 waiting.run("snapshot({state:'busy',queued:0,pending:{id:'answer',kind:'ask'}})");
-assert.equal(waiting.get('run-elapsed').textContent, 'Waiting for answer');
-assert.equal(waiting.get('run-progress').firstElementChild.hidden, true);
+assert.equal(waiting.get('run-progress').hidden, true, 'a waiting prompt has no clock');
+assert.equal(waiting.get('state').textContent, 'Waiting for answer');
 assert.equal(waiting.timers(), 0);
 
 const phases = browser();
 for (const [phase, label] of Object.entries({starting:'Starting…', waiting_model:'Waiting for model response', reasoning:'Receiving reasoning'})) {
   phases.run(`snapshot({state:'busy',phase:${JSON.stringify(phase)},queued:0})`);
-  assert.ok(phases.get('run-elapsed').textContent.startsWith(label));
-  assert.equal(phases.get('state').textContent, label);
+  assert.equal(phases.get('state').textContent, label, 'the status line names the phase');
+  assert.equal(phases.get('run-progress').title.startsWith(label), true, 'and the clock is labelled by it');
   phases.tick(3000);
   phases.get('conversation').scrollTop = 17;
   phases.run(`snapshot({state:'busy',phase:${JSON.stringify(phase)},queued:0})`);
@@ -160,7 +162,7 @@ for (const [phase, label] of Object.entries({starting:'Starting…', waiting_mod
 for (const name of ['execute','remote','read','write','edit','websearch','custom']) {
   const s = {state:'busy',phase:'tool',queued:0,active_tool:{Name:name,Target:'target',Detail:'<script>command</script> ' + 'x'.repeat(200)}};
   phases.run(`snapshot(${JSON.stringify(s)})`);
-  assert.ok(phases.get('run-elapsed').textContent.startsWith('Running ' + name + ' · target'));
+  assert.equal(phases.get('run-progress').title.startsWith('Running ' + name + ' · target'), true);
   assert.equal(phases.get('state').textContent.length, 160);
   assert.ok(phases.get('state').title.includes(s.active_tool.Detail));
   phases.tick(2000);
@@ -170,7 +172,7 @@ for (const name of ['execute','remote','read','write','edit','websearch','custom
 }
 for (const [kind, label] of [['confirm','Waiting for approval'],['ask','Waiting for answer']]) {
   phases.run(`snapshot({state:'busy',phase:'tool',queued:2,pending:{id:${JSON.stringify(kind)},kind:${JSON.stringify(kind)}}})`);
-  assert.equal(phases.get('run-elapsed').textContent, label);
+  assert.equal(phases.get('run-progress').hidden, true, 'no clock while a prompt waits');
   assert.equal(phases.get('state').textContent, label + ' · 2 queued');
   assert.equal(phases.timers(), 0);
 }
@@ -225,7 +227,11 @@ assert.match(stamps[0].textContent, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'the time
 page.run("usageSnapshot({usage_calls:2, usage:{Prompt:1500,Completion:20,Total:1520}, total_usage:{Prompt:2500000,Completion:1200,Total:2501200}, context_tokens:512000})");
 assert.match(page.get('token-total').textContent, /total 2\.5M/, 'large totals use M');
 assert.match(page.get('token-total').textContent, /out 1\.2k/, 'thousands use k');
-assert.match(page.get('token-round').textContent, /context 1\.5k \/ 512k/, 'context fill is compact');
+assert.equal(page.get('token-round').textContent, 'Round · in 1.5k · out 20', 'the header line reports spend, never context');
+// The context figure belongs to the panel, where it is the projection's estimate
+// measured against the compaction budget.
+page.run("contextEstimate = {tokens: 331100, turns: 3531}; paintTokens()");
+assert.equal(page.get('context-size').textContent, 'Context · ~331.1k / 512k (65%) · estimated · 3531 turns', 'the panel carries the context figure with its budget');
 page.run("usageSnapshot({})");
 page.run("activity({type:'reasoning',data:'first '}); activity({type:'reasoning',data:'second'})");
 assert.ok(!page.get('live-progress').textContent.includes('first second'), 'live reasoning stays out of the activity log');
@@ -475,6 +481,21 @@ assert.equal(inspector.get('show-context').checked, false);
 
 // Optional test-only dependency, installed outside the repository. No build or
 // production dependency; do not count the minimal DOM above as sanitizer tests.
+// The settings grid collapses to give the conversation its height back, and the
+// choice is a preference of this browser, like the theme. The event wiring is
+// outside the harness's source, so the toggle is driven as its handler calls it.
+const collapse = browser();
+assert.equal(collapse.get('config-body').hidden, false, 'the settings grid starts open');
+collapse.run('applyConfigCollapsed(!configCollapsed())');
+assert.equal(collapse.get('config-body').hidden, true, 'collapsing hides the grid');
+assert.equal(collapse.get('toggle-config').attributes['aria-expanded'], 'false', 'and the toggle reports it');
+assert.equal(collapse.run("localStorage.getItem('pai.config-collapsed')"), '1', 'the choice is remembered');
+collapse.run('applyConfigCollapsed(!configCollapsed())');
+assert.equal(collapse.get('config-body').hidden, false, 'and the toggle reopens it');
+assert.equal(collapse.get('toggle-config').attributes['aria-expanded'], 'true');
+collapse.run("localStorage.setItem('pai.config-collapsed','1'); applyConfigCollapsed(storedConfigCollapsed())");
+assert.equal(collapse.get('config-body').hidden, true, 'a remembered collapse is restored on boot');
+
 if (process.env.PAI_WEB_JSDOM) {
   const {JSDOM} = require(process.env.PAI_WEB_JSDOM);
   const dom = new JSDOM(fs.readFileSync(__dirname + '/index.html', 'utf8'), {runScripts:'outside-only', url:'https://pai.example'});
@@ -516,14 +537,14 @@ async function verifyHistory() {
   await p.run('loadHistory(true)'); assert.equal(p.get('history').children.length, 30);
   assert.equal(p.get('history').children[0].textContent, 'You220', 'initial load shows latest tail');
   assert.equal(p.get('conversation').scrollTop, 1000, 'initial history follows latest');
-  p.get('conversation').scrollTop = 123;
+  p.get('conversation').scrollTop = 123; p.run('followTail = false');
   p.run("globalThis.originalPaint=paintConversation; paintConversation=()=>{originalPaint(); $('conversation').scrollHeight+=500;}");
   await p.run('loadHistory()'); assert.equal(p.get('history').children.length, 60);
   assert.equal(p.get('conversation').scrollTop, 623, 'earlier history offsets the added height to preserve the viewport');
   p.run('paintConversation=originalPaint');
   await p.run('loadHistory(true)'); assert.equal(p.get('history').children.length, 60, 'refresh retains earlier loaded pages');
   await p.run('loadHistory()'); assert.equal(p.get('history').children.length, 90);
-  p.get('conversation').scrollTop = 50;
+  p.get('conversation').scrollTop = 50; p.run('followTail = false');
   await p.run('loadHistory(true)');
   assert.equal(p.get('conversation').scrollTop, 50, 'unchanged refresh preserves reading position');
   const card = p.get('history').firstElementChild;
@@ -538,10 +559,17 @@ async function verifyHistory() {
   p.run("globalThis.total=251; api=async path=>{const offset=Number(/offset=(\\d+)/.exec(path)[1]),limit=Number(/limit=(\\d+)/.exec(path)[1]); return {turns:Array.from({length:Math.min(limit,total-offset)},(_,i)=>({Role:'user',Content:String(offset+i)})),total,cwd:'/fixed'};}");
   await p.run('loadHistory(true)');
   assert.equal(p.get('conversation').scrollTop, 50, 'new durable content preserves reader position');
-  p.get('conversation').scrollTop = 1050;
+  p.get('conversation').scrollTop = 1050; p.run('followTail = true');
   p.run('total++');
   await p.run('loadHistory(true)');
   assert.equal(p.get('conversation').scrollTop, 1500, 'new durable content follows near bottom');
+  // A layout shift is not a scroll: the reasoning card appearing shortens the pane,
+  // which used to read as "the reader scrolled away" and froze the follow.
+  p.run("$('conversation').clientHeight = 240");
+  p.run('total++');
+  await p.run('loadHistory(true)');
+  assert.equal(p.get('conversation').scrollTop, p.get('conversation').scrollHeight, 'a shorter pane does not stop following the tail');
+  p.run("$('conversation').clientHeight = 400");
   p.run("connect=()=>{}; loadSnapshot=async()=>{}; globalThis.originalSessions=sessions; sessions=async()=>{}; $('message').value='hello'; api=async()=>({})");
   p.get('conversation').scrollTop = 50;
   await p.run("action('send')");
@@ -663,8 +691,13 @@ assert.equal(usagePage.get('token-usage').hidden, true);
 assert.equal(usagePage.get('token-round').textContent, '');
 const budgetState = {state:'awaiting',usage_calls:3,usage:{Prompt:78000,Completion:100,Total:78100},total_usage:{Prompt:200000,Completion:5000,Total:205000},context_tokens:128000};
 usagePage.run(`snapshot(${JSON.stringify(budgetState)})`);
-assert.match(usagePage.get('token-round').textContent, /context 78k \/ 128k \(61%\)/, 'context fill appears when compaction is configured');
-assert.match(usagePage.get('token-usage').title, /exceeds 128000 tokens/);
+assert.equal(usagePage.get('token-round').textContent, 'Round · in 78k · out 100', 'the round line stays spend only');
+assert.match(usagePage.get('token-usage').title, /Latest request: sent 78k/);
+// The panel's figure is still the projection once a run has reported usage, and it
+// is measured against the configured budget.
+usagePage.run("contextEstimate = {tokens: 78000, turns: 12}; paintTokens()");
+assert.equal(usagePage.get('context-size').textContent, 'Context · ~78k / 128k (61%) · estimated · 12 turns', 'the panel measures context against the compaction budget');
+assert.match(usagePage.get('context-usage').title, /exceeds 128k tokens/);
 
 async function verifyModels() {
   const p = browser();
@@ -932,40 +965,80 @@ async function verifyTokenEstimate() {
   const p = browser();
   p.run("selected='one'; api=async path => path.startsWith('context') ? {estimated_tokens: 12400, total: 340, cards: []} : {}");
   await p.run('loadContext(false)');
-  assert.equal(p.get('token-usage').hidden, false, 'the token line shows without a live run');
-  assert.match(p.get('token-round').textContent, /Context · ~12\.4k · estimated · 340 turns/, 'it reports the projected size as an estimate');
-  assert.equal(p.get('token-round').textContent.includes('Round'), false, 'no round numbers are invented');
+  // The projection lands in the context panel, not in the spend line: a session
+  // that has never run has a context size but no usage to report.
+  assert.equal(p.get('context-size').textContent, 'Context · ~12.4k · estimated · 340 turns', 'the panel reports the projected size as an estimate');
+  assert.equal(p.get('token-usage').hidden, true, 'no spend is invented before a run reports any');
+  assert.equal(p.get('context-usage').title.includes('four bytes per token'), true, 'the estimate says how it was derived');
 
-  // A configured budget is shown against the estimate, as with real usage.
+  // A configured budget is shown against the estimate, and the button is offered
+  // for an idle session that has something to compress.
   p.run("snapshot({state:'awaiting',usage_calls:0,context_tokens:128000})");
-  assert.match(p.get('token-round').textContent, /~12\.4k \/ 128k \(10%\)/, 'the estimate is measured against the compaction budget');
+  assert.equal(p.get('context-size').textContent, 'Context · ~12.4k / 128k (10%) · estimated · 340 turns', 'the estimate is measured against the compaction budget');
+  assert.equal(p.get('compress-now').disabled, false, 'an idle session with turns offers compression');
 
-  // The provider's own numbers win as soon as a run reports them.
+  // Provider numbers fill the spend line; the panel keeps the projection, which is
+  // the figure that moves when the context changes.
   p.run("snapshot({state:'awaiting',usage_calls:1,usage:{Prompt:9000,Completion:120,Total:9120},total_usage:{Prompt:9000,Completion:120,Total:9120}})");
-  assert.match(p.get('token-round').textContent, /^Round · in 9k · out 120/, 'reported usage replaces the estimate');
+  assert.equal(p.get('token-round').textContent, 'Round · in 9k · out 120', 'reported usage fills the round line');
   assert.equal(p.get('token-total').textContent.includes('total 9.1k'), true, 'the run line is a measurement again');
+  assert.match(p.get('context-size').textContent, /~12\.4k/, 'the panel keeps the projection, not the last prompt size');
+
+  // Compressing spends a model call on the session's runtime, so a busy one cannot.
+  p.run("snapshot({state:'busy',usage_calls:1,usage:{Prompt:9000,Completion:120,Total:9120},total_usage:{Prompt:9000,Completion:120,Total:9120}})");
+  assert.equal(p.get('compress-now').disabled, true, 'a running session cannot compress');
 
   // An empty session has nothing to estimate, and a failed probe must not leave a
-  // stale line behind.
+  // stale figure behind.
   const empty = browser();
   empty.run("selected='one'; api=async path => path.startsWith('context') ? {estimated_tokens: 0, total: 0, cards: []} : {}");
   await empty.run('loadContext(false)');
-  assert.equal(empty.get('token-usage').hidden, true, 'an empty session shows no token line');
+  assert.equal(empty.get('context-size').textContent, '', 'an empty session shows no context figure');
+  assert.equal(empty.get('compress-now').disabled, false, 'a no-op is explained on press, not hidden behind a disabled button');
+  assert.match(empty.get('compress-now').title, /Nothing to compact: this session has no stored turns/, 'and the reason is already available to read');
   const failed = browser();
   failed.run("selected='one'; api=async()=>{throw new Error('nope')}");
   await failed.run('loadContext(false)');
-  assert.equal(failed.get('token-usage').hidden, true, 'a failed estimate leaves the line hidden');
+  assert.equal(failed.get('context-size').textContent, '', 'a failed estimate leaves the figure empty');
+  assert.equal(failed.get('token-usage').hidden, true, 'and leaves the spend line hidden');
 
   // Switching sessions drops the previous estimate rather than showing it for the
   // session still loading.
   const switching = browser();
   switching.run("selected='one'; api=async path => path.startsWith('context') ? {estimated_tokens: 12400, total: 340, cards: []} : path === 'snapshot?name=one&offset=0&limit=100' ? {} : {}");
   await switching.run('loadContext(false)');
-  assert.equal(switching.get('token-round').textContent.includes('~12.4k'), true);
+  assert.equal(switching.get('context-size').textContent.includes('~12.4k'), true);
   switching.run("loadSnapshot=async()=>{}; connect=()=>{}; loadHistory=async()=>{}; sessions=async()=>[]");
   const selecting = switching.run("select('two')");
-  assert.equal(switching.get('token-round').textContent, '', 'a switch clears the old estimate immediately');
+  assert.equal(switching.get('context-size').textContent, '', 'a switch clears the old estimate immediately');
   await selecting;
+}
+// Compressing sends the CLI's /compact as an instruction, behind a confirmation,
+// and is refused outright while a run holds the runtime.
+async function verifyCompressNow() {
+  const p = browser();
+  p.run("selected='one'; contextEstimate={tokens:1000,turns:9,compact:5,userTurns:9,keepTurns:4}; sessionBusy=false; globalThis.calls=[]; api=async(path,body)=>{calls.push([path,body]);return {ok:true};}; loadSnapshot=async()=>{}; connect=()=>{}; scheduleHistory=()=>{}; scrollBottom=()=>{}; sessions=async()=>{}");
+  p.run('controls()');
+  assert.equal(p.get('compress-now').disabled, false);
+  assert.equal(p.run("phaseLabel({phase:'compacting'})"), 'Compressing history…', 'the status names a compaction');
+  await p.run('compressNow()');
+  assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [['send', {name:'one', text:'/compact'}]], 'the button sends the compaction command');
+  // A declined confirmation sends nothing.
+  p.run("globalThis.calls=[]; confirm=()=>false");
+  await p.run('compressNow()');
+  assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [], 'declining sends nothing');
+  // A busy session is refused even if the button state were somehow stale.
+  p.run("globalThis.calls=[]; confirm=()=>true; sessionBusy=true");
+  await p.run('compressNow()');
+  assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [], 'a busy session is refused');
+  // Nothing older than the keep_turns window: pressing says why instead of sending
+  // a command that would exit early, which is what a silent button looked like.
+  p.run("$('error').replaceChildren(); globalThis.calls=[]; confirm=()=>true; sessionBusy=false; contextEstimate={tokens:1000,turns:5,compact:0,userTurns:5,keepTurns:8}; controls()");
+  assert.equal(p.get('compress-now').disabled, false, 'the no-op reason is not hidden behind a disabled button');
+  assert.match(p.get('compress-now').title, /keep_turns = 8/, 'the tooltip carries the reason too');
+  await p.run('compressNow()');
+  assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [], 'a no-op press sends nothing');
+  assert.match(p.get('error').textContent, /Nothing to compact: this session has 5 user turns and keep_turns = 8/, 'the press explains why');
 }
 
 async function verifySendFailure() {
@@ -1054,4 +1127,4 @@ async function verifyAuthGate() {
   assert.equal(p.run('toasted.length'), 1, 'a non-auth failure is toasted');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

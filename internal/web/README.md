@@ -95,13 +95,25 @@ fills the field. The field still accepts any configured `provider:model`, with
 spaces around the colon normalized; suggestions are not an allowlist.
 
 The header keeps a compact settings grid (Role, Reasoning, Working dir, and
-Model, each with Apply; it collapses to one column on narrow screens), a Rename
+Model, each with Apply; it collapses to one column on narrow screens, and the
+grid itself folds away behind a **Session settings** toggle remembered in
+`localStorage`), a Rename
 button, and a light/dark theme switch (remembered in
 `localStorage`; light is the default, seeded from the system preference on a
 first visit). The run status rides in the title row beside the session name at a
 fixed height that truncates, so the header does not reflow as the state text
-changes; token usage sits under the settings grid as two lines — this round, and
-the run total. The conversation loads only the most recent turns and appends older ones as
+changes. Both status readouts — the phase line and the run clock — sit in one box
+whose width is capped (`--status-width`) rather than sized by its text, so a long
+`Running execute · …` can neither push the session name nor overlap anything; it
+clips. The clock shows only the elapsed time (`12s (this browser)`) and not the
+phase, which the line beside it already names: repeating it said the same thing
+twice and doubled the box's length. The phase stays in the clock's tooltip. The
+name hugs its text so the Rename button stays next to it, with the slack collecting
+in the status box's auto margin. The token line under the settings grid reports
+spend only — in and out tokens, this round and for the run. The context figure lives with the context it
+describes (see the panel below), because it is a projection rather than a
+measurement, and it belongs where compaction is configured. The conversation
+loads only the most recent turns and appends older ones as
 the reader scrolls to the top (there is no "More history" button); two floating
 buttons ride over the timeline — ↑ jumps to the previous user instruction and ↓
 to the newest message, each shown only when it would do something. Both panels are bounded: the
@@ -205,7 +217,11 @@ rejected; there is no URL authentication.
   this projection would send, from the same four-bytes-per-token estimate the loop
   seeds its summarization budget with on resume — so a client can show a context
   size for a session no run has reported usage for yet, and it is computed over
-  every turn regardless of the window. `cards` is a window, not the
+  every turn regardless of the window. `user_turns` is how many user turns the
+  replay holds and `compact_turns` how many a compaction would fold into a
+  summary; the latter is 0 when every turn still fits inside `keep_turns`, which
+  is what lets the UI explain a manual compact that has nothing to do instead of
+  offering a control that silently no-ops. `cards` is a window, not the
   whole transcript: `offset` is the index of its first card and `total` the
   number of stored turns, both normalized, so a client can walk back a page at a
   time (the projection is still computed over every turn, since the replay window
@@ -289,11 +305,33 @@ context's evolution stays legible. Switching sessions shows a loading placeholde
 in the conversation until the transcript arrives, rather than an empty pane.
 A chained command in a card is numbered at its operators (as the CLI prints it),
 so the piece that failed is identifiable at a glance. A `read` card carries its
-line range on the path (`main.go 84:97`) instead of a separate labelled row. The
-token line reports the provider's own numbers once a run has produced any, and
-otherwise the projection's estimated context size marked `estimated` — a session
-opened from storage has no live runtime, so without it the line would simply be
-absent until the first instruction of the run. An **Inspect** switch in that panel's header
+line range on the path (`main.go 84:97`) instead of a separate labelled row. That
+panel's header carries the context figure and a **Compress now** button. The
+figure is the projection's estimated prompt size measured against the
+`summarize_after_tokens` budget and marked `estimated`, never the provider's own
+count: the projection is recomputed from the stored turns, so it moves the moment
+a compaction or a card edit lands, whereas a reported prompt size only changes on
+the next request — and right after a manual compress it still counts the span that
+was just summarized. The provider's own numbers, and the last request's prompt
+size in the tooltip, are shown as spend in the header instead.
+
+**Compress now** forces the compaction that `summarize_after_tokens` would
+trigger later: it sends the CLI's `/compact` as an instruction (a command is
+dispatched wherever an instruction is read), behind a confirmation, because it
+costs one model call. It is offered only for an idle session that has something
+to compress, and the outcome — `compacted N messages into a summary (M kept
+verbatim)`, or `nothing to compact yet` — lands in this same panel, since command
+output is a context event. The `M kept verbatim` turns are the last `keep_turns`
+user turns, which the summary deliberately does not cover: they stay in the
+replay, so they keep showing as `sent` while everything before the checkpoint
+shows as `summarized away`. Compaction counts **whole user turns**, so a session
+can be long in messages and still have nothing older than the `keep_turns` window;
+the projection reports that up front (`compact_turns`), the button's tooltip says
+it, and a press that would find nothing explains why rather than looking dead.
+While the summarizer runs the snapshot's phase is `compacting`, which the header
+shows as `Compressing history…` — the call does not stream, so without it the UI
+would sit on its previous phase for the whole call. The projection is probed when a session is opened, so
+the figure is there before any run has reported usage. An **Inspect** switch in that panel's header
 opens an overlay of the messages a send would use — the system head, one card per
 message showing the original and what is actually sent (with a state badge for
 elided, edited, dropped, summarized-away and capped messages), and the tail, with
