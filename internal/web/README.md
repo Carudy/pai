@@ -64,7 +64,11 @@ lifetime. Do not use a short global server WriteTimeout that breaks SSE. If
 middleware wraps ResponseWriter, implement Unwrap so ResponseController can
 reach deadline and flush support. Disconnect always unsubscribes, never cancels.
 Slow consumers are also bounded/disconnected by runner. No event replay is
-promised; reconnect yields a snapshot and the UI reloads durable history.
+promised; reconnect yields a snapshot and the UI reloads durable history. Because
+heartbeats are comments (invisible to `EventSource`), the browser cannot tell a
+stalled subscription from a quiet run, so the UI re-fetches the snapshot when a
+running session has seen no event for ~20s — a slow-consumer eviction or a
+buffering proxy then self-heals instead of freezing on the last phase.
 Snapshots include `usage` (latest reported request), `total_usage` (sum of
 reported request usage), and `usage_calls`. Token fields use core's `Prompt`,
 `Completion`, and `Total` names. `context_tokens`, when present, is the
@@ -85,9 +89,10 @@ The header keeps a compact settings grid (Role, Reasoning, Working dir, and
 Model, each with Apply; it collapses to one column on narrow screens), a Rename
 button, and a light/dark theme switch (remembered in
 `localStorage`; light is the default, seeded from the system preference on a
-first visit). The run status rides in the title row beside the session name: a
+first visit). The run status rides in the title row beside the session name at a
 fixed height that truncates, so the header does not reflow as the state text
-changes, with token usage pinned at the end of the line. The conversation loads only the most recent turns and appends older ones as
+changes; token usage sits under the settings grid as two lines — this round, and
+the run total. The conversation loads only the most recent turns and appends older ones as
 the reader scrolls to the top (there is no "More history" button); two floating
 buttons ride over the timeline — ↑ jumps to the previous user instruction and ↓
 to the newest message, each shown only when it would do something. Both panels are bounded: the
@@ -248,11 +253,13 @@ than treating transient SSE output as durable turns. Turn cards show their
 `turn.At` timestamp, and token counts are compacted to `k`/`M`. The right-hand
 **Context** panel logs only context-lifecycle events — finished reasoning blocks
 and context notices such as compaction — never tools or run progress, so the
-context's evolution stays legible. An **Inspect** button in that panel's header
+context's evolution stays legible. An **Inspect** switch in that panel's header
 opens an overlay of the exact messages a send would use — the system head, one
-card per turn showing the original and what is actually sent (with a state badge
-for elided, edited, dropped, summarized-away and capped turns), and the tail,
-with the compaction settings that produced them. It is read-only and reconstructed
+card per message showing the original and what is actually sent (with a state
+badge for elided, edited, dropped, summarized-away and capped messages), and the
+tail, with the compaction settings that produced them. Messages are grouped by
+user turn — the unit compaction and `max_turns` count — and the floating jump
+arrows are hidden while the overlay is open. It is read-only and reconstructed
 from the store, so it shows what compaction did rather than a guess. A Reasoning dropdown sets the session's
 effort (in memory; applies to the next run). Snapshots recover pending
 prompt titles/IDs and retained `pending.tool` approval context (native core

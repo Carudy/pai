@@ -92,7 +92,6 @@
                                 </div>
                             </div>
                         </div>
-                        <p id="token-usage" hidden></p>
                     </div>
                     <div class="session-config">
                         <div class="config-row">
@@ -121,6 +120,10 @@
                                 </div>
                                 <button id="apply-model" type="submit" disabled>Apply</button>
                             </form>
+                        </div>
+                        <div id="token-usage" class="config-tokens" hidden>
+                            <p id="token-round"></p>
+                            <p id="token-total"></p>
                         </div>
                     </div>
                     <!--<p id="model-hint">Suggestions are the configured default and saved session models (so you may only see DeepSeek). Type any configured provider:model; spaces around the colon are accepted.</p>-->
@@ -206,15 +209,11 @@
             <aside id="activity" aria-label="Context">
                 <header>
                     <h2>Context</h2>
-                    <button
-                        id="show-context"
-                        type="button"
-                        aria-controls="context-view"
-                        aria-expanded="false"
-                        title="Inspect the messages that will be sent"
-                    >
-                        Inspect
-                    </button>
+                    <label class="switch" for="show-context" title="Inspect the messages that will be sent">
+                        <input id="show-context" type="checkbox" role="switch" aria-controls="context-view" />
+                        <span class="switch-track" aria-hidden="true"></span>
+                        <span class="switch-text">Inspect</span>
+                    </label>
                     <p>Reasoning, compaction & context</p>
                 </header>
                 <div id="events" role="log" aria-label="Activities">

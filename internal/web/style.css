@@ -378,14 +378,18 @@ header p {
 .session-title-row {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 6px 8px;
     min-width: 0;
 }
 
+/* The title stays on one ellipsized line so the header never changes height; the
+   sidebar carries the full name. */
 .session-title-row h2 {
     min-width: 0;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* "Session:" sits inline before the name; .field-label's top margin is for
@@ -566,11 +570,21 @@ header p {
     text-overflow: ellipsis;
 }
 
-#token-usage {
+/* Token usage sits with the session settings, not the title row, so a long run
+   status can never reflow the header. Two lines: this round, and the run total. */
+.config-tokens {
     flex: 0 0 auto;
+    margin: 2px 0 0;
     font-size: 11px;
-    font-variant-numeric: tabular-nums;
     color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.config-tokens p {
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 #theme-toggle {
@@ -1293,19 +1307,44 @@ header p {
 }
 
 #activity > header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
     padding: 20px 16px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 
-#show-context {
-    margin-top: 8px;
-    padding: 2px 8px;
+#activity > header p {
+    flex: 1 1 100%;
+    margin: 2px 0 0;
+}
+
+/* A switch rather than a button: the inspector is a mode, and the track shows
+   whether it is on. Colored with the accent, unlike the red "Trust all" switch. */
+#activity > header .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    cursor: pointer;
+}
+
+#activity > header .switch-text {
     font-size: 11px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--soft);
-    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+}
+
+#activity > header .switch input:checked + .switch-track {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+#activity > header .switch input:checked ~ .switch-text {
+    color: var(--accent);
 }
 
 /* ── Context inspector ─────────────────────────────────────── */
@@ -1323,6 +1362,12 @@ header p {
 
 #app.context-open #context-view {
     display: flex;
+}
+
+/* The jump arrows ride over the conversation; the inspector replaces it. */
+#app.context-open #prev-input,
+#app.context-open #to-bottom {
+    display: none;
 }
 
 #context-view > header {
@@ -1378,6 +1423,11 @@ header p {
     border-radius: 8px;
     background: var(--panel);
     overflow: hidden;
+}
+
+/* A user instruction starts a turn; the accounting unit compaction works in. */
+#context-body .ctx-card.ctx-turn {
+    border-left: 3px solid var(--accent);
 }
 
 #context-body .ctx-head {

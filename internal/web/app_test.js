@@ -201,9 +201,9 @@ assert.equal(stamps.length, 1, 'only the turn carrying At gets a timestamp');
 assert.match(stamps[0].textContent, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'the timestamp is a formatted date/time');
 // Token totals compact large numbers (k/M).
 page.run("usageSnapshot({usage_calls:2, usage:{Prompt:1500,Completion:20,Total:1520}, total_usage:{Prompt:2500000,Completion:1200,Total:2501200}, context_tokens:512000})");
-assert.match(page.get('token-usage').textContent, /total 2\.5M/, 'large totals use M');
-assert.match(page.get('token-usage').textContent, /received 1\.2k/, 'thousands use k');
-assert.match(page.get('token-usage').textContent, /context 1\.5k \/ 512k/, 'context fill is compact');
+assert.match(page.get('token-total').textContent, /total 2\.5M/, 'large totals use M');
+assert.match(page.get('token-total').textContent, /out 1\.2k/, 'thousands use k');
+assert.match(page.get('token-round').textContent, /context 1\.5k \/ 512k/, 'context fill is compact');
 page.run("usageSnapshot({})");
 page.run("activity({type:'reasoning',data:'first '}); activity({type:'reasoning',data:'second'})");
 assert.ok(!page.get('live-progress').textContent.includes('first second'), 'live reasoning stays out of the activity log');
@@ -346,9 +346,10 @@ assert.match(inspector.get('context-meta').textContent, /keep 3/, 'the settings 
 // loadContext out of the way, since the class flip is what is under test.
 inspector.run('api=()=>new Promise(()=>{}); setContextOpen(true)');
 assert.equal(inspector.get('app').classes.has('context-open'), true, 'opening adds the app class');
-assert.equal(inspector.get('show-context').attributes['aria-expanded'], 'true');
+assert.equal(inspector.get('show-context').checked, true, 'the switch reflects the mode');
 inspector.run('setContextOpen(false)');
 assert.equal(inspector.get('app').classes.has('context-open'), false, 'closing removes it');
+assert.equal(inspector.get('show-context').checked, false);
 
 // Optional test-only dependency, installed outside the repository. No build or
 // production dependency; do not count the minimal DOM above as sanitizer tests.
@@ -513,15 +514,16 @@ assert.equal(usagePage.get('token-usage').hidden, true);
 const usageState = {state:'awaiting',usage_calls:2,usage:{Prompt:20,Completion:3,Total:23},total_usage:{Prompt:30,Completion:5,Total:35}};
 for (let i = 0; i < 2; i++) {
   usagePage.run(`snapshot(${JSON.stringify(usageState)})`);
-  assert.equal(usagePage.get('token-usage').textContent, 'Tokens · sent 30 · received 5 · total 35 (this run)');
+  assert.equal(usagePage.get('token-round').textContent, 'Round · in 20 · out 3');
+  assert.equal(usagePage.get('token-total').textContent, 'Run · in 30 · out 5 · total 35');
   assert.match(usagePage.get('token-usage').title, /Latest request: sent 20 · received 3 · total 23/);
 }
 usagePage.run("snapshot({state:'starting',usage_calls:0})");
 assert.equal(usagePage.get('token-usage').hidden, true);
-assert.equal(usagePage.get('token-usage').textContent, '');
+assert.equal(usagePage.get('token-round').textContent, '');
 const budgetState = {state:'awaiting',usage_calls:3,usage:{Prompt:78000,Completion:100,Total:78100},total_usage:{Prompt:200000,Completion:5000,Total:205000},context_tokens:128000};
 usagePage.run(`snapshot(${JSON.stringify(budgetState)})`);
-assert.match(usagePage.get('token-usage').textContent, /context 78k \/ 128k \(61%\)/, 'context fill appears when compaction is configured');
+assert.match(usagePage.get('token-round').textContent, /context 78k \/ 128k \(61%\)/, 'context fill appears when compaction is configured');
 assert.match(usagePage.get('token-usage').title, /exceeds 128000 tokens/);
 
 async function verifyModels() {

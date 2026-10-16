@@ -5,7 +5,7 @@
 // session actions → event wiring.
 'use strict';
 const $ = id => document.getElementById(id);
-let selected = '', generation = 0, stream = null, retry = null, refreshTimer = null, sessionBusy = false;
+let selected = '', generation = 0, stream = null, retry = null, lastEventAt = 0, refreshTimer = null, sessionBusy = false;
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
 let pendingID = null, pendingSession = null;
 let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
@@ -126,6 +126,18 @@ function paintRunProgress() {
   const seconds = Math.max(0, Math.floor((Date.now() - runStarted) / 1000));
   const elapsed = seconds < 60 ? seconds + 's' : Math.floor(seconds / 60) + 'm ' + (seconds % 60) + 's';
   $('run-elapsed').textContent = runLabel + ' · ' + elapsed + ' (this browser)';
+  watchStream();
+}
+// The server's heartbeat is a comment, invisible to EventSource, so a stalled
+// subscription and a quiet run look identical. The run timer ticks every second
+// while a phase is showing, so reconcile from the authoritative snapshot there
+// rather than freezing on a stale phase: a slow-consumer eviction or a buffering
+// proxy can drop the approval event with no local symptom.
+function watchStream() {
+  if (!stream || Date.now() - lastEventAt < 20000) return;
+  lastEventAt = Date.now();
+  loadSnapshot().catch(() => {});
+  if (stream.readyState === 2) { stream = null; connect(); }
 }
 function stopRunProgress() {
   if (runTimer !== null) clearInterval(runTimer);
@@ -675,17 +687,20 @@ function tokenCount(n) {
 }
 function usageSnapshot(s) {
   const node = $('token-usage');
-  node.hidden = !(s.usage_calls > 0);
-  node.textContent = ''; node.title = '';
-  if (node.hidden) return;
+  const round = $('token-round'), run = $('token-total');
+  const hasUsage = s.usage_calls > 0;
+  node.hidden = !hasUsage;
+  round.textContent = ''; run.textContent = ''; node.title = '';
+  if (!hasUsage) return;
   const total = s.total_usage, latest = s.usage;
-  // The latest request's prompt size is the current context; compared to the
-  // compaction threshold it answers "am I about to compress?", not just "how much
-  // have I spent". Only shown when compaction is configured (context_tokens > 0).
+  // The latest prompt size is the current context; against the compaction
+  // threshold it answers "am I about to compress?", not just "how much have I
+  // spent". Only shown when compaction is configured (context_tokens > 0).
   const budget = s.context_tokens > 0
-    ? `context ${tokenCount(latest.Prompt)} / ${tokenCount(s.context_tokens)} (${Math.round(100 * latest.Prompt / s.context_tokens)}%) · `
+    ? ` · context ${tokenCount(latest.Prompt)} / ${tokenCount(s.context_tokens)} (${Math.round(100 * latest.Prompt / s.context_tokens)}%)`
     : '';
-  node.textContent = `Tokens · ${budget}sent ${tokenCount(total.Prompt)} · received ${tokenCount(total.Completion)} · total ${tokenCount(total.Total)} (this run)`;
+  round.textContent = `Round · in ${tokenCount(latest.Prompt)} · out ${tokenCount(latest.Completion)}${budget}`;
+  run.textContent = `Run · in ${tokenCount(total.Prompt)} · out ${tokenCount(total.Completion)} · total ${tokenCount(total.Total)}`;
   node.title = `Latest request: sent ${tokenCount(latest.Prompt)} · received ${tokenCount(latest.Completion)} · total ${tokenCount(latest.Total)}.`
     + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${s.context_tokens} tokens.` : '')
     + ' This run covers this worker runtime only; resuming a retired runtime starts fresh.';
@@ -783,8 +798,10 @@ function connect() {
   const version = generation;
   stream = new EventSource('/api/events?name=' + encodeURIComponent(selected));
   const connection = stream;
+  lastEventAt = Date.now();
   stream.onmessage = e => {
     if (version !== generation || stream !== connection) return;
+    lastEventAt = Date.now();
     const event = JSON.parse(e.data);
 
     if (!['reasoning','notice','snapshot'].includes(event.type)) flushReasoning();
@@ -800,7 +817,13 @@ function connect() {
     stopRunProgress();
     stream.close(); stream = null;
     // A missing/evicted runtime is normal. Polling also discovers later sends.
-    retry = setTimeout(async () => { if (version !== generation) return; await loadSnapshot(); scheduleHistory(); if (version === generation) connect(); }, 2500);
+    retry = setTimeout(async () => {
+      if (version !== generation) return;
+      // Recover even if the snapshot fetch fails; a rejected callback would
+      // otherwise skip connect() and leave the UI frozen on a stale phase.
+      try { await loadSnapshot(); scheduleHistory(); } catch (_) {}
+      if (version === generation) connect();
+    }, 2500);
   };
 }
 // ── Context inspector ───────────────────────────────────────
@@ -813,7 +836,7 @@ let contextTimer = null;
 function contextOpen() { return $('app').classList.contains('context-open'); }
 function setContextOpen(on) {
   $('app').classList.toggle('context-open', on);
-  $('show-context').setAttribute('aria-expanded', String(on));
+  $('show-context').checked = on;
   if (on) loadContext();
 }
 function scheduleContext() {
@@ -822,7 +845,7 @@ function scheduleContext() {
 }
 function byteSize(value) { return tokenCount(String(value || '').length) + ' B'; }
 function contextCard(card) {
-  const node = text('article', '', 'ctx-card');
+  const node = text('article', '', card.kind === 'input' ? 'ctx-card ctx-turn' : 'ctx-card');
   const head = text('div', '', 'ctx-head');
   const sent = card.state === 'sent' || card.state === 'edited';
   head.append(
@@ -858,11 +881,13 @@ function contextSystemCard(title, content, note) {
 }
 function renderContext(view) {
   const cfg = view.config || {};
-  $('context-meta').textContent = (view.model || '') + ' · keep ' + cfg.keep_turns + ' · max ' + (cfg.max_turns || '∞') +
+  const cards = view.cards || [];
+  const userTurns = cards.filter(c => c.kind === 'input').length;
+  $('context-meta').textContent = (view.model || '') + ' · keep ' + cfg.keep_turns + ' user turns · max ' + (cfg.max_turns || '∞') +
     ' turns · elide >' + cfg.elide_min_bytes + 'B after ' + cfg.elide_after_turns + ' turns';
   const nodes = [contextSystemCard('system head', view.head || '', 'The role, tools and output contract, sent first.')];
-  nodes.push(text('p', (view.cards || []).length + ' stored turn(s)', 'ctx-config'));
-  for (const card of view.cards || []) nodes.push(contextCard(card));
+  nodes.push(text('p', cards.length + ' messages · ' + userTurns + ' user turns (compaction counts user turns)', 'ctx-config'));
+  for (const card of cards) nodes.push(contextCard(card));
   nodes.push(contextSystemCard('system tail', view.tail || '', 'The per-turn reminder, sent last.'));
   $('context-body').replaceChildren(...nodes);
 }
@@ -884,7 +909,7 @@ async function select(name, cwd) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
   try { localStorage.setItem(SESSION_KEY, name); } catch {}
   clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = true; sessionMetadata();
-    $('title').textContent = name;
+    $('title').textContent = name; $('title').title = name;
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
     $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
@@ -1168,7 +1193,7 @@ $('apply-plan').onclick = () => action('send', AUTO_REPLY);
 $('trust-all').onchange = () => setTrustAll($('trust-all').checked);
 $('more-sessions').onclick = () => sessions().catch(error);
 $('theme-toggle').onclick = toggleTheme;
-$('show-context').onclick = () => setContextOpen(!contextOpen());
+$('show-context').onchange = () => setContextOpen($('show-context').checked);
 $('context-close').onclick = () => setContextOpen(false);
 $('prev-input').onclick = jumpToPrevInput;
 $('to-bottom').onclick = jumpToBottom;
