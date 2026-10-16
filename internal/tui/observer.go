@@ -30,6 +30,13 @@ func (o *LineObserver) Awaiting() {
 	o.pair("TagAgent", "[PAI 💬]", "Info", "[Awaiting for new instructions.]")
 }
 
+// Compacting says a long, non-streaming model call is about to run, so an
+// unexplained pause does not read as a hang.
+func (o *LineObserver) Compacting() {
+	o.closeReasoning()
+	o.pair("TagSystem", "[SYS] 🗜", "Info", "summarizing older turns into a summary…")
+}
+
 func (o *LineObserver) Usage(u core.Usage) {
 	o.closeReasoning()
 	fmt.Fprintf(o.W, "%s\n", RenderStr("Token", fmt.Sprintf("[token: %s in, %s out, %s total]",

@@ -152,6 +152,44 @@ func TestDescribeCompactionReportsFootprint(t *testing.T) {
 	}
 }
 
+// A manual compaction with nothing older than the verbatim window says which case
+// it is, rather than exiting early in silence.
+func TestDescribeNoCompaction(t *testing.T) {
+	short := []provider.Message{
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "a"},
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "b"},
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "c"},
+	}
+	if got := DescribeNoCompaction(short, 3); !strings.Contains(got, "inside the keep_turns = 3 window") {
+		t.Errorf("short session = %q", got)
+	}
+
+	long := append(append([]provider.Message{}, short...),
+		provider.Message{Role: provider.RoleUser, Kind: core.KindInput, Content: "d"},
+		provider.Message{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "e"},
+		provider.Message{Role: provider.RoleUser, Kind: core.KindInput, Content: "f"},
+		provider.Message{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "g"})
+	if got := DescribeNoCompaction(long, 3); got != "" {
+		t.Errorf("a compactable session should explain nothing, got %q", got)
+	}
+	if got := UserTurns(long); got != 4 {
+		t.Errorf("UserTurns = %d, want 4", got)
+	}
+
+	// With a checkpoint, the span can be nothing but the previous summary: folding
+	// that into a new summary would cost a model call and lose detail.
+	onlySummary := []provider.Message{
+		{Role: provider.RoleSystem, Kind: core.KindSummary, Content: "[conversation summary so far]\nx"},
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "a"},
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "b"},
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "c"},
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "d"},
+	}
+	if got := DescribeNoCompaction(onlySummary, 2); !strings.Contains(got, "would only lose detail") {
+		t.Errorf("summary-only span = %q", got)
+	}
+}
+
 func summaryTurn(body string) core.Turn {
 	return core.Turn{Role: "system", Kind: core.KindSummary, Content: "[conversation summary so far]\n" + body}
 }
@@ -160,6 +198,7 @@ func turn(kind, content string) core.Turn { return core.Turn{Kind: kind, Content
 
 // A summary checkpoint stands in for everything before it, so replaying a session
 // sends the summary plus only the turns after it — not the turns it summarizes.
+// keepTurns 0 means compaction left no verbatim window in front of the checkpoint.
 func TestReplayTurnsStartsAtSummary(t *testing.T) {
 	turns := []core.Turn{
 		turn("input", "old request"),
@@ -170,7 +209,7 @@ func TestReplayTurnsStartsAtSummary(t *testing.T) {
 		turn("output", "new reply"),
 	}
 
-	got := ReplayTurns(turns, 0)
+	got := ReplayTurns(turns, 0, 0)
 	if len(got) != 3 {
 		t.Fatalf("got %d turns, want summary + 2", len(got))
 	}
@@ -182,6 +221,46 @@ func TestReplayTurnsStartsAtSummary(t *testing.T) {
 	}
 }
 
+// Compaction appends its checkpoint, so it lands after the keepTurns user turns it
+// kept verbatim and deliberately did not summarize. Those turns must be replayed
+// too: the summary does not cover them, so a replay that started at the checkpoint
+// alone would drop the most recent work on every resume. The shape below is a real
+// session compacted right after "check my nix installed apps".
+func TestReplayTurnsReplaysUnsummarizedWindow(t *testing.T) {
+	turns := []core.Turn{
+		turn("input", "check my proxy settings"),
+		turn("output", "here they are"),
+		turn("input", "list tools u can invoke"),
+		turn("input", "note that our hostname is bogon"),
+		turn("input", "yes; change for me"),
+		turn("input", "check my nix installed apps"),
+		turn("output", "Nix-installed apps"),
+		summaryTurn("the proxy discussion"),
+	}
+
+	got := ReplayTurns(turns, 3, 0)
+	want := []string{
+		"[conversation summary so far]\nthe proxy discussion",
+		"note that our hostname is bogon",
+		"yes; change for me",
+		"check my nix installed apps",
+		"Nix-installed apps",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d turns, want %d: %+v", len(got), len(want), got)
+	}
+	for i, content := range want {
+		if got[i].Content != content {
+			t.Errorf("turn %d = %q, want %q", i, got[i].Content, content)
+		}
+	}
+	for _, replayed := range got {
+		if strings.Contains(replayed.Content, "proxy settings") {
+			t.Errorf("replayed a turn the summary covers: %q", replayed.Content)
+		}
+	}
+}
+
 // The newest checkpoint wins; older ones are superseded and dropped.
 func TestReplayTurnsUsesLastSummary(t *testing.T) {
 	turns := []core.Turn{
@@ -190,7 +269,7 @@ func TestReplayTurnsUsesLastSummary(t *testing.T) {
 		summaryTurn("second"),
 		turn("input", "latest"),
 	}
-	got := ReplayTurns(turns, 0)
+	got := ReplayTurns(turns, 0, 0)
 	if len(got) != 2 || !strings.Contains(got[0].Content, "second") {
 		t.Fatalf("expected the second summary + latest, got %+v", got)
 	}
@@ -205,7 +284,7 @@ func TestReplayTurnsCapsTailKeepingSummary(t *testing.T) {
 		turn("output", "b"),
 		turn("input", "c"),
 	}
-	got := ReplayTurns(turns, 2)
+	got := ReplayTurns(turns, 0, 2)
 	if len(got) != 3 {
 		t.Fatalf("got %d turns, want summary + 2", len(got))
 	}
@@ -221,39 +300,42 @@ func TestReplayTurnsCapsTailKeepingSummary(t *testing.T) {
 func TestReplayTurnsWithoutSummary(t *testing.T) {
 	turns := []core.Turn{turn("input", "a"), turn("output", "b"), turn("input", "c")}
 
-	if got := ReplayTurns(turns, 0); len(got) != 3 {
+	if got := ReplayTurns(turns, 0, 0); len(got) != 3 {
 		t.Errorf("max_turns=0 should replay everything, got %d", len(got))
 	}
-	got := ReplayTurns(turns, 2)
+	got := ReplayTurns(turns, 0, 2)
 	if len(got) != 2 || got[0].Content != "b" {
 		t.Errorf("tail = %+v, want b,c", got)
 	}
 }
 
-// ContextCards reports, per stored turn, what a request would send and why.
+// ContextCards reports, per stored turn, what a request would send and why. The
+// fixture has the shape a real compaction leaves behind: the span it summarized,
+// then the keepTurns turns it kept verbatim, then the checkpoint, then the turns
+// recorded after it.
 func TestContextCardsStates(t *testing.T) {
 	big := "[cmd result]\nCOMMAND: df -h\nOUTPUT:\n" + strings.Repeat("row\n", 50)
 	cfg := config.ContextConfig{KeepTurns: 1, ElideMinBytes: 10, ElideHeadLines: 2}
 	turns := []core.Turn{
 		{Seq: 1, Role: "user", Kind: core.KindInput, Content: "pre"},
 		{Seq: 2, Role: "user", Kind: core.KindToolResult, Content: "[cmd result]\nok"},
-		{Seq: 3, Role: "system", Kind: core.KindSummary, Content: "[conversation summary so far]\nx"},
-		{Seq: 4, Role: "user", Kind: core.KindInput, Content: "old task"},
-		{Seq: 5, Role: "user", Kind: core.KindToolResult, Content: big},
+		{Seq: 3, Role: "user", Kind: core.KindInput, Content: "old task"},
+		{Seq: 4, Role: "user", Kind: core.KindToolResult, Content: big},
+		{Seq: 5, Role: "system", Kind: core.KindSummary, Content: "[conversation summary so far]\nx"},
 		{Seq: 6, Role: "user", Kind: core.KindInput, Content: "now"},
 	}
 	cards := ContextCards(turns, nil, cfg, 0)
 	want := map[int]string{
-		1: StateSummarizedAway, 2: StateSummarizedAway, 3: StateSent,
-		4: StateSent, 5: StateElided, 6: StateSent,
+		1: StateSummarizedAway, 2: StateSummarizedAway,
+		3: StateSent, 4: StateElided, 5: StateSent, 6: StateSent,
 	}
 	for _, c := range cards {
 		if want[c.Seq] != c.State {
 			t.Errorf("seq %d state = %q, want %q", c.Seq, c.State, want[c.Seq])
 		}
 	}
-	elided := cards[4]
-	if elided.Original != big || len(elided.Sent) >= len(big) || !strings.Contains(elided.Sent, "elided") {
+	elided := cards[3]
+	if elided.State != StateElided || elided.Original != big || len(elided.Sent) >= len(big) || !strings.Contains(elided.Sent, "elided") {
 		t.Errorf("elided card should keep the original and show the trimmed send: %+v", elided)
 	}
 	for _, c := range cards {

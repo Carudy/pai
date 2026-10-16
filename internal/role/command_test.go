@@ -13,10 +13,11 @@ import (
 
 // fakeObserver records the events commands emit.
 type fakeObserver struct {
-	outputs   []string
-	notices   []string
-	sessions  []string
-	toolCalls []core.ToolCall
+	outputs    []string
+	notices    []string
+	sessions   []string
+	toolCalls  []core.ToolCall
+	compacting int
 }
 
 func (o *fakeObserver) Reason(string)              {}
@@ -24,6 +25,7 @@ func (o *fakeObserver) Done(string)                {}
 func (o *fakeObserver) Terminate(string)           {}
 func (o *fakeObserver) Ask(string)                 {}
 func (o *fakeObserver) Awaiting()                  {}
+func (o *fakeObserver) Compacting()                { o.compacting++ }
 func (o *fakeObserver) User(string)                {}
 func (o *fakeObserver) Reasoning(string)           {}
 func (o *fakeObserver) Usage(core.Usage)           {}
@@ -130,6 +132,10 @@ func TestCompactCommandSummarizesOldTurns(t *testing.T) {
 	if fp.calls != 1 {
 		t.Errorf("summarizer called %d times, want 1", fp.calls)
 	}
+	// The summarizer call does not stream, so the observer is told one is running.
+	if obs.compacting != 1 {
+		t.Errorf("compacting events = %d, want 1", obs.compacting)
+	}
 	if len(cc.history) != 3 {
 		t.Fatalf("history = %d messages, want summary + 2 kept", len(cc.history))
 	}
@@ -177,6 +183,9 @@ func TestCompactCommandNothingToDo(t *testing.T) {
 	}
 	if fp.calls != 0 {
 		t.Errorf("summarizer should not be called: %d calls", fp.calls)
+	}
+	if obs.compacting != 0 {
+		t.Errorf("a no-op must not announce a compaction: %d", obs.compacting)
 	}
 	if !strings.Contains(obs.lastOutput(), "nothing to compact") {
 		t.Errorf("output = %q", obs.lastOutput())

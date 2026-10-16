@@ -73,11 +73,20 @@ func cutBytes(s string, max int) string {
 // instruction. Assistant replies and tool results both ride the user role on the
 // wire, so a turn is recognised by its kind, not by its role.
 func isTurnStart(m provider.Message) bool {
-	return m.Kind == core.KindInput || m.Kind == core.KindUserAnswer
+	return isTurnStartKind(m.Kind)
 }
 
-// userTurns counts the user turns in history.
-func userTurns(history []provider.Message) int {
+// isTurnStartKind reports whether a stored turn begins a user turn. The message
+// and turn domains share one definition, so the replay window compaction kept and
+// the window a later replay reconstructs cannot drift apart.
+func isTurnStartKind(kind string) bool {
+	return kind == core.KindInput || kind == core.KindUserAnswer
+}
+
+// UserTurns counts the user turns in a message list. A turn is one user
+// instruction plus everything the model did to answer it, so this is the unit
+// keep_turns and the compaction layers count.
+func UserTurns(history []provider.Message) int {
 	n := 0
 	for _, m := range history {
 		if isTurnStart(m) {
@@ -110,13 +119,21 @@ func keepFrom(history []provider.Message, turns int) int {
 	return 0
 }
 
-// ReplayTurns selects the turns to replay into the model. A summary checkpoint
-// stands in for every turn before it, so only the last summary and the turns
-// after it are replayed — the summarized turns are neither resent nor
-// re-summarized, though they stay on disk. maxTurns then caps the tail, never
-// dropping the summary itself. Callers on every frontend share this, so what the
-// CLI replays and what a served runtime replays cannot drift apart.
-func ReplayTurns(turns []core.Turn, maxTurns int) []core.Turn {
+// ReplayTurns selects the turns to replay into the model: the last summary
+// checkpoint stands in for the turns before it, so they are neither resent nor
+// re-summarized, though they stay on disk. Two details keep that replay faithful
+// to the history a running loop already holds.
+//
+// A checkpoint is appended at the end of the store, which lands it *after* the
+// keepTurns user turns compaction kept verbatim and deliberately did not
+// summarize. Those turns are replayed ahead of the checkpoint's tail; without them
+// a fresh runtime would silently lose the most recent turns, which the summary
+// does not cover. maxTurns then caps the tail after the checkpoint, never dropping
+// the summary or that verbatim window.
+//
+// Callers on every frontend share this, so what the CLI replays and what a served
+// runtime replays cannot drift apart.
+func ReplayTurns(turns []core.Turn, keepTurns, maxTurns int) []core.Turn {
 	start := lastSummaryIndex(turns)
 	if start < 0 {
 		if maxTurns > 0 && len(turns) > maxTurns {
@@ -126,14 +143,37 @@ func ReplayTurns(turns []core.Turn, maxTurns int) []core.Turn {
 	}
 
 	summary := turns[start]
+	window := keepWindow(turns[:start], keepTurns)
 	rest := turns[start+1:]
 	if maxTurns > 0 && len(rest) > maxTurns {
 		rest = rest[len(rest)-maxTurns:]
 	}
 
-	out := make([]core.Turn, 0, len(rest)+1)
+	out := make([]core.Turn, 0, len(window)+len(rest)+1)
 	out = append(out, summary)
+	out = append(out, window...)
 	return append(out, rest...)
+}
+
+// keepWindow returns the tail of turns beginning at the keepTurns-th user turn
+// counted back from the end: exactly the window CompactHistory left verbatim when
+// it wrote the checkpoint that follows it. Fewer turns than keepTurns, or
+// keepTurns <= 0, means there is no window to reconstruct.
+func keepWindow(turns []core.Turn, keepTurns int) []core.Turn {
+	if keepTurns <= 0 {
+		return nil
+	}
+	seen := 0
+	for i := len(turns) - 1; i >= 0; i-- {
+		if !isTurnStartKind(turns[i].Kind) {
+			continue
+		}
+		seen++
+		if seen >= keepTurns {
+			return turns[i:]
+		}
+	}
+	return nil
 }
 
 // lastSummaryIndex returns the index of the most recent summary checkpoint, or -1.
@@ -211,7 +251,7 @@ func ContextCards(turns []core.Turn, overrides map[int]Override, cfg config.Cont
 		summarySeq = turns[lastSummary].Seq
 	}
 
-	replayed := ReplayTurns(turns, maxTurns)
+	replayed := ReplayTurns(turns, cfg.KeepTurns, maxTurns)
 	inReplay := make(map[int]bool, len(replayed))
 	for _, t := range replayed {
 		inReplay[t.Seq] = true
@@ -302,13 +342,27 @@ func DescribeCompaction(history []provider.Message, c config.ContextConfig) stri
 	return ""
 }
 
+// DescribeNoCompaction explains why a compaction has nothing to do, so a manual
+// /compact can say why instead of looking like a button that did nothing. It
+// returns "" when there is something to summarize.
+func DescribeNoCompaction(history []provider.Message, keepTurns int) string {
+	span, recent := SplitForSummary(history, keepTurns)
+	if UserTurns(span) > 0 {
+		return ""
+	}
+	if len(span) > 0 {
+		return fmt.Sprintf("nothing to compact: no user turn older than keep_turns = %d; re-summarizing the existing summary would only lose detail", keepTurns)
+	}
+	return fmt.Sprintf("nothing to compact: all %d user turn(s) still fit inside the keep_turns = %d window", UserTurns(recent), keepTurns)
+}
+
 // compact is CompactHistory plus a report of what it did; it returns the input
 // slice unchanged (and a zero report) whenever nothing is old enough to elide.
 func compact(history []provider.Message, c config.ContextConfig) ([]provider.Message, CompactionInfo) {
 	if len(history) == 0 {
 		return history, CompactionInfo{}
 	}
-	if c.ElideAfterTurns > 0 && userTurns(history) <= c.ElideAfterTurns {
+	if c.ElideAfterTurns > 0 && UserTurns(history) <= c.ElideAfterTurns {
 		return history, CompactionInfo{}
 	}
 

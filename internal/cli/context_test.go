@@ -62,6 +62,11 @@ func TestServeBackendContext(t *testing.T) {
 	if c := view.Cards[1]; c.Seq != 2 || c.Kind != core.KindOutput || c.State != chat.StateSent {
 		t.Errorf("card 1 = %+v", c)
 	}
+	// The view says whether a compaction would have anything to do: one user turn is
+	// inside the default keep_turns window, so nothing is older than it.
+	if view.UserTurns != 1 || view.CompactTurns != 0 {
+		t.Errorf("compaction view = %d user turns / %d compactable, want 1 / 0", view.UserTurns, view.CompactTurns)
+	}
 
 	// A tail window returns its slice; Seq keeps the original numbering, so a
 	// client can walk back without the cards shifting under it.

@@ -56,18 +56,45 @@ func SummaryMessage(summary string) provider.Message {
 	}
 }
 
-// summarySystemPrompt is the instruction for the summarizer call. It asks for the
-// facts a later turn needs and nothing else.
-const summarySystemPrompt = `You compress an agent's conversation history so the work can continue in a
-smaller context window. Write a summary that lets a later turn pick up without
-the original messages. Keep, in this order:
-- the user's goal and any constraints they stated
-- decisions made, and why
-- concrete state: files and paths touched, commands run and their key results,
-  hostnames, versions, and error messages (keep these verbatim)
-- what is still open or unverified
-Drop pleasantries and repeated output. Be specific and terse; use short bullets.
-Return plain text only — no JSON, no code fences, no preamble.`
+// summarySystemPrompt is the instruction for the summarizer call. The span it
+// receives is the older part of a conversation whose most recent turns are kept
+// verbatim, so the result is background for a continuing conversation rather than
+// a statement of the latest state — and it is weighted by recency, so an old task
+// is never presented as the current one. It deliberately does not ask for the
+// environment facts the role prompt already carries (OS, shell, user, date,
+// working directory): repeating them would spend tokens and could contradict a
+// session whose working directory changed since.
+const summarySystemPrompt = `You compress the older part of an agent's conversation so the work can continue
+without those messages. The most recent exchanges are kept verbatim elsewhere and
+are not part of your input, so what you write is background, not the latest state.
+
+The span is in chronological order, and its end matters far more than its start.
+Weight it that way:
+- The task being worked on at the end of the span is the current one: describe it
+  fully, including exactly where it stopped.
+- Tasks finished earlier are history: usually one line each, and only the parts
+  that later work still depends on.
+- If the work changed direction, or a goal was dropped or replaced, say so plainly.
+  Never present a finished or abandoned goal as the current one.
+
+Answer with these labels, in this order:
+CURRENT: the task in flight at the end of the span, and its state.
+OPEN: what is unfinished, unverified, or waiting on the user.
+STATE: identifiers a later turn cannot guess — file paths, remote hosts, hostnames,
+  versions, command lines, error messages. Keep them verbatim; do not paraphrase.
+  The reader is already given this machine's OS, shell, user, date and working
+  directory elsewhere, so do not restate those — and say nothing about the session
+  environment that could go stale.
+CONSTRAINTS: what the user required, in their own terms.
+EARLIER: one line per finished task, most recent first; omit any that no longer
+  matter.
+
+Write in the language of the most recent user turns, even if the earlier span is in
+another language, and keep identifiers exactly as they appear whatever their
+language.
+Be terse: short bullets, no nesting, no pleasantries, no repeated command output.
+Report only what the span says — never invent details. Stay well under the size of
+the text you were given. Plain text only: no JSON, no code fences, no preamble.`
 
 // Summarize asks the model to compress a transcript. It deliberately does not
 // stream, does not request reasoning, and does not ask for JSON: this is a

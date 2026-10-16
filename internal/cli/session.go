@@ -100,12 +100,14 @@ func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, *ses
 	}
 
 	// Only part of the transcript is replayed into the model. A summary
-	// checkpoint, if any, replaces everything before it; max_turns then caps the
-	// tail after it. User overrides are applied to the replay window, not the disk
-	// transcript. This overwrites sess.Turns, so the recap the caller prints (and
-	// the resumed history) is drawn from the replayed, overridden tail — summary
-	// plus the capped tail — not the full transcript still on disk.
-	sess.Turns = chat.ReplayTurns(sess.Turns, cfg.SessionMaxTurns)
+	// checkpoint, if any, replaces everything before it except the keep_turns user
+	// turns it was not asked to summarize (compaction keeps those verbatim);
+	// max_turns then caps the tail after it. User overrides are applied to the
+	// replay window, not the disk transcript. This overwrites sess.Turns, so the
+	// recap the caller prints (and the resumed history) is drawn from the replayed,
+	// overridden tail — summary plus the kept window and the capped tail — not the
+	// full transcript still on disk.
+	sess.Turns = chat.ReplayTurns(sess.Turns, cfg.Context.KeepTurns, cfg.SessionMaxTurns)
 	sess.Turns = chat.ApplyOverrides(sess.Turns, toChatOverrides(sess.Overrides))
 	return store, sess, nil
 }

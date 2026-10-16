@@ -22,7 +22,8 @@ lives in data (`prompts`), not in Go.
    `core.Prompter`, when trust does not already cover it.
 4. Every turn is recorded through `core.Recorder`, which `session` implements.
 5. What is *replayed* is not the whole transcript. Per request the loop selects a
-   window (`chat.ReplayTurns`: the last summary checkpoint plus `max_turns`),
+   window (`chat.ReplayTurns`: the last summary checkpoint, the `keep_turns` user
+   turns it deliberately left verbatim, and `max_turns` of tail after it),
    applies the user's surgery (`chat.ApplyOverrides`), and elides old tool output
    (`chat.CompactHistory`). Past a token budget, `chat.ShouldSummarize` asks the
    model to summarize the oldest turns instead.

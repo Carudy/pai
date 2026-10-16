@@ -110,14 +110,20 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 	window := cards[start:end]
 	// Size the prompt the loop would compose on resume, so the number a client
 	// shows before the first call is the one the summarization budget starts from.
-	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
+	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.Context.KeepTurns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
+	servedMsgs := toMessages(served)
+	// What a compaction would absorb, in the same terms the loop decides with, so
+	// the client can say why a manual compress has nothing to do.
+	span, _ := chat.SplitForSummary(servedMsgs, cfg.Context.KeepTurns)
 	view := runner.ContextView{
 		Head:            rp.Head(),
 		Tail:            rp.Tail(),
 		Model:           s.Meta.Model,
 		Total:           len(cards),
 		Offset:          start,
-		EstimatedTokens: chat.EstimateTokens(rp.Messages(toMessages(served))),
+		EstimatedTokens: chat.EstimateTokens(rp.Messages(servedMsgs)),
+		CompactTurns:    chat.UserTurns(span),
+		UserTurns:       chat.UserTurns(servedMsgs),
 		Cards:           make([]runner.ContextCard, len(window)),
 		Config: runner.ContextSettings{
 			KeepTurns:       cfg.Context.KeepTurns,
@@ -541,7 +547,7 @@ func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, p
 			return fail(fmt.Errorf("create session: %w", err))
 		}
 	}
-	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
+	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.Context.KeepTurns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
 	return cfg, client, &serveRecorder{backend: b, name: name}, toMessages(served), func() {}, cwd, nil
 }
 

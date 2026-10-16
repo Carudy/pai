@@ -47,6 +47,12 @@ type ContextView struct {
 	// a session no run has reported usage for yet. It is an estimate, not a
 	// measurement, and it is computed over every turn regardless of the window.
 	EstimatedTokens int `json:"estimated_tokens"`
+	// CompactTurns is how many user turns a compaction would fold into a summary,
+	// and UserTurns how many the replay holds. Zero CompactTurns means a manual
+	// compaction has nothing to do, so a client can explain that instead of
+	// offering a control that silently does nothing.
+	CompactTurns int `json:"compact_turns"`
+	UserTurns    int `json:"user_turns"`
 }
 
 // ContextCard is one stored turn's place in that list. Sent is empty when the

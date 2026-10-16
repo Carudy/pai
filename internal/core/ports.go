@@ -124,6 +124,7 @@ type Observer interface {
 	Terminate(reason string) // task cannot complete
 	Ask(question string)     // about to ask the user
 	Awaiting()               // waiting for the next instruction
+	Compacting()             // older turns are being summarized into one message
 	User(text string)        // echo of the user's input
 	Session(name string)     // the conversation's storage changed ("" = ephemeral)
 

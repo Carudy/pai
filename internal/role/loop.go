@@ -351,10 +351,18 @@ func compactHistory(ctx context.Context, rt *Runtime, cfg *config.UserConfig, cc
 	if len(span) == 0 {
 		return false, nil
 	}
+	// A span holding nothing but a previous summary has no new turns to fold in:
+	// re-summarizing it would cost a model call and lose detail, not save context.
+	if chat.UserTurns(span) == 0 {
+		return false, nil
+	}
 
 	// Summarization is its own step, so Ctrl+C can cancel it like any other work.
 	stepCtx, end := rt.beginStep(ctx)
 	defer end()
+	// The summarizer call does not stream, so tell the observer it is running: an
+	// unexplained pause of several seconds reads as a hang.
+	rt.Observer.Compacting()
 
 	summary, err := chat.Summarize(stepCtx, cfg, rt.chatPorts(), chat.RenderTranscript(span))
 	if err != nil {

@@ -144,6 +144,15 @@ func (w *worker) reasoningOverride() string {
 	return w.m.reasoning[w.name]
 }
 
+func (w *worker) Compacting() {
+	w.m.mu.Lock()
+	defer w.m.mu.Unlock()
+	// The summarizer call does not stream, so without this event the client would
+	// sit on the previous phase until the compaction finished.
+	w.phase = "compacting"
+	w.emitLocked("compacting", nil)
+}
+
 func (w *worker) Awaiting() {
 	w.m.mu.Lock()
 	defer w.m.mu.Unlock()

@@ -372,7 +372,12 @@ func runCompact(c *cmdCtx, _ []string) (cmdOutcome, string) {
 		return cmdHandled, ""
 	}
 	if !ok {
-		c.output("nothing to compact yet")
+		// Say which of the two reasons it is rather than a bare "nothing to do":
+		// with keep_turns counting whole user turns, a session can be long in
+		// messages and still have nothing older than the verbatim window.
+		if reason := chat.DescribeNoCompaction(c.history, c.cfg.Context.KeepTurns); reason != "" {
+			c.output(reason)
+		}
 		return cmdHandled, ""
 	}
 	kept := len(c.history) - 1 // everything after the summary
