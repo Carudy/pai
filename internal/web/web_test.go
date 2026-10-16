@@ -92,6 +92,8 @@ func (backend) Context(name string, offset, limit int) (runner.ContextView, erro
 		Offset: start,
 		Cards:  cards[start:end],
 		Config: runner.ContextSettings{KeepTurns: 3, MaxTurns: 20},
+		// A fixed estimate, so the endpoint test pins the JSON field name.
+		EstimatedTokens: 1234,
 	}, nil
 }
 func (b backend) SetOverride(name string, seq int, action, content string) error {
@@ -176,7 +178,7 @@ func TestContextAPI(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
 		t.Fatal(err)
 	}
-	if v.Head == "" || v.Tail == "" || len(v.Cards) != 1 || v.Cards[0].Seq != 1 || v.Config.MaxTurns != 20 || v.Total != 1 || v.Offset != 0 {
+	if v.Head == "" || v.Tail == "" || len(v.Cards) != 1 || v.Cards[0].Seq != 1 || v.Config.MaxTurns != 20 || v.Total != 1 || v.Offset != 0 || v.EstimatedTokens != 1234 {
 		t.Fatalf("view = %+v", v)
 	}
 	if w := request(h, http.MethodGet, "/api/context?name=one&offset=1&limit=5", "", nil, ""); w.Code != http.StatusOK {

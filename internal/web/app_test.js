@@ -339,8 +339,9 @@ reader.run('renderTurns(' + JSON.stringify([
 ]) + ')');
 const readText = reader.get('history').textContent;
 assert.match(readText, /\/a\/b\.go/, 'read shows the path');
-assert.match(readText, /Lines/, 'read labels the line window');
-assert.match(readText, /100:249/, 'read shows one inclusive line range');
+// The range rides on the path rather than taking a labelled row of its own.
+assert.match(readText, /\/a\/b\.go 100:249/, 'read appends the inclusive line range to the path');
+assert.ok(!/Lines/.test(readText), 'read does not add a separate Lines row');
 assert.ok(!/offset/.test(readText) && !/limit/.test(readText), 'read does not show offset/limit rows');
 
 // A chained command in a chat card is numbered at its operators, like the CLI,
@@ -898,6 +899,48 @@ async function verifySessionLoading() {
   assert.equal(failed.get('history').textContent, '', 'a failed load clears the placeholder');
 }
 
+// A session opened from storage has no live runtime, so no provider usage exists
+// yet: the token line shows the projection's estimate instead of disappearing.
+async function verifyTokenEstimate() {
+  const p = browser();
+  p.run("selected='one'; api=async path => path.startsWith('context') ? {estimated_tokens: 12400, total: 340, cards: []} : {}");
+  await p.run('loadContext(false)');
+  assert.equal(p.get('token-usage').hidden, false, 'the token line shows without a live run');
+  assert.match(p.get('token-round').textContent, /Context · ~12\.4k · estimated · 340 turns/, 'it reports the projected size as an estimate');
+  assert.equal(p.get('token-round').textContent.includes('Round'), false, 'no round numbers are invented');
+
+  // A configured budget is shown against the estimate, as with real usage.
+  p.run("snapshot({state:'awaiting',usage_calls:0,context_tokens:128000})");
+  assert.match(p.get('token-round').textContent, /~12\.4k \/ 128k \(10%\)/, 'the estimate is measured against the compaction budget');
+
+  // The provider's own numbers win as soon as a run reports them.
+  p.run("snapshot({state:'awaiting',usage_calls:1,usage:{Prompt:9000,Completion:120,Total:9120},total_usage:{Prompt:9000,Completion:120,Total:9120}})");
+  assert.match(p.get('token-round').textContent, /^Round · in 9k · out 120/, 'reported usage replaces the estimate');
+  assert.equal(p.get('token-total').textContent.includes('total 9.1k'), true, 'the run line is a measurement again');
+
+  // An empty session has nothing to estimate, and a failed probe must not leave a
+  // stale line behind.
+  const empty = browser();
+  empty.run("selected='one'; api=async path => path.startsWith('context') ? {estimated_tokens: 0, total: 0, cards: []} : {}");
+  await empty.run('loadContext(false)');
+  assert.equal(empty.get('token-usage').hidden, true, 'an empty session shows no token line');
+  const failed = browser();
+  failed.run("selected='one'; api=async()=>{throw new Error('nope')}");
+  await failed.run('loadContext(false)');
+  assert.equal(failed.get('token-usage').hidden, true, 'a failed estimate leaves the line hidden');
+
+  // Switching sessions drops the previous estimate rather than showing it for the
+  // session still loading.
+  const switching = browser();
+  switching.run("selected='one'; api=async path => path.startsWith('context') ? {estimated_tokens: 12400, total: 340, cards: []} : path === 'snapshot?name=one&offset=0&limit=100' ? {} : {}");
+  await switching.run('loadContext(false)');
+  assert.equal(switching.get('token-round').textContent.includes('~12.4k'), true);
+  switching.run("loadSnapshot=async()=>{}; connect=()=>{}; loadHistory=async()=>{}; sessions=async()=>[]");
+  const selecting = switching.run("select('two')");
+  assert.equal(switching.get('token-round').textContent, '', 'a switch clears the old estimate immediately');
+  await selecting;
+}
+
 async function verifySendFailure() {
   const p = browser();
   p.run(`selected='one'; $('login').hidden=true; $('message').value='hello';
@@ -984,4 +1027,4 @@ async function verifyAuthGate() {
   assert.equal(p.run('toasted.length'), 1, 'a non-auth failure is toasted');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

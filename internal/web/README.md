@@ -201,7 +201,11 @@ rejected; there is no URL authentication.
   message list the session would send: the role's system `head`, one `cards`
   entry per stored turn (`original`, `sent`, and a `state` of `sent` | `elided` |
   `edited` | `dropped` | `summarized_away` | `capped`), the system `tail`, the
-  `model`, and the compaction `config` in effect. `cards` is a window, not the
+  `model`, and the compaction `config` in effect. `estimated_tokens` is the size
+  this projection would send, from the same four-bytes-per-token estimate the loop
+  seeds its summarization budget with on resume — so a client can show a context
+  size for a session no run has reported usage for yet, and it is computed over
+  every turn regardless of the window. `cards` is a window, not the
   whole transcript: `offset` is the index of its first card and `total` the
   number of stored turns, both normalized, so a client can walk back a page at a
   time (the projection is still computed over every turn, since the replay window
@@ -284,7 +288,12 @@ and context notices such as compaction — never tools or run progress, so the
 context's evolution stays legible. Switching sessions shows a loading placeholder
 in the conversation until the transcript arrives, rather than an empty pane.
 A chained command in a card is numbered at its operators (as the CLI prints it),
-so the piece that failed is identifiable at a glance. An **Inspect** switch in that panel's header
+so the piece that failed is identifiable at a glance. A `read` card carries its
+line range on the path (`main.go 84:97`) instead of a separate labelled row. The
+token line reports the provider's own numbers once a run has produced any, and
+otherwise the projection's estimated context size marked `estimated` — a session
+opened from storage has no live runtime, so without it the line would simply be
+absent until the first instruction of the run. An **Inspect** switch in that panel's header
 opens an overlay of the messages a send would use — the system head, one card per
 message showing the original and what is actually sent (with a state badge for
 elided, edited, dropped, summarized-away and capped messages), and the tail, with

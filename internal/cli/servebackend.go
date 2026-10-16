@@ -108,13 +108,17 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 	start := min(offset, len(cards))
 	end := min(start+limit, len(cards))
 	window := cards[start:end]
+	// Size the prompt the loop would compose on resume, so the number a client
+	// shows before the first call is the one the summarization budget starts from.
+	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
 	view := runner.ContextView{
-		Head:   rp.Head(),
-		Tail:   rp.Tail(),
-		Model:  s.Meta.Model,
-		Total:  len(cards),
-		Offset: start,
-		Cards:  make([]runner.ContextCard, len(window)),
+		Head:            rp.Head(),
+		Tail:            rp.Tail(),
+		Model:           s.Meta.Model,
+		Total:           len(cards),
+		Offset:          start,
+		EstimatedTokens: chat.EstimateTokens(rp.Messages(toMessages(served))),
+		Cards:           make([]runner.ContextCard, len(window)),
 		Config: runner.ContextSettings{
 			KeepTurns:       cfg.Context.KeepTurns,
 			ElideAfterTurns: cfg.Context.ElideAfterTurns,

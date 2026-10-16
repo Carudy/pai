@@ -48,6 +48,11 @@ func TestServeBackendContext(t *testing.T) {
 	if !strings.Contains(view.Head, "Working Dir: ") {
 		t.Errorf("head should carry the terminal info block")
 	}
+	// The estimate sizes the composed prompt, so it is strictly larger than the bare
+	// head and tail: what a client shows must be what the loop would seed.
+	if view.EstimatedTokens <= (len(view.Head)+len(view.Tail))/4 {
+		t.Errorf("estimated tokens = %d, want more than the head+tail estimate %d", view.EstimatedTokens, (len(view.Head)+len(view.Tail))/4)
+	}
 	if view.Total != 4 || view.Offset != 0 || len(view.Cards) != 4 {
 		t.Fatalf("full window = total %d offset %d cards %d, want 4/0/4", view.Total, view.Offset, len(view.Cards))
 	}

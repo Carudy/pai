@@ -526,12 +526,19 @@ const icons = {execute:'💻', remote:'🔐', read:'📖', write:'✍️', edit:
 // A read call reports its line window on one line ("Lines 100:249") instead of a
 // separate offset and limit row, matching how a reader thinks about a range.
 function readPayload(node, value) {
-  if (value.path !== undefined) { node.append(text('div', 'path', 'field-label'), text('pre', String(value.path))); }
   const hasOffset = value.offset !== undefined && value.offset !== null;
   const hasLimit = value.limit !== undefined && value.limit !== null;
+  // The line range rides on the path ("main.go 84:97") rather than taking a
+  // labelled row of its own: file and range are one thought, and it saves a row
+  // on every read card.
+  let range = '';
   if (hasOffset || hasLimit) {
     const start = hasOffset ? Math.max(1, Number(value.offset) || 1) : 1;
-    const range = hasLimit ? start + ':' + (start + Math.max(1, Number(value.limit) || 1) - 1) : start + ':\u2026';
+    range = hasLimit ? start + ':' + (start + Math.max(1, Number(value.limit) || 1) - 1) : start + ':\u2026';
+  }
+  if (value.path !== undefined) {
+    node.append(text('div', 'path', 'field-label'), text('pre', String(value.path) + (range ? ' ' + range : '')));
+  } else if (range) {
     node.append(text('div', 'Lines', 'field-label'), text('pre', range));
   }
   const extra = Object.fromEntries(Object.entries(value).filter(([key]) => !['path', 'offset', 'limit'].includes(key)));
@@ -717,25 +724,41 @@ function tokenCount(n) {
   if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
   return String(n);
 }
-function usageSnapshot(s) {
-  const node = $('token-usage');
-  const round = $('token-round'), run = $('token-total');
-  const hasUsage = s.usage_calls > 0;
-  node.hidden = !hasUsage;
-  round.textContent = ''; run.textContent = ''; node.title = '';
-  if (!hasUsage) return;
-  const total = s.total_usage, latest = s.usage;
-  // The latest prompt size is the current context; against the compaction
-  // threshold it answers "am I about to compress?", not just "how much have I
-  // spent". Only shown when compaction is configured (context_tokens > 0).
+// The last snapshot's usage fields, kept so the estimate and the provider's own
+// numbers can be painted from one place.
+let usageState = {};
+function usageSnapshot(s) { usageState = s || {}; paintTokens(); }
+// The provider's own numbers are the only exact source, and they only exist once
+// a run has reported them. A session opened from storage has no live runtime, so
+// without the estimate from its context projection the line would simply be
+// absent until the next instruction — which is exactly when it is least useful.
+function paintTokens() {
+  const s = usageState;
+  const node = $('token-usage'), round = $('token-round'), run = $('token-total');
+  round.textContent = ''; run.textContent = ''; node.title = ''; node.hidden = true;
+  if (s.usage_calls > 0) {
+    // The latest prompt size is the current context; against the compaction
+    // threshold it answers "am I about to compress?", not just "how much have I
+    // spent". Only shown when compaction is configured (context_tokens > 0).
+    const total = s.total_usage, latest = s.usage;
+    const budget = s.context_tokens > 0
+      ? ` · context ${tokenCount(latest.Prompt)} / ${tokenCount(s.context_tokens)} (${Math.round(100 * latest.Prompt / s.context_tokens)}%)`
+      : '';
+    round.textContent = `Round · in ${tokenCount(latest.Prompt)} · out ${tokenCount(latest.Completion)}${budget}`;
+    run.textContent = `Run · in ${tokenCount(total.Prompt)} · out ${tokenCount(total.Completion)} · total ${tokenCount(total.Total)}`;
+    node.title = `Latest request: sent ${tokenCount(latest.Prompt)} · received ${tokenCount(latest.Completion)} · total ${tokenCount(latest.Total)}.`
+      + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${s.context_tokens} tokens.` : '')
+      + ' This run covers this worker runtime only; resuming a retired runtime starts fresh.';
+    node.hidden = false;
+    return;
+  }
+  if (!contextEstimate || !contextEstimate.turns) return;
   const budget = s.context_tokens > 0
-    ? ` · context ${tokenCount(latest.Prompt)} / ${tokenCount(s.context_tokens)} (${Math.round(100 * latest.Prompt / s.context_tokens)}%)`
+    ? ` / ${tokenCount(s.context_tokens)} (${Math.round(100 * contextEstimate.tokens / s.context_tokens)}%)`
     : '';
-  round.textContent = `Round · in ${tokenCount(latest.Prompt)} · out ${tokenCount(latest.Completion)}${budget}`;
-  run.textContent = `Run · in ${tokenCount(total.Prompt)} · out ${tokenCount(total.Completion)} · total ${tokenCount(total.Total)}`;
-  node.title = `Latest request: sent ${tokenCount(latest.Prompt)} · received ${tokenCount(latest.Completion)} · total ${tokenCount(latest.Total)}.`
-    + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${s.context_tokens} tokens.` : '')
-    + ' This run covers this worker runtime only; resuming a retired runtime starts fresh.';
+  round.textContent = `Context · ~${tokenCount(contextEstimate.tokens)}${budget} · estimated · ${contextEstimate.turns} turns`;
+  node.title = 'No run has reported usage for this session yet, so this is the size its next request would send, estimated at four bytes per token — code and non-Latin text are undercounted. Send an instruction for the provider’s exact count.';
+  node.hidden = false;
 }
 function snapshot(s) {
   usageSnapshot(s);
@@ -871,6 +894,9 @@ let contextTimer = null;
 // The loaded window: cards is contiguous, offset is the index of its first card,
 // total is the transcript length. offset > 0 means older cards exist above it.
 let contextCards = [], contextOffset = 0, contextTotal = 0, contextBox = null, contextLoading = false;
+// The projection's estimated prompt size, primed even while the inspector is
+// closed: it is what the token line shows before a run reports real usage.
+let contextEstimate = null;
 function contextOpen() { return $('app').classList.contains('context-open'); }
 function setContextOpen(on) {
   $('app').classList.toggle('context-open', on);
@@ -1066,30 +1092,36 @@ function renderContext(view) {
   // usually means; older pages are one scroll away.
   body.scrollTop = body.scrollHeight;
 }
-async function loadContext() {
+async function loadContext(full = true) {
   const body = $('context-body');
   if (!selected) {
     $('context-meta').textContent = '';
-    contextCards = []; contextOffset = 0; contextTotal = 0; contextBox = null;
+    contextCards = []; contextOffset = 0; contextTotal = 0; contextBox = null; contextEstimate = null;
+    paintTokens();
     body.replaceChildren(text('p', 'Open a session to inspect its context.', 'ctx-config'));
     return;
   }
   const version = generation, name = selected;
   // Show the spinner only when there is nothing yet; a refresh keeps the current
   // view until the new one arrives instead of flashing.
-  if (!body.children.length) body.replaceChildren(loadingNote('Loading the context…'));
+  if (full && !body.children.length) body.replaceChildren(loadingNote('Loading the context…'));
   try {
-    // Probe the length, then load the newest page: like loadHistory(), the window is
-    // anchored to the tail rather than the start.
+    // Probe the length, then load the newest page: like history(), the window is
+    // anchored to the tail rather than the start. The probe also carries the
+    // estimate, which is all a closed inspector needs.
     const probe = await api(contextURL(name, 0, 1));
     if (version !== generation || selected !== name) return;
     const total = Number.isFinite(probe.total) ? probe.total : (probe.cards || []).length;
+    contextEstimate = {tokens: Number(probe.estimated_tokens) || 0, turns: total};
+    paintTokens();
+    if (!full) return;
     const offset = Math.max(0, total - contextPage);
     const view = await api(contextURL(name, offset, contextPage));
     if (version !== generation || selected !== name) return;
     renderContext(view);
   } catch (e) {
     if (version !== generation || selected !== name) return;
+    if (!full) return;
     body.replaceChildren(text('p', 'Could not load the context: ' + e.message, 'ctx-config'));
   }
 }
@@ -1129,7 +1161,7 @@ async function select(name, cwd, replaceURL = false) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
   try { localStorage.setItem(SESSION_KEY, name); } catch {}
   setSessionURL(name, replaceURL);
-  clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = true; sessionMetadata();
+  clearReasoning(); contextEstimate = null; usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('title').title = name;
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
@@ -1143,7 +1175,9 @@ async function select(name, cwd, replaceURL = false) {
   try { await loadHistory(true, true); } catch (e) { if (e.status !== 404) error(e); }
   if (version !== generation) return;
   await loadSnapshot(); if (version === generation) connect();
-  if (version === generation && contextOpen()) loadContext();
+  // Prime the projection whenever the session changes: open, it is the inspector
+  // window; closed, its estimate is what the token line can show.
+  if (version === generation) loadContext(contextOpen());
 }
 // The open session is named in the URL (/session/<name>), so a page can be
 // bookmarked, shared and reloaded straight into the same conversation. A real
@@ -1270,11 +1304,11 @@ function clearWorkspace() {
   sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = false;
   $('trust-all').checked = false;
   $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
-  clearReasoning(); usageSnapshot({});
+  clearReasoning(); contextEstimate = null; usageSnapshot({});
   reasoningMetadata('');
   $('title').textContent = 'Select or create a session';
   sessionMetadata();
-  if (contextOpen()) loadContext();
+  loadContext(contextOpen());
   const empty = text('div', '', 'empty');
   empty.append(text('h3', 'Best partner, PAI!'), text('p', 'Open a named session to start working with PAI.'));
   $('history').append(empty);
