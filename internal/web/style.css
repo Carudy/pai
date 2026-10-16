@@ -27,6 +27,11 @@
     --link-border: #75b7b4;
     --complete-bg: #def4e5;
     --complete-ink: #18794e;
+    --code-bg: #f3f5fb;
+    --code-ink: #242a3a;
+    --code-border: #dce2ed;
+    --diff-add-bg: #26a26912;
+    --diff-remove-bg: #e34c6012;
 }
 
 * {
@@ -824,12 +829,12 @@ header p {
 
 .diff-add {
     color: var(--green);
-    background: #26a26912;
+    background: var(--diff-add-bg);
 }
 
 .diff-remove {
     color: var(--red);
-    background: #e34c6012;
+    background: var(--diff-remove-bg);
 }
 
 .tool-log pre {
@@ -899,8 +904,10 @@ header p {
 }
 
 .markdown blockquote {
-    border-left: 3px solid var(--border);
-    padding-left: 12px;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    background: var(--soft);
+    padding: 2px 12px;
     color: var(--muted);
 }
 
@@ -914,14 +921,31 @@ header p {
         SFMono-Regular,
         Menlo,
         monospace;
-    background: var(--soft);
-    padding: 2px 4px;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border: 1px solid var(--code-border);
+    padding: 1px 4px;
     border-radius: 4px;
 }
 
+/* A fenced block gets its own surface so code reads as code, not prose, and
+   scrolls instead of growing the card when a line is long. */
 .markdown pre {
     white-space: pre;
     overflow-wrap: normal;
+    background: var(--code-bg);
+    color: var(--code-ink);
+    border: 1px solid var(--code-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    overflow: auto;
+}
+
+/* Headings carry the accent so a long reply is scannable at a glance. */
+.markdown h1,
+.markdown h2 {
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
 }
 
 .markdown table {
@@ -960,12 +984,6 @@ header p {
 .markdown img {
     max-width: 100%;
     height: auto;
-}
-
-.code-language {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 10px;
 }
 
 /* ── Composer ──────────────────────────────────────────────── */
@@ -1833,24 +1851,37 @@ header p {
    so an absent attribute means light. */
 :root[data-theme="dark"] {
     color-scheme: dark;
-    --bg: #11151e;
-    --panel: #191f2b;
-    --soft: #242c3c;
-    --ink: #e4e9f3;
-    --muted: #9ca9bf;
-    --border: #303a4e;
+    /* A middle path between a near-black page and GitHub's "dimmed" slate: the
+       surfaces are lifted enough to stop glaring but still read black, and the ink
+       is a grey rather than white. Pure #000/#fff pairs land near 21:1, and the
+       glare of near-white bold text is what tires the eye; this sits at ~9.8:1,
+       between VS Code Dark+ (11.3) and code's dimmed theme (7.6). */
+    --bg: #181b20;
+    --panel: #1f2228;
+    --soft: #272b32;
+    --ink: #bfc3cb;
+    --muted: #9298a2;
+    --border: #333842;
     --accent: #9aa7ff;
     --green: #7bdcaa;
     --red: #ff97a3;
     --link: #8cd4d2;
-    --link-bg: #223d40;
+    --link-bg: #1d3033;
     --link-ink: #b2e9e4;
-    --link-border: #579c99;
-    --complete-bg: #203e30;
+    --link-border: #4d8a88;
+    --complete-bg: #1b3527;
     --complete-ink: #8ee0ae;
+    /* Code sits a touch below the body ink, so a block is never the brightest
+       thing on the card. The diff tints run stronger than light mode's: a 7%
+       wash over a dark surface is nearly invisible. */
+    --code-bg: #1a1d22;
+    --code-ink: #b9bdc5;
+    --code-border: #333842;
+    --diff-add-bg: #26a26926;
+    --diff-remove-bg: #e34c6026;
 }
 
 /* On a light accent, accent-button text must be dark. */
 :root[data-theme="dark"] .primary {
-    color: #141927;
+    color: #0b0b0d;
 }
