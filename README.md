@@ -9,11 +9,27 @@ An ultra-lightweight, module-decoupled, highly customizable CLI tool that levera
 - API key for at least one supported LLM provider
 - (Optional) Tavily API key for web search
 
+### Install script
+```bash
+curl -fsSL https://raw.githubusercontent.com/Carudy/pai/main/install.sh | sh
+```
+Downloads the latest release, verifies it against `checksums.txt`, and installs
+`pai` to `~/.local/bin` (override with `PAI_INSTALL_DIR`, pin with
+`PAI_VERSION`). linux/amd64 and darwin/arm64 only.
+
 ### Prebuilt binaries
 Each tagged release ships cgo-free binaries on the
 [Releases](https://github.com/Carudy/pai/releases) page — Linux (amd64), macOS
 (arm64), and Windows (amd64) — alongside a `checksums.txt`. Download one, make
-it executable, and put it on your `PATH`; there are no runtime dependencies.
+it executable, and put it on your `PATH`; there are no runtime dependencies. Each
+release also carries a version-independent name, so the newest binary can be
+fetched directly without looking up the tag:
+
+```bash
+curl -fsSL -o pai https://github.com/Carudy/pai/releases/latest/download/pai_linux_amd64
+# macOS: .../download/pai_darwin_arm64
+chmod +x pai && mv pai ~/.local/bin/
+```
 
 ### Build from Source
 ```bash

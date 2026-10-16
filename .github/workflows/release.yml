@@ -28,7 +28,10 @@ jobs:
 
       # Cross-compiled with CGO_ENABLED=0, so no toolchain per target is needed
       # (the SQLite backend is pure Go). The tag is injected as the version, so
-      # the binary reports exactly what it was released as.
+      # the binary reports exactly what it was released as. Each versioned asset
+      # also gets a version-independent twin, so
+      # `.../releases/latest/download/pai_<os>_<arch>` resolves to the newest
+      # release without knowing its tag (used by install.sh and one-line downloads).
       - name: Build binaries
         env:
           TAG: ${{ github.ref_name }}
@@ -46,6 +49,7 @@ jobs:
             echo "building ${out}"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
               go build -trimpath -ldflags="$ldflags" -o "$out" ./cmd/pai
+            cp "$out" "dist/pai_${os}_${arch}${ext}"
           done
           (cd dist && sha256sum ./* > checksums.txt)
           ls -l dist
