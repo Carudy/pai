@@ -50,3 +50,19 @@ history, err := m.History(name, offset, limit)
 - `SubscribeActivities()` returns a global channel of `Activity{Name, Event}`, an idempotent unsubscribe function, and an error. It observes future events for all workers without a browser or per-session subscription, with no replay or initial snapshot. Each of at most 32 global subscriptions buffers 128 events and drops new events when full; it never invokes client callbacks or blocks a worker on output. Payloads and pending prompts are independently copied just as for per-session subscribers. `Close` closes activity channels after final worker events, allowing consumers to drain buffered events. Consumers decide filtering, privacy, formatting, and bounded shutdown waits.
 - Each worker supports 32 subscribers with 64 buffered events each. A slow subscriber's channel closes; reconnect for a fresh snapshot and reload history. Unsubscribe is idempotent. There is no retained event log. `core` payloads retain their native field names.
 - Finished/evicted worker entries are removed. `Subscribe` then returns `ErrNotFound`; `History` remains available. For failed workers, `Snapshot` retains the final stopped/error state in an in-memory FIFO cache of at most 32 sessions, so startup errors remain visible even if the client missed the events. These diagnostics occupy no runtime slots, disappear on server restart or eviction, and are cleared by an accepted new send or a successful session mutation. Without a retained failure, `Snapshot` returns `ErrNotFound`. `Close` is concurrent-safe, idempotent, cancels workers, and waits for cleanup. Backend/provider implementations must honor their contracts for shutdown to complete.
+
+## Concurrency and workspaces
+
+The concurrency limit bounds live runtimes; idle runtimes can be evicted to
+make room. Full busy capacity rejects new work rather than growing an unbounded
+queue. Sessions execute in their persisted working directory, defaulting to the
+server's launch directory for new sessions. Directories must already exist and
+are normalized to absolute paths; they are not security sandboxes, and no request
+changes the process cwd. Use separate worktrees when concurrent tasks could
+modify the same files.
+
+While serving, PAI exclusively owns the session store across processes. Other
+PAI processes cannot open that store until the server stops. Do not delete
+`sessions.lock` while PAI is running. Tasks survive browser disconnections,
+**not server restarts**; use a service manager such as systemd for hosting.
+Shutdown cancels active work and releases store ownership.

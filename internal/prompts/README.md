@@ -36,3 +36,40 @@ Suggested consumer validation from the repository root:
 ```sh
 go test ./internal/chat ./internal/role
 ```
+
+## Extending a role
+
+Append your own instructions to any role's intro with
+`~/.config/pai/role-extra.toml`:
+
+```toml
+[devops]
+text = """
+You are a senior SRE. Always explain why before running commands.
+"""
+```
+
+The text is appended to the role's *intro* under a `[User:]` marker — it never
+replaces the intro, and it cannot change the response format, which is fixed by
+the app. To change more than that (a different intro or tool set), define a
+custom role instead; see the built-in and custom roles in
+[`internal/role/README.md`](../role/README.md).
+
+> **Renamed:** `~/.config/pai/prompts.toml` (with `prompt`/`additional`) is no
+> longer read. Move its text to `role-extra.toml` — it is now always appended.
+
+### On-demand guides (a poor-man's "skills")
+
+`text` is loaded on every request, so keep it short and let it *point* at detail
+only when it is needed. The cheapest on-demand guide is to name a file in the
+role intro and let the model `read` it when relevant:
+
+```toml
+[devops]
+text = """
+Before triaging a Kubernetes incident, read docs/guides/k8s-triage.md.
+"""
+```
+
+The pointer is always present; the guide's body enters the context only when the
+model reads it. Reads still follow the usual path-trust rules.

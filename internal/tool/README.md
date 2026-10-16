@@ -46,3 +46,75 @@ Suggested validation from the repository root:
 ```sh
 go test ./internal/tool
 ```
+
+## Trusted commands
+
+Commands matching the `trusted_cmds` list skip confirmation:
+```toml
+[tool]
+trusted_cmds = ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
+```
+
+A chain (`aa && bb`) is confirmed as a whole, but the printed list marks only the
+parts that are *not* trusted (`⚠`), and the header counts them (`3 commands (2
+need approval):`). The prompt offers more than yes/no:
+
+| Key | Does |
+|---|---|
+| `y` | run this once |
+| `n` | skip |
+| `s` | run, and trust the flagged commands for this run |
+| `a` | run, and trust them from now on (written to `trusted_cmds`) |
+| `Ctrl+C` | abort |
+
+Trust is by command **name** (the first word), so `a` on `sudo rm -rf /x` would
+trust `sudo`. To blunt that, `a` is silently downgraded to "this session" for
+interpreters and wrappers (`sudo`, `sh`, `bash`, `env`, `xargs`, …). Session
+trust is in-memory: it lasts for the run and is not persisted, so a restart
+re-confirms.
+
+A step only has a name when running the plain command is the whole story. A loop,
+`if`/`case`, a group or subshell, a bare redirection, a file write (`>`, `>>`,
+`&>`), a heredoc or here-string, and an embedded `$(…)`/`<(…)` have no name, so
+`trusted_cmds` never covers them: they always ask (with no "trust from now on"
+option, since there is nothing to scope the grant to). Add `ls` and `ls -la` runs;
+`ls > f` and `for …; do ls; done` still ask.
+
+Navigation builtins (`cd`, `pushd`, `popd`) are exempt: they run no external
+code, so they are never offered for trust and never prompt on their own.
+`cd /tmp/p && ls` asks only about `ls`, while `cd /x && echo y > f` still asks —
+the write has no name to trust.
+
+To silence every prompt for a run of work, the browser workspace has a **Trust
+all** switch in the composer: while it is on, no confirmation card appears — every
+command and file change just runs. It applies to that session only, lasts as long
+as the `pai serve` process (it is never written to config), and turning it off
+brings the prompts straight back.
+
+## Trusted paths (file tools)
+
+By default every `edit` and `write` asks for approval. List the directories you
+work in and changes under them apply straight away — the diff is still shown, so
+the change stays visible, but you aren't asked each time:
+```toml
+[tool]
+trusted_paths = ["~/work/myproject"]
+```
+Paths are resolved (symlinks included) before matching, so a `..` or a symlink
+cannot escape a trusted directory. An empty list (the default) confirms
+everything; `~` expands, and a relative path resolves against the working
+directory. Prefer an absolute path — `["."]` trusts wherever you happen to run
+pai, which is rarely what you want.
+
+When a change is outside those paths, the prompt offers the same trust choices as
+a command (in the terminal `s`/`a`, in the browser **Trust session**/**Always**):
+trust the file's directory for this run, or from now on (added to
+`trusted_paths`). Trusting the filesystem root for every session is refused.
+
+This covers the file tools only. Shell commands are still governed by
+`trusted_cmds`, so an untrusted `sed -i`/`tee` still prompts even inside a
+trusted path.
+
+Reads are not confirmed by default. Set `confirm_read = true` to also require
+approval before a file *outside* `trusted_paths` is read — the one place where
+content could leave your workspace without a prompt.

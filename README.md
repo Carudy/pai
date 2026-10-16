@@ -290,227 +290,30 @@ routing id that gateway requires; a header you set with the same name wins.
 ### Extending a role
 
 Append your own instructions to any role's intro with
-`~/.config/pai/role-extra.toml`:
+`~/.config/pai/role-extra.toml` — the text is added under a `[User:]` marker and
+never replaces the intro, changes the response format, or redefines the tools.
+The old `prompts.toml` was renamed to `role-extra.toml` and is always appended.
 
-```toml
-[devops]
-text = """
-You are a senior SRE. Always explain why before running commands.
-"""
-```
-
-The text is appended to the role's *intro* under a `[User:]` marker — it never
-replaces the intro, and it cannot change the response format, which is fixed by
-the app. To change more than that (a different intro or tool set), define a
-custom role instead; see the Roles section below.
-
-> **Renamed:** `~/.config/pai/prompts.toml` (with `prompt`/`additional`) is no
-> longer read. Move its text to `role-extra.toml` — it is now always appended.
-
-#### On-demand guides (a poor-man's "skills")
-
-`text` is loaded on every request, so keep it short and let it *point* at detail
-only when it is needed. The cheapest on-demand guide is to name a file in the
-role intro and let the model `read` it when relevant:
-
-```toml
-[devops]
-text = """
-Before triaging a Kubernetes incident, read docs/guides/k8s-triage.md.
-"""
-```
-
-The pointer is always present; the guide's body enters the context only when the
-model reads it. Reads still follow the usual path-trust rules.
+See [`internal/prompts/README.md`](internal/prompts/README.md) for the full
+walkthrough, custom roles, and on-demand guides.
 
 ## 📖 Roles
 
 A role is data: an intro (its system prompt) plus the set of tools it may use.
-There is a single agent loop — roles differ only by prompt and tool set.
+There is a single agent loop — roles differ only by prompt and tool set. Three
+roles ship built in, each a file under `internal/prompts/roles/`:
 
-### `devops` — DevOps (default)
-Autonomous reason→act→observe loop for multi-step sysadmin tasks. Tools:
-- **execute** — Run local shell commands (an optional `dir` runs one in another directory, no `cd … && …` needed)
-- **remote** — Run commands on remote servers via SSH
-- **read** — Read a text file (numbered, bounded) instead of `cat`
-- **edit** — Replace exact text in a file, with a diff to approve
-- **write** — Create a new file (never overwrites) without a shell here-doc
-- **websearch** — Search the web for current information (config `tavily_api_key` or `TAVILY_API_KEY` env)
+| Role | Purpose |
+|---|---|
+| `devops` | DevOps (default) — multi-step sysadmin tasks, local and remote shell |
+| `coder` | Software engineering in the current repository |
+| `latex` | Scientific writing and LaTeX, with keyless academic paper search |
 
-
-```bash
-pai "deploy my app to staging"
-pai -i                        # Interactive: keep loop alive for follow-ups
-```
-
-#### Remote Host Management
-Configure hosts in `~/.ssh/config` as usual:
-```bash
-pai "check nginx status on myserver"
-# Connections are cached via SSH ControlMaster — no re-auth between commands.
-```
-
-ssh runs the command through the remote login shell non-interactively, so
-profile files aren't sourced and the remote `PATH`/env may be missing. This is
-common with **nix** and asdf, which set `PATH` from `/etc/profile` (a file fish,
-for example, never reads — hence `fish: Unknown command: netbird`). Point pai at
-a *login* POSIX shell and it wraps each command accordingly:
-```bash
-pai config set remote_shell bash   # → bash -lc '<cmd>'
-```
-A bare name gets `-lc` appended; set a value containing a space (e.g.
-`"bash -lc"`) to use it verbatim as the prefix.
-
-Leave `remote_shell` empty (the default) to keep plain ssh behaviour. Only set a
-shell that exists on the remote host.
-
-#### Web Search
-The role automatically searches when it encounters unfamiliar terms or needs current info:
-```bash
-export TAVILY_API_KEY="your-key"
-pai "what's the latest Kubernetes CVE and how do I patch it"
-```
-
-### `coder` — Software engineering
-Helps read, write, refactor, and test code in the current repository. Tools:
-- **execute** — Inspect and modify the repo, run builds and tests
-- **read** — Read a file region with line numbers (preferred over `cat`)
-- **edit** — Replace exact text in a file, reviewed as a diff before it is written
-- **write** — Create a new file from data, not a shell here-doc (never overwrites)
-- **websearch** — Look up libraries, APIs, and error messages
-
-It deliberately has no **remote** tool: a role's tool list is its capability
-boundary, not just a prompt hint.
-
-It also folds the repository's own instructions into its system prompt: if
-`AGENTS.md` exists in the working directory or any parent, its
-contents are appended as *project instructions* — subordinate to the role rules
-and to the response format. See `context_files` under Custom roles.
-
-```bash
-pai -r coder "why does the build fail, and fix it"
-```
-
-### `latex` — Scientific writing and LaTeX
-
-Drafts, polishes, restructures, and debugs manuscripts while preserving scientific
-meaning, equations, labels, citation keys, and existing project conventions.
-Tools: **read**, **edit**, **write**, **execute**, **websearch**, **papersearch**;
-no remote execution. It reads project instructions from `AGENTS.md`.
-
-```bash
-pai -r latex "polish the introduction without changing the scientific claims"
-pai -r latex "fix undefined citations using the project's existing build"
-```
-
-The role distinguishes verified bibliography metadata from missing information,
-never invents evidence, and does not equate abstracts with full-text reading.
-Builds follow the project's engine/tooling and run non-interactively. Missing TeX
-tools and pre-existing warnings are reported, not hidden; successful compilation
-is not a visual PDF check. Shell escape requires explicit user authorization.
-
-A local `~/.config/pai/roles/latex.toml` **overrides** this built-in role, including
-its tool list. Keep it for customization; to use the built-in role instead, move
-it out of the roles directory or rename it without the `.toml` extension.
-
-### Paper Search
-
-The `coder` and `latex` roles can discover academic papers without a search API
-key; `devops` deliberately does not include this tool:
-
-```bash
-pai -r latex "find recent arXiv papers about retrieval augmented generation evaluation"
-pai -r coder "find Crossref papers on distributed consensus and cite their DOIs"
-pai config set papersearch_source crossref  # default when the model omits source
-pai config set papersearch_email you@example.org  # optional Crossref polite pool
-pai config set context.paper_limit 16384   # bytes of formatted paper results
-```
-
-`papersearch` takes an object, unlike `websearch`'s string query:
-
-```json
-{"source":"arxiv","query":"\"decision tree\" homomorphic","limit":5,"year_from":2023,"sort":"relevance","match":"any","offset":0}
-```
-
-- **Sources:** arXiv is strongest for CS/math/physics preprints; Crossref searches
-  DOI/bibliographic metadata across disciplines, but abstracts are often absent.
-  One provider is queried per call; neither is a comprehensive scholarly index.
-- **Options:** `source` is optional (default `arxiv`, configurable); `query` is
-  required plain-text keywords, not provider syntax. `limit` defaults to 5
-  (maximum 20), `year_from`/`year_to` are inclusive, and `sort` is `relevance`
-  or `newest`. arXiv dates refer to first submission; Crossref dates refer to
-  publication. `offset` (0-based) walks a result set.
-- **Matching:** searching is lexical, so include your own variants and wrap exact
-  phrases in `"double quotes"`. Any provider operators or field prefixes you
-  write (`AND`, `ti:`) are treated as literal words. `match` defaults to all-of,
-  which **falls back to relevance-ranked any-of only when the strict query matches
-  nothing**; set `match:"any"` to search any-of keywords directly, or
-  `match:"all"` to require every keyword and accept an empty result. Crossref
-  always relevance-ranks any-of keywords, so `match:"all"` is refused there.
-- **Diagnostics:** every result header reports the query actually sent, the match
-  mode used, the provider's candidate count, the year filter, the sort, and the
-  next offset. That separates a genuinely empty result from a too-narrow or
-  misdirected query, so a repeat search can change something real. Crossref
-  records also show that provider's relevance score (not comparable across sources).
-- **Output:** original titles, authors, dates, identifiers, URLs, and available
-  abstracts—not an extra AI summary. Abstracts are capped at 2,000 characters
-  with a truncation marker. The separate 16,384-byte default budget omits whole
-  records with a notice rather than severing their identifiers. Full-text/PDF
-  reading, file downloads, cross-source merge, and citation-graph traversal are
-  not implemented.
-- **Network/privacy:** the explicit query goes to the selected public API;
-  an optional contact email goes only to Crossref. No local files are included.
-  Tool observations may be retained in persisted sessions. Keyless does not
-  mean unlimited: requests share process-wide throttles (arXiv: one connection,
-  starts at least three seconds apart; Crossref: one start per second), a
-  45-second deadline, and one bounded retry for HTTP 429/503. An arXiv all-of
-  query that matches nothing costs one extra request (the any-of fallback), and
-  both count against the same throttle. Separate PAI processes do not share these
-  throttles; coordinate them when using arXiv.
-- **Evidence:** metadata/abstracts are untrusted source material, not instructions;
-  missing abstracts are explicit. Preprints, DOIs, and publication types do not
-  establish peer review or paper quality. The tool does not claim full-text access.
-
-User role overrides must add `"papersearch"` to their `tools` list to enable it.
-The existing Tavily-backed `websearch` remains unchanged.
-
-
-### Custom roles
-
-Roles are data, so you can add your own without rebuilding. Drop a file at
-`~/.config/pai/roles/<name>.toml`:
-
-```toml
-name        = "writer"
-description = "Technical writing assistant"
-
-tools = ["execute", "websearch"]
-
-intro = '''
-You are a technical writer. Help draft, edit, and tighten prose.
-Read whichever files you need with the execute tool before rewriting anything.
-'''
-```
-
-Then run it with `pai -r writer`. A user role with the same name as a built-in
-one **overrides** it — handy for retuning `devops` without editing the source.
-
-`tools` may only reference built-in tools (`execute`, `remote`, `websearch`,
-`papersearch`, `read`, `edit`, `write`): tool *implementations* live in Go, so new tools require
-code — new roles do not.
-
-`context_files` folds project instruction files into the system prompt, searched
-upwards from the working directory (nearest match wins) and capped at 8 KiB:
-
-```toml
-context_files = ["AGENTS.md", "CLAUDE.md"]
-```
-
-PAI prints a one-line notice whenever it uses one, so repository content
-influencing the model is never silent.
-
-See [examples/](examples/) for detailed walkthroughs, and
-[Trust and approvals](#-trust-and-approvals) for how tool calls are confirmed.
+A user role at `~/.config/pai/roles/<name>.toml` adds or overrides a role without a
+rebuild. See [`internal/role/README.md`](internal/role/README.md) for the full role
+catalogue (tool lists, remote-host management, paper search) and
+[`internal/prompts/README.md`](internal/prompts/README.md) for how definitions are
+resolved and parsed.
 
 ## 🔐 Trust and approvals
 
@@ -518,110 +321,34 @@ Tools that change things ask first. The terminal prompt and the browser approval
 card offer the same choices; what is auto-approved is controlled by the lists below.
 
 ### Trusted commands
-Commands matching the `trusted_cmds` list skip confirmation:
-```toml
-[tool]
-trusted_cmds = ["ls", "cat", "grep", "pwd", "which", "df", "ps", "head", "tail"]
-```
 
-A chain (`aa && bb`) is confirmed as a whole, but the printed list marks only the
-parts that are *not* trusted (`⚠`), and the header counts them (`3 commands (2
-need approval):`). The prompt offers more than yes/no:
+Commands whose first word matches the `trusted_cmds` list skip confirmation;
+everything else prompts, and the confirmation offers run-once, skip, trust this
+run, or trust from now on. Trust is by command *name*, so a construct, a file
+write, a heredoc, or an embedded `$(…)` is never covered and always asks.
 
-| Key | Does |
-|---|---|
-| `y` | run this once |
-| `n` | skip |
-| `s` | run, and trust the flagged commands for this run |
-| `a` | run, and trust them from now on (written to `trusted_cmds`) |
-| `Ctrl+C` | abort |
-
-Trust is by command **name** (the first word), so `a` on `sudo rm -rf /x` would
-trust `sudo`. To blunt that, `a` is silently downgraded to "this session" for
-interpreters and wrappers (`sudo`, `sh`, `bash`, `env`, `xargs`, …). Session
-trust is in-memory: it lasts for the run and is not persisted, so a restart
-re-confirms.
-
-A step only has a name when running the plain command is the whole story. A loop,
-`if`/`case`, a group or subshell, a bare redirection, a file write (`>`, `>>`,
-`&>`), a heredoc or here-string, and an embedded `$(…)`/`<(…)` have no name, so
-`trusted_cmds` never covers them: they always ask (with no "trust from now on"
-option, since there is nothing to scope the grant to). Add `ls` and `ls -la` runs;
-`ls > f` and `for …; do ls; done` still ask.
-
-Navigation builtins (`cd`, `pushd`, `popd`) are exempt: they run no external
-code, so they are never offered for trust and never prompt on their own.
-`cd /tmp/p && ls` asks only about `ls`, while `cd /x && echo y > f` still asks —
-the write has no name to trust.
-
-To silence every prompt for a run of work, the browser workspace has a **Trust
-all** switch in the composer: while it is on, no confirmation card appears — every
-command and file change just runs. It applies to that session only, lasts as long
-as the `pai serve` process (it is never written to config), and turning it off
-brings the prompts straight back.
+See [`internal/tool/README.md`](internal/tool/README.md) for the trust rules, the
+confirmation keys, and the browser's per-session **Trust all** switch.
 
 ### Trusted paths (file tools)
-By default every `edit` and `write` asks for approval. List the directories you
-work in and changes under them apply straight away — the diff is still shown, so
-the change stays visible, but you aren't asked each time:
-```toml
-[tool]
-trusted_paths = ["~/work/myproject"]
-```
-Paths are resolved (symlinks included) before matching, so a `..` or a symlink
-cannot escape a trusted directory. An empty list (the default) confirms
-everything; `~` expands, and a relative path resolves against the working
-directory. Prefer an absolute path — `["."]` trusts wherever you happen to run
-pai, which is rarely what you want.
 
-When a change is outside those paths, the prompt offers the same trust choices as
-a command (in the terminal `s`/`a`, in the browser **Trust session**/**Always**):
-trust the file's directory for this run, or from now on (added to
-`trusted_paths`). Trusting the filesystem root for every session is refused.
+By default every `edit` and `write` asks for approval; list directories in
+`trusted_paths` to let changes under them apply straight away (the diff is still
+shown). Paths are resolved — symlinks included — so a `..` or symlink cannot
+escape a trusted directory, and an empty list confirms everything. Reads are not
+confirmed unless `confirm_read = true`.
 
-This covers the file tools only. Shell commands are still governed by
-`trusted_cmds`, so an untrusted `sed -i`/`tee` still prompts even inside a
-trusted path.
-
-Reads are not confirmed by default. Set `confirm_read = true` to also require
-approval before a file *outside* `trusted_paths` is read — the one place where
-content could leave your workspace without a prompt.
+See [`internal/tool/README.md`](internal/tool/README.md) for path-trust resolution
+and how it splits from command trust.
 
 ### Precise file operations
 
-`edit` supports several disjoint changes to **one file** in one reviewed call:
+`edit` accepts a batch of disjoint changes to one file, each matched against the
+original file and validated before anything is written; `read` and `write` stay
+bounded and create-only, with guarded atomic publication.
 
-```json
-{"path":"main.go","edits":[{"old_string":"first original block","new_string":"first replacement"},{"old_string":"second original block","new_string":"second replacement"}]}
-```
-
-- Each entry matches the **original file**, not earlier replacements. All entries
-  must validate before anything is written; overlapping ranges are rejected.
-  The original top-level `old_string`/`new_string`/`replace_all` shape still works,
-  but cannot be mixed with `edits`. Batches allow 1–50 edits and 10000 replacement
-  sites at most. Missing replacement fields are errors, not accidental deletions.
-- Matching is exact except for CRLF/LF representation. Untouched bytes and UTF-8
-  BOM are preserved; indentation and Unicode punctuation are not fuzzy-matched.
-  Previews show full affected lines with context, mark truncation, and are bounded.
-- After approval, edits recheck file/parent identity, contents, and permissions.
-  If changed, the model must read again and request a fresh edit. `write` remains
-  create-only, with atomic no-clobber publication even if a path appears during
-  approval. Failed operations do not grant directory trust.
-- `read` returns complete numbered lines up to 2000 lines or `context.exec_limit`
-  bytes (default 8000). Its continuation offset follows what was actually shown;
-  oversized first lines receive an actionable notice instead of partial text.
-  Total line counts appear only when known. Strip only the line number and tab
-  when copying text for an edit.
-- File tools handle regular UTF-8 text, not devices/directories or binary data.
-  Mutations are limited to 16 MiB and refuse final-path symlinks; explicitly edit
-  the real target instead. Parent directories must exist. Create-only publication
-  requires filesystem hard-link support and fails safely if unavailable.
-
-These checks protect against stale approvals and serialize PAI's own commits;
-they are not a filesystem sandbox or a portable lock against external writers.
-Atomic edits preserve permission bits, not inode identity, ownership, or extended
-attributes. See [file-tool design](internal/role/filetools.md) for the upstream
-comparison, exact contracts, and remaining limitations.
+See [`internal/role/README.md`](internal/role/README.md) for the batch shape and
+[file-tool contracts](internal/role/filetools.md) for exact limits and safety.
 
 ## 🧠 What gets sent to the model
 
@@ -651,34 +378,13 @@ subordinate to it.
 
 ### Keeping the context bounded
 
-Command output is shortened before it goes back to the model: the `[context]`
-section's `exec_limit` / `search_limit` cap the bytes, while `head_lines` /
-`tail_lines` decide how much of the head and tail survives. The tail is kept on
-purpose — errors, exit codes and summaries land at the end of command output.
+Command output is capped by the `[context]` byte and line budgets, and long
+conversations are compacted in two layers: deterministic, turn-windowed elision
+of old command output, then optional summarization — never dropping user input,
+replies, or the stored transcript.
 
-Long conversations are compacted in two layers. The first is deterministic:
-the last `keep_turns` **turns** are replayed verbatim — a turn is one user
-instruction plus everything the model does to answer it (each assistant reply and
-tool observation), so a long turn is never cut mid-task. Once the conversation
-exceeds `elide_after_turns` turns, older command output larger than
-`elide_min_bytes` is reduced to its header (label, command, exit status) with a
-visible marker, so the model knows it was omitted and can re-run the command if
-it needs the result.
-
-The second layer is optional and costs one extra model call: with
-`summarize_after_tokens` set, once the prompt exceeds that token budget the
-oldest turns are summarized into a single message and only the last `keep_turns`
-turns are kept verbatim. Summarization uses a plain call — no streaming, no
-reasoning, no JSON mode. Trigger it on demand in-session with `/compact`.
-
-In both layers user input, assistant replies and answers are never dropped, and
-the full transcript stays in the session store — compression only changes what
-is *replayed* to the model.
-
-A summary is also written to the session as a **checkpoint** (a `system` turn of
-kind `summary`). Attaching later replays that summary and only the turns after
-it, so a long session resumes without re-summarizing — while every original turn
-is still on disk (visible in `pai session show`).
+See [`internal/chat/README.md`](internal/chat/README.md) for the compaction rules
+and the session checkpoint.
 
 ## 💾 Sessions
 
@@ -708,15 +414,12 @@ Resuming prints a short recap of the last few exchanges so you have context
 
 ### Storage backend
 
-Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, or
-`~/.local/share/pai/`). Storage uses pure-Go SQLite (`modernc.org/sqlite`), so no
-C toolchain is involved and the release binaries stay cross-compilable.
-`make build` produces a stripped binary (~13 MB).
+Sessions live in the XDG data directory (`$XDG_DATA_HOME/pai/`, else
+`~/.local/share/pai/`) in a pure-Go SQLite store, so no C toolchain is needed and
+release binaries stay cross-compilable.
 
-SQLite is the only backend. Earlier releases could be built with `-tags filestore`
-to keep sessions as JSONL files instead; that build option is gone, so a
-`sessions/` directory of `.jsonl` files from such a build is left on disk but no
-longer read.
+See [`internal/session/README.md`](internal/session/README.md) for the store,
+locking, and backend details.
 
 ## 🌐 Browser / server mode
 
@@ -787,19 +490,13 @@ multi-tenant sandbox.
 
 ### Concurrency and workspaces
 
-The concurrency limit bounds live runtimes; idle runtimes can be evicted to
-make room. Full busy capacity rejects new work rather than growing an unbounded
-queue. Sessions execute in their persisted working directory, defaulting to the
-server's launch directory for new sessions. Directories must already exist and
-are normalized to absolute paths; they are not security sandboxes, and no request
-changes the process cwd. Use separate worktrees when concurrent tasks could
-modify the same files.
+The concurrency limit bounds live runtimes; idle ones can be evicted to make
+room, and full busy capacity rejects new work rather than queueing without bound.
+Sessions run in their persisted working directory (not a sandbox), and while
+serving PAI exclusively owns the session store.
 
-While serving, PAI exclusively owns the session store across processes. Other
-PAI processes cannot open that store until the server stops. Do not delete
-`sessions.lock` while PAI is running. Tasks survive browser disconnections,
-**not server restarts**; use a service manager such as systemd for hosting.
-Shutdown cancels active work and releases store ownership.
+See [`internal/runner/README.md`](internal/runner/README.md) for the residency and
+workspace rules.
 
 ### Activity log
 
@@ -815,11 +512,27 @@ logs for up to 250 ms; a blocked writer may lose the remaining logs.
 
 ### HTTP API
 
-Scripts and other clients can drive the same sessions over HTTP — create a saved
-session, send, steer, cancel, reply to approvals, switch role/model/workspace, rename,
-rewind, and stream events over SSE. Mutating requests require JSON, a same-origin
-`Origin` header, and the login cookie when authentication is enabled. The full
-endpoint and security contract is in [`internal/web/README.md`](internal/web/README.md).
+Scripts and other clients can drive the same sessions over HTTP — create, send,
+steer, cancel, reply to approvals, switch role/model/workspace, rename, rewind,
+and stream events over SSE. See [`internal/web/README.md`](internal/web/README.md)
+for the full endpoint and security contract.
+
+## 📚 Documentation map
+
+- [`internal/role/README.md`](internal/role/README.md) — the agent loop, its
+  runtime state, the built-in role catalogue, and precise file operations.
+- [`internal/prompts/README.md`](internal/prompts/README.md) — role/tool TOML
+  definitions, discovery, extending a role, and on-demand guides.
+- [`internal/tool/README.md`](internal/tool/README.md) — execution primitives,
+  command parsing, and the trusted-command / trusted-path rules.
+- [`internal/chat/README.md`](internal/chat/README.md) — the LLM conversation
+  protocol, prompt assembly, and context bounding.
+- [`internal/session/README.md`](internal/session/README.md) — durable session
+  storage, the SQLite backend, and store ownership.
+- [`internal/runner/README.md`](internal/runner/README.md) — bounded concurrent
+  runtimes, the integration contract, and workspace residency.
+- [`internal/web/README.md`](internal/web/README.md) — the browser UI and the full
+  HTTP/SSE API contract.
 
 ## 📄 License
 
