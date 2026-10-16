@@ -569,6 +569,30 @@ func TestModelsAPI(t *testing.T) {
 	}
 }
 
+// The composer's sudo switch is the same session grant a confirmation makes, for
+// one name at a time.
+func TestCommandTrustAPI(t *testing.T) {
+	h, m := setup(t, "")
+	if w := request(h, "POST", "/api/trust-cmd", `{"name":"one","cmd":"sudo","on":true}`, nil, "http://pai.test"); w.Code != 200 || !strings.Contains(w.Body.String(), `"trusted_cmds":["sudo"]`) {
+		t.Fatalf("grant: %d %s", w.Code, w.Body.String())
+	}
+	if got := m.CommandTrust("one"); len(got) != 1 || got[0] != "sudo" {
+		t.Fatalf("CommandTrust = %v, want [sudo]", got)
+	}
+	if w := request(h, "POST", "/api/trust-cmd", `{"name":"one","cmd":"sudo rm","on":true}`, nil, "http://pai.test"); w.Code != 400 {
+		t.Fatalf("a command line is not a name: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(h, "POST", "/api/trust-cmd", `{"name":"one","cmd":"sudo","on":false}`, nil, "http://pai.test"); w.Code != 200 {
+		t.Fatalf("revoke: %d %s", w.Code, w.Body.String())
+	}
+	if got := m.CommandTrust("one"); len(got) != 0 {
+		t.Fatalf("revoked still granted: %v", got)
+	}
+	if w := request(h, "GET", "/api/trust-cmd?name=one", "", nil, ""); w.Code != 405 {
+		t.Fatalf("GET: %d", w.Code)
+	}
+}
+
 func TestTrustAllAPI(t *testing.T) {
 	h, m := setup(t, "")
 	if w := request(h, "GET", "/api/trust-all?name=one", "", nil, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"trust_all":false`) {
@@ -620,7 +644,7 @@ func TestComposerControlsPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := string(data)
-	for _, want := range []string{`id="trust-all"`, `id="trust-all-hint"`, `id="apply-plan"`, `class="switch"`, `class="composer-trust"`} {
+	for _, want := range []string{`id="trust-all"`, `id="trust-sudo"`, `id="apply-plan"`, `class="switch"`, `class="composer-trust"`, `id="state-icon"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("composer markup missing %s", want)
 		}

@@ -92,6 +92,9 @@ func (w *worker) run() {
 		rt := &role.Runtime{WorkingDir: cwd, Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w, Interactive: true, SessionName: w.name}
 		w.m.mu.Lock()
 		w.rt = rt
+		// Seed the conversation's grants, so a command the user already trusted for
+		// this session does not ask again just because the runtime was retired.
+		rt.TrustedCmds = w.m.commandTrustLocked(w.name)
 		w.model = copyCfg.DefaultModel
 		w.workingDir = cwd
 		w.contextTokens = copyCfg.Context.SummarizeAfterTokens
@@ -120,6 +123,7 @@ func (w *worker) snapshotLocked() Snapshot {
 	s.Phase = w.phase
 	s.Reasoning = w.reasoning
 	s.TrustAll = w.m.trustAll[w.name]
+	s.TrustedCmds = w.m.commandTrustLocked(w.name)
 	s.Usage, s.TotalUsage, s.UsageCalls = w.usage, w.totalUsage, w.usageCalls
 	s.ContextTokens = w.contextTokens
 	if w.activeTool != nil {
@@ -261,7 +265,12 @@ func (w *worker) ConfirmCommand(title string, untrusted []string) (core.TrustCho
 	if err != nil {
 		return core.TrustDeny, err
 	}
-	return a.choice, nil
+	// The loop applies the choice to its own runtime, which any settings change
+	// retires; the answer was about this conversation, so record it here too.
+	if a.choice == core.TrustSession || a.choice == core.TrustPersist {
+		w.m.grantCommandTrust(w.name, untrusted)
+	}
+	return a.choice, err
 }
 
 // ConfirmPath implements core.PathConfirmer: a file confirmation that also offers

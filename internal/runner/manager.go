@@ -46,6 +46,12 @@ type Manager struct {
 	// worker, because the worker is recreated for each instruction while the
 	// setting must last for the session.
 	trustAll map[string]bool
+	// commandTrust is the per-session grant of command names the user allowed for
+	// this conversation: a "trust session" answer, or the composer's sudo switch. It
+	// lives here rather than on the runtime for the same reason as trustAll — the
+	// runtime is retired by any settings change, while the grant is about the
+	// conversation and should outlast that.
+	commandTrust map[string]map[string]bool
 	// reasoning is a per-session reasoning-effort override, in memory only. It
 	// lives here for the same reason as trustAll: it must outlast the worker
 	// recreated for each instruction.
@@ -160,6 +166,98 @@ func (m *Manager) CreateWithRole(name, cwd, role string) (Meta, error) {
 // in-memory only and never persisted, so a restart re-asks. Turning it on also
 // answers a confirmation that is already waiting, so the switch takes effect at
 // once rather than after the user also clicks the pending card.
+// SetCommandTrust grants or revokes one command name for a session. Trust is
+// name-based, so the name must be a bare command name: a path or a whole command
+// line would not mean what it looks like.
+func (m *Manager) SetCommandTrust(name, cmd string, on bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.ctx.Err() != nil {
+		return ErrClosed
+	}
+	if strings.TrimSpace(name) == "" {
+		return errors.New("session name is empty")
+	}
+	if !m.knownSessionLocked(name) {
+		return ErrNotFound
+	}
+	command, err := commandName(cmd)
+	if err != nil {
+		return err
+	}
+	if m.commandTrust == nil {
+		m.commandTrust = make(map[string]map[string]bool)
+	}
+	if on {
+		if m.commandTrust[name] == nil {
+			m.commandTrust[name] = make(map[string]bool)
+		}
+		m.commandTrust[name][command] = true
+	} else {
+		delete(m.commandTrust[name], command)
+	}
+	return nil
+}
+
+// CommandTrust returns the names granted for a session, sorted.
+func (m *Manager) CommandTrust(name string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return commandTrustNames(m.commandTrust[name])
+}
+
+// grantCommandTrust records what a confirmation answered, so that a grant the user
+// just made is not forgotten when the runtime that asked is retired.
+func (m *Manager) grantCommandTrust(name string, names []string) {
+	if len(names) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	if m.commandTrust == nil {
+		m.commandTrust = make(map[string]map[string]bool)
+	}
+	if m.commandTrust[name] == nil {
+		m.commandTrust[name] = make(map[string]bool)
+	}
+	for _, n := range names {
+		if command, err := commandName(n); err == nil {
+			m.commandTrust[name][command] = true
+		}
+	}
+}
+
+// commandTrustLocked is commandTrust for a caller already holding the lock.
+func (m *Manager) commandTrustLocked(name string) []string {
+	return commandTrustNames(m.commandTrust[name])
+}
+func commandTrustNames(set map[string]bool) []string {
+	names := make([]string, 0, len(set))
+	for n := range set {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// commandName validates a name for a session-scoped trust grant.
+func commandName(cmd string) (string, error) {
+	name := strings.TrimSpace(cmd)
+	if name == "" {
+		return "", errors.New("command name is empty")
+	}
+	if len(name) > 64 {
+		return "", errors.New("command name is too long")
+	}
+	if strings.ContainsAny(name, " \t\n/") {
+		return "", errors.New("command name must be a bare name, without spaces or a path")
+	}
+	return name, nil
+}
+
 func (m *Manager) SetTrustAll(name string, on bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

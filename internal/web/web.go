@@ -542,6 +542,27 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, http.StatusAccepted, map[string]bool{"ok": true})
+	case "/api/trust-cmd":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Name string `json:"name"`
+			Cmd  string `json:"cmd"`
+			On   bool   `json:"on"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+			fail(w, 400, "session name must contain 1–256 bytes")
+			return
+		}
+		if err := h.manager.SetCommandTrust(body.Name, body.Cmd, body.On); err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, map[string]any{"ok": true, "trusted_cmds": h.manager.CommandTrust(body.Name)})
 	case "/api/trust-all":
 		switch r.Method {
 		case http.MethodGet:

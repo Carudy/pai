@@ -677,6 +677,62 @@ func TestTrustAllResolvesPendingApproval(t *testing.T) {
 	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" && s.Pending == nil })
 }
 
+// A session grant is per name: trust is name-based, so a whole command line or a
+// path would not mean what it looks like.
+func TestSetCommandTrustScopesByName(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{}, 1)
+	defer m.Close()
+	if err := m.SetCommandTrust("one", "sudo", true); err != nil {
+		t.Fatalf("known session rejected: %v", err)
+	}
+	if got := m.CommandTrust("one"); len(got) != 1 || got[0] != "sudo" {
+		t.Fatalf("CommandTrust = %v, want [sudo]", got)
+	}
+	if err := m.SetCommandTrust("one", "sudo", false); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if got := m.CommandTrust("one"); len(got) != 0 {
+		t.Fatalf("revoked name still granted: %v", got)
+	}
+	for _, bad := range []string{"", "   ", "sudo rm -rf /", "/usr/bin/sudo", strings.Repeat("x", 65)} {
+		if err := m.SetCommandTrust("one", bad, true); err == nil {
+			t.Errorf("SetCommandTrust(%q) = nil, want an error", bad)
+		}
+	}
+	if err := m.SetCommandTrust("ghost", "sudo", true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown session = %v, want ErrNotFound", err)
+	}
+}
+
+// What a confirmation answered is remembered by the manager, so a grant the user
+// just made is not forgotten when the runtime that asked is retired.
+func TestConfirmationRemembersGrantedNames(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{}, 1)
+	defer m.Close()
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	w := m.entries["one"]
+	m.mu.Unlock()
+	if w == nil {
+		t.Fatal("worker not started")
+	}
+
+	done := make(chan core.TrustChoice, 1)
+	go func() { choice, _ := w.ConfirmCommand("Execute this command?", []string{"sudo", "rm"}); done <- choice }()
+	s := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
+	if err := m.Reply("one", s.Pending.ID, "", core.TrustSession); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-done; got != core.TrustSession {
+		t.Fatalf("choice = %v", got)
+	}
+	if got := m.CommandTrust("one"); len(got) != 2 || got[0] != "rm" || got[1] != "sudo" {
+		t.Fatalf("granted names = %v, want [rm sudo]", got)
+	}
+}
+
 func TestSetTrustAllValidatesName(t *testing.T) {
 	m := New(context.Background(), &fakeBackend{}, 1)
 	defer m.Close()

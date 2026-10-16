@@ -206,16 +206,20 @@ type Snapshot struct {
 	// ContextTokens is the configured compaction threshold: the last prompt size
 	// at which older turns get summarized. 0 means compaction is disabled, so a
 	// client should not render a context budget.
-	ContextTokens int            `json:"context_tokens,omitempty"`
-	Name          string         `json:"name"`
-	Model         string         `json:"model"`
-	State         string         `json:"state"` // starting, busy, awaiting, stopped
-	Phase         string         `json:"phase"`
-	ActiveTool    *core.ToolCall `json:"active_tool,omitempty"`
-	Queued        int            `json:"queued"`
-	Pending       *Prompt        `json:"pending,omitempty"`
-	Error         string         `json:"error,omitempty"`
-	Reasoning     string         `json:"reasoning,omitempty"`
+	ContextTokens int `json:"context_tokens,omitempty"`
+	// TrustedCmds is the per-session grant of command names approved for this
+	// conversation. The manager holds it, so it survives the runtime being retired;
+	// a client renders it as the state of its own trust switches.
+	TrustedCmds []string       `json:"trusted_cmds,omitempty"`
+	Name        string         `json:"name"`
+	Model       string         `json:"model"`
+	State       string         `json:"state"` // starting, busy, awaiting, stopped
+	Phase       string         `json:"phase"`
+	ActiveTool  *core.ToolCall `json:"active_tool,omitempty"`
+	Queued      int            `json:"queued"`
+	Pending     *Prompt        `json:"pending,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Reasoning   string         `json:"reasoning,omitempty"`
 	// TrustAll reports that every confirmation for this session is auto-approved
 	// without a prompt. It is a per-session, in-memory toggle the user sets
 	// explicitly; it is never persisted to config.
