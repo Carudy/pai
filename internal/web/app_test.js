@@ -310,6 +310,17 @@ assert.match(searchHistory.textContent, /private decision tree/, 'the query valu
 for (const label of ['source','query','sort','year from']) assert.match(searchHistory.textContent, new RegExp(label), 'papersearch field label ' + label);
 assert.ok(!descendants(searchHistory).some(n => n.tag === 'summary' && n.textContent === 'Raw details'), 'known payload fields are not dumped as raw JSON');
 
+// A read call shows its line window as one range, not separate offset/limit rows.
+const reader = browser();
+reader.run('renderTurns(' + JSON.stringify([
+  {Role:'assistant', Content:JSON.stringify({action:'tool', toolname:'read', payload:{path:'/a/b.go', offset:100, limit:150}})}
+]) + ')');
+const readText = reader.get('history').textContent;
+assert.match(readText, /\/a\/b\.go/, 'read shows the path');
+assert.match(readText, /Lines/, 'read labels the line window');
+assert.match(readText, /100:249/, 'read shows one inclusive line range');
+assert.ok(!/offset/.test(readText) && !/limit/.test(readText), 'read does not show offset/limit rows');
+
 // Optional test-only dependency, installed outside the repository. No build or
 // production dependency; do not count the minimal DOM above as sanitizer tests.
 if (process.env.PAI_WEB_JSDOM) {

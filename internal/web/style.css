@@ -727,10 +727,11 @@ header p {
     font-size: 13px;
     line-height: 1.75;
 }
-/* A turn's timestamp: a quiet footnote at the bottom of its card. */
+/* A turn's timestamp: a quiet footnote at the card's lower right. */
 .turn-time {
     display: block;
     margin-top: 10px;
+    text-align: right;
     font-size: 11px;
     color: var(--muted);
     opacity: 0.85;

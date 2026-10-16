@@ -468,15 +468,17 @@ function prose(value) {
   });
   return node;
 }
-// Bound parser work; oversized or unavailable-library replies remain literal.
-const markdownLimit = 100000;
+// A bounded-markdown budget. Replies longer than this skip the parser and
+// render as plain text, so a very long "done" answer never silently degrades
+// into an unrendered blob; the limit only bounds pathological parser work.
+const markdownLimit = 400000;
 function safeMarkdownURL(value) {
   if (!/^https?:\/\//i.test(value) || /[\s\u0000-\u001f\u007f-\u009f]/u.test(value)) return false;
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !!url.hostname; } catch { return false; }
 }
 function completeProse(value) {
   value = String(value);
-  const literal = () => text('div', value, 'prose');
+  const literal = () => prose(value);
   if (value.length > markdownLimit || !globalThis.marked?.parse || !globalThis.DOMPurify?.isSupported) return literal();
   try {
     // Disable raw HTML and images before parsing into a DOM, preventing even
@@ -504,6 +506,20 @@ function completeProse(value) {
   } catch { return literal(); }
 }
 const icons = {execute:'💻', remote:'🔐', read:'📖', write:'✍️', edit:'📝', websearch:'🔎', papersearch:'🧑‍🎓'};
+// A read call reports its line window on one line ("Lines 100:249") instead of a
+// separate offset and limit row, matching how a reader thinks about a range.
+function readPayload(node, value) {
+  if (value.path !== undefined) { node.append(text('div', 'path', 'field-label'), text('pre', String(value.path))); }
+  const hasOffset = value.offset !== undefined && value.offset !== null;
+  const hasLimit = value.limit !== undefined && value.limit !== null;
+  if (hasOffset || hasLimit) {
+    const start = hasOffset ? Math.max(1, Number(value.offset) || 1) : 1;
+    const range = hasLimit ? start + ':' + (start + Math.max(1, Number(value.limit) || 1) - 1) : start + ':\u2026';
+    node.append(text('div', 'Lines', 'field-label'), text('pre', range));
+  }
+  const extra = Object.fromEntries(Object.entries(value).filter(([key]) => !['path', 'offset', 'limit'].includes(key)));
+  if (Object.keys(extra).length) rawDetails(node, extra);
+}
 function payload(node, value, limit = Infinity) {
   if (typeof value === 'string') { node.append(text('pre', value.slice(0, limit))); return; }
   if (!value || typeof value !== 'object') { if (value !== undefined) node.append(prose(String(value))); return; }
@@ -530,7 +546,7 @@ function response(node, data) {
     const reason = completeProse(data.reason); reason.className += ' reason-text';
     node.append(text('div', 'Reason', 'field-label'), reason, text('hr', '', 'response-divider'));
   }
-  if (tool) { node.className += ' tool-card'; if (typeof data.payload === 'string') node.append(text('div', data.toolname === 'execute' ? 'CMD' : 'Query', 'field-label')); payload(node, data.payload); }
+  if (tool) { node.className += ' tool-card'; if (typeof data.payload === 'string') node.append(text('div', data.toolname === 'execute' ? 'CMD' : 'Query', 'field-label')); if (data.toolname === 'read' && data.payload && typeof data.payload === 'object' && !Array.isArray(data.payload)) readPayload(node, data.payload); else payload(node, data.payload); }
   else if (typeof data.payload === 'string') node.append(data.action === 'done' ? completeProse(data.payload) : prose(data.payload));
   else payload(node, data.payload);
   const extra = Object.fromEntries(Object.entries(data).filter(([key]) => !['action','toolname','reason','payload'].includes(key)));
