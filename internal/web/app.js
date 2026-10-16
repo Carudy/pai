@@ -523,8 +523,8 @@ function completeProse(value) {
   } catch { return literal(); }
 }
 const icons = {execute:'💻', remote:'🔐', read:'📖', write:'✍️', edit:'📝', websearch:'🔎', papersearch:'🧑‍🎓'};
-// A read call reports its line window on one line ("Lines 100:249") instead of a
-// separate offset and limit row, matching how a reader thinks about a range.
+// A read call reports its line window on the path ("main.go 100:249") rather than
+// as a separate offset and limit row, matching how a reader thinks about a range.
 function readPayload(node, value) {
   const hasOffset = value.offset !== undefined && value.offset !== null;
   const hasLimit = value.limit !== undefined && value.limit !== null;
@@ -587,7 +587,12 @@ function response(node, data) {
     node.append(text('div', 'Reason', 'field-label'), reason, text('hr', '', 'response-divider'));
   }
   if (tool) { node.className += ' tool-card'; if (typeof data.payload === 'string') node.append(text('div', data.toolname === 'execute' ? 'CMD' : 'Query', 'field-label')); if (data.toolname === 'read' && data.payload && typeof data.payload === 'object' && !Array.isArray(data.payload)) readPayload(node, data.payload); else if (['execute','remote'].includes(data.toolname) && typeof data.payload === 'string') node.append(commandList(data.payload)); else payload(node, data.payload); }
-  else if (typeof data.payload === 'string') node.append(data.action === 'done' ? completeProse(data.payload) : prose(data.payload));
+  // A tool payload is a command, so it is handled above; every other action's
+  // payload is the model talking to the reader — an answer, a question, or a stop
+  // notice — and gets the same sanitized Markdown renderer. Rendering only 'done'
+  // this way left an `ask` reply showing its raw "###" and "**" syntax, since an
+  // ask is a recorded reply like any other, not a special short form.
+  else if (typeof data.payload === 'string') node.append(completeProse(data.payload));
   else payload(node, data.payload);
   const extra = Object.fromEntries(Object.entries(data).filter(([key]) => !['action','toolname','reason','payload'].includes(key)));
   if (Object.keys(extra).length) rawDetails(node, extra);

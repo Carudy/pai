@@ -317,6 +317,19 @@ assert.equal(reasonNodes.length, 1);
 assert.match(reasonNodes[0].className, /\bmarkdown\b/, 'reason is rendered as Markdown');
 assert.equal(reasonNodes[0].textContent, 'sanitized');
 assert.ok(!descendants(reasonNodes[0]).some(n => n.tag === 'span'), 'no plain-text span fallback for a rendered reason');
+// Every non-tool action's payload is prose the reader reads, so all of them take
+// the Markdown renderer. An `ask` reply used to bypass it and show its raw "###"
+// and "**" while identical text in a `done` reply rendered.
+for (const action of ['done', 'ask', 'terminate']) {
+  wiring.run("$('history').replaceChildren(); renderTurns(" + JSON.stringify([{Role:'assistant', Content:JSON.stringify({action, payload:'## Heading\n\n**bold**'})}]) + ")");
+  const marked = descendants(wiring.get('history')).filter(n => n.className === 'markdown');
+  assert.equal(marked.length, 1, action + ' payload is rendered as Markdown');
+  assert.equal(marked[0].textContent, 'sanitized');
+  assert.ok(!descendants(wiring.get('history')).some(n => n.className === 'prose'), action + ' payload is not left as plain text');
+}
+// A tool payload is a command, not prose: it never becomes Markdown.
+wiring.run("$('history').replaceChildren(); renderTurns(" + JSON.stringify([{Role:'assistant', Content:JSON.stringify({action:'tool', toolname:'execute', payload:'echo **hi**'})}]) + ")");
+assert.ok(!descendants(wiring.get('history')).some(n => n.className === 'markdown'), 'a tool payload stays a command');
 wiring.run("DOMPurify.sanitize = () => { throw Error('failure'); }");
 assert.equal(wiring.run("completeProse('**bold**').textContent"), '**bold**');
 
@@ -467,8 +480,15 @@ if (process.env.PAI_WEB_JSDOM) {
   const dom = new JSDOM(fs.readFileSync(__dirname + '/index.html', 'utf8'), {runScripts:'outside-only', url:'https://pai.example'});
   const window = dom.window;
   for (const file of ['marked.min.js','purify.min.js']) window.eval(fs.readFileSync(__dirname + '/vendor/' + file, 'utf8'));
-  window.eval(source);
-  const render = value => window.eval('completeProse(' + JSON.stringify(value) + ')');
+  // app.js starts with 'use strict', and eval'd strict code keeps its declarations
+  // local: a bare window.eval(source) therefore leaves completeProse undefined and
+  // these tests unable to run. Evaluate it inside a function and hand the pieces
+  // back explicitly instead.
+  const exposed = ['completeProse', 'prose', 'safeMarkdownURL', 'renderTurns'];
+  window.eval('globalThis.__app = (function(){\n' + source + '\nreturn {' + exposed.join(', ') + '};})()');
+  const app = window.__app;
+  const render = value => app.completeProse(String(value));
+  assert.ok(app && typeof app.completeProse === 'function', 'app.js did not expose completeProse to the real DOM runner');
   const rendered = render('# Heading\n\n**bold** and `code`\n\n- one\n  - nested\n\n| A | B |\n| - | - |\n| c | d |\n\n[site](https://example.com)');
   for (const tag of ['h1','strong','code','ul ul','table','a']) assert.ok(rendered.querySelector(tag), tag);
   assert.equal(rendered.querySelector('a').rel, 'noopener noreferrer');
@@ -478,6 +498,13 @@ if (process.env.PAI_WEB_JSDOM) {
   assert.equal(hostile.querySelector('a[href]'), null);
   assert.match(hostile.textContent, /<script>/);
   assert.match(render('![alt](https://example.com/image)').textContent, /alt/);
+  // The reported bug, end to end in a real DOM: an `ask` reply is prose like any
+  // other, so its Markdown must render instead of printing its raw syntax.
+  app.renderTurns([{Role:'assistant', Kind:'output', Content:JSON.stringify({action:'ask', payload:'## Question\n\n**must** read this:\n\n- one\n- two'})}]);
+  const askCard = window.document.getElementById('history');
+  assert.ok(askCard.querySelector('h2') && askCard.querySelector('strong'), 'an ask reply renders its Markdown');
+  assert.equal(askCard.querySelectorAll('li').length, 2, 'its list renders as list items');
+  assert.ok(!askCard.textContent.includes('##') && !askCard.textContent.includes('**'), 'no raw Markdown syntax remains');
   dom.window.close();
   console.log('real DOM markdown/sanitizer tests passed');
 } else console.log('SKIP real DOM sanitizer tests (set PAI_WEB_JSDOM to an external jsdom module path)');
