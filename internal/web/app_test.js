@@ -103,8 +103,11 @@ progress.tick(2000);
 progress.run("activity({type:'tool_result',data:{OK:true}})");
 assert.equal(progress.get('run-elapsed').textContent, '0s (this browser)');
 progress.run("snapshot({state:'busy',queued:0,pending:{id:'p',kind:'confirm'}}); activity({type:'tool_call',data:{Name:'execute'}})");
-assert.equal(progress.get('run-progress').hidden, true, 'a waiting prompt has no clock, and the status line already names it');
+assert.equal(progress.get('run-progress').hidden, false, 'the status box stays put while a prompt waits');
+assert.equal(progress.get('run-progress').firstElementChild.hidden, true, 'but the spinner stops: the reader is what it waits on');
+assert.equal(progress.get('run-elapsed').textContent, '', 'and the clock goes blank rather than repeating the status line');
 assert.equal(progress.get('state').textContent, 'Waiting for approval');
+assert.equal(progress.get('state-icon').textContent, '🙋', 'a waiting prompt gets its own glyph');
 assert.equal(progress.timers(), 0);
 for (const state of ['awaiting','idle','stopped']) {
   progress.run("snapshot({state:'busy',queued:0}); snapshot({state:" + JSON.stringify(state) + ",queued:0})");
@@ -144,7 +147,9 @@ const waiting = browser();
 waiting.run("snapshot({state:'busy',queued:0,pending:{id:'answer',kind:'ask'}})");
 waiting.tick(5000);
 waiting.run("snapshot({state:'busy',queued:0,pending:{id:'answer',kind:'ask'}})");
-assert.equal(waiting.get('run-progress').hidden, true, 'a waiting prompt has no clock');
+assert.equal(waiting.get('run-progress').hidden, false, 'the status box does not blink off on a prompt');
+assert.equal(waiting.get('run-progress').firstElementChild.hidden, true, 'and does not spin while it waits on the reader');
+assert.equal(waiting.get('run-elapsed').textContent, '', 'and the clock holds still');
 assert.equal(waiting.get('state').textContent, 'Waiting for answer');
 assert.equal(waiting.timers(), 0);
 
@@ -172,10 +177,20 @@ for (const name of ['execute','remote','read','write','edit','websearch','custom
 }
 for (const [kind, label] of [['confirm','Waiting for approval'],['ask','Waiting for answer']]) {
   phases.run(`snapshot({state:'busy',phase:'tool',queued:2,pending:{id:${JSON.stringify(kind)},kind:${JSON.stringify(kind)}}})`);
-  assert.equal(phases.get('run-progress').hidden, true, 'no clock while a prompt waits');
+  assert.equal(phases.get('run-progress').hidden, false, 'a prompt does not hide the box');
   assert.equal(phases.get('state').textContent, label + ' · 2 queued');
+  assert.equal(phases.get('state-icon').textContent, kind === 'confirm' ? '🙋' : '❓');
   assert.equal(phases.timers(), 0);
 }
+// One glyph per phase, and the spinner only where the machine is the one busy: a
+// still glyph while the reader is what the run waits on.
+for (const [phase, icon, spin] of [['waiting_model','⏳',true],['reasoning','🤔',false],['tool','🔧',false],['compacting','🗜',false],['awaiting','💤',false]]) {
+  phases.run(`snapshot({state:'busy',phase:${JSON.stringify(phase)},queued:0})`);
+  assert.equal(phases.get('state-icon').textContent, icon, phase + ' has its own glyph');
+  assert.equal(phases.get('state-icon').className.includes('busy-indicator'), spin, phase + ' spins only when the machine works');
+}
+phases.run("snapshot({state:'busy',queued:0,pending:{id:'c',kind:'confirm'}})");
+assert.equal(phases.get('state-icon').className.includes('busy-indicator'), false, 'a prompt never spins');
 for (const phase of ['awaiting','stopped']) {
   phases.run(`snapshot({state:'busy',phase:${JSON.stringify(phase)},queued:0})`);
   assert.equal(phases.timers(), 0);
@@ -481,6 +496,21 @@ assert.equal(inspector.get('show-context').checked, false);
 
 // Optional test-only dependency, installed outside the repository. No build or
 // production dependency; do not count the minimal DOM above as sanitizer tests.
+// A command's output streams into the live log as it arrives instead of waiting for
+// the next history refresh, which may never come while the tool is still running:
+// tool_output events do not schedule one, precisely because each refresh refetches.
+const live = browser();
+live.run("selected='one'; liveSteps=[]; currentStep=null; $('history').replaceChildren(); paintConversation = () => {}");
+live.run("activity({type:'tool_call',data:{Name:'execute',Target:'bash',Detail:'sleep 5'}})");
+assert.equal(live.run('currentStep.output'), '', 'a step starts with an empty log');
+assert.equal(live.run('typeof currentStep.log'), 'undefined', 'and no log node until a paint creates it');
+live.run("currentStep.log = text('pre'); "
+  + "activity({type:'tool_output',data:'line1\\n'}); activity({type:'tool_output',data:'line2\\n'})");
+assert.equal(live.run('currentStep.output'), 'line1\nline2\n');
+assert.equal(live.run('currentStep.log.textContent'), 'line1\nline2\n', 'chunks stream into the log node as they arrive');
+live.run("currentStep.log = null; activity({type:'tool_output',data:'late'})");
+assert.equal(live.run('currentStep.output'), 'line1\nline2\nlate', 'a chunk without a node is still recorded');
+
 // The settings grid collapses to give the conversation its height back, and the
 // choice is a preference of this browser, like the theme. The event wiring is
 // outside the harness's source, so the toggle is driven as its handler calls it.
@@ -1071,6 +1101,22 @@ async function verifyComposer() {
   assert.equal(p.get('trust-all').checked, true, 'snapshot mirrors trust_all');
   p.run("snapshot({state:'awaiting',queued:0,trust_all:false})");
   assert.equal(p.get('trust-all').checked, false, 'snapshot clears trust_all');
+
+  // The sudo switch is the same kind of grant, for one command name only, and the
+  // snapshot is its source of truth too.
+  assert.equal(p.get('trust-sudo').disabled, false, 'the sudo switch needs only a session');
+  p.run("snapshot({state:'awaiting',queued:0,trusted_cmds:['sudo']})");
+  assert.equal(p.get('trust-sudo').checked, true, 'snapshot mirrors the session grants');
+  p.run("snapshot({state:'awaiting',queued:0,trusted_cmds:['pip']})");
+  assert.equal(p.get('trust-sudo').checked, false, 'another granted name is not sudo');
+  const sudo = browser();
+  sudo.run(`selected='one'; globalThis.calls=[];
+    api=async(path,body)=>{calls.push([path,body]); return {};};`);
+  await sudo.run("setCommandTrust('sudo', true)");
+  assert.equal(sudo.run('JSON.stringify(calls[0])'), '["trust-cmd",{"name":"one","cmd":"sudo","on":true}]');
+  assert.equal(sudo.get('trust-sudo').checked, true, 'switch reflects the accepted state');
+  sudo.run("selected=''; trustAllControls()");
+  assert.equal(sudo.get('trust-sudo').disabled, true, 'and needs a session');
 
   // Apply plan sends a canned instruction and leaves the draft alone.
   const auto = browser();

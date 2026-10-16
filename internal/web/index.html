@@ -84,6 +84,7 @@
                         <h2 id="title">Select or create a session</h2>
                         <button id="rename-session" type="button" title="Rename this session" hidden>✎ Rename</button>
                         <div class="status-row">
+                            <span id="state-icon" class="status-icon" aria-hidden="true"></span>
                             <p id="state" aria-live="polite">Ready when you are</p>
                             <div class="run-progress-slot">
                                 <div id="run-progress" role="status" hidden>
@@ -174,20 +175,34 @@
                     <form id="composer">
                         <div class="composer-row">
                             <div class="composer-trust">
-                                <label class="switch" for="trust-all">
+                                <label
+                                    class="switch"
+                                    for="trust-all"
+                                    title="Approve every command and file change for this session, without asking"
+                                >
                                     <input
                                         id="trust-all"
                                         type="checkbox"
                                         role="switch"
-                                        aria-describedby="trust-all-hint"
                                         disabled
                                     />
                                     <span class="switch-track" aria-hidden="true"></span>
                                     <span class="switch-text">Trust all</span>
                                 </label>
-                                <span id="trust-all-hint" class="trust-hint">
-                                    ⚠︎ approves every command and file change for this session
-                                </span>
+                                <label
+                                    class="switch"
+                                    for="trust-sudo"
+                                    title="Let this session run sudo without asking; sudo itself still decides whether a password is needed"
+                                >
+                                    <input
+                                        id="trust-sudo"
+                                        type="checkbox"
+                                        role="switch"
+                                        disabled
+                                    />
+                                    <span class="switch-track" aria-hidden="true"></span>
+                                    <span class="switch-text">Allow sudo</span>
+                                </label>
                             </div>
                             <div class="composer-input">
                                 <label for="message">Instruction</label

@@ -24,6 +24,7 @@ const SESSION_KEY = 'pai.session';
 // plain sentence: the model reads it like any other user turn.
 const AUTO_REPLY = 'Apply your plan.';
 let trustAllApplying = false;
+let commandTrustApplying = false;
 let toastHost = null;
 let savedRole = '', roleDirty = false;
 let savedCwd = '', cwdDirty = false, cwdApplying = false;
@@ -156,15 +157,24 @@ function stopRunProgress() {
   runTimer = null; runState = ''; runLabel = ''; runStarted = 0;
   $('run-progress').hidden = true; $('run-elapsed').textContent = ''; $('run-progress').title = '';
 }
-function runPhase(label, reset = false) {
+function runPhase(label, reset = false, spin = true) {
   if (runTimer === null || reset || label !== runLabel) runStarted = Date.now();
   runLabel = label;
   $('run-progress').hidden = false;
-  $('run-progress').firstElementChild.hidden = false;
+  $('run-progress').firstElementChild.hidden = !spin;
   paintRunProgress();
   if (runTimer === null) runTimer = setInterval(paintRunProgress, 1000);
 }
 function statusText(value) { return String(value || '').replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim(); }
+// One emoji per phase, at the head of the status line. The spinner keeps its own
+// job — it says the machine is working — so the generic model waits spin, while a
+// phase that is waiting on the reader (a prompt, a question) shows a still glyph.
+const phaseIcons = {starting:'⏳', waiting_model:'⏳', reasoning:'🤔', tool:'🔧', compacting:'🗜', waiting_approval:'🙋', waiting_question:'❓', awaiting:'💤', stopped:'⛔'};
+const spinningPhases = new Set(['starting', 'waiting_model']);
+function statusIcon(s) {
+  if (s.pending) return s.pending.kind === 'confirm' ? '🙋' : '❓';
+  return phaseIcons[s.phase || s.state] || '✨';
+}
 function phaseLabel(s) {
   if (s.pending) return s.pending.kind === 'confirm' ? 'Waiting for approval' : 'Waiting for answer';
   if (s.phase === 'tool' && s.active_tool) {
@@ -175,10 +185,14 @@ function phaseLabel(s) {
 }
 function runSnapshot(s) {
   if (s.pending) {
-    // A waiting prompt is the status line's job ("Waiting for approval · 2
-    // queued"), and there is no clock to measure while nothing runs, so the chip
-    // goes away rather than printing the same words a second time.
-    stopRunProgress();
+    // Keep the box where it is, still and blank: the reader is what the run waits on
+    // now, so a ticking clock would measure the wrong thing — but hiding the box
+    // outright made it blink in and out around every prompt.
+    if (runTimer !== null) clearInterval(runTimer);
+    runTimer = null; runLabel = '';
+    $('run-progress').hidden = false;
+    $('run-progress').firstElementChild.hidden = true;
+    $('run-elapsed').textContent = '';
     return;
   }
   if (!['busy','starting'].includes(s.state) || ['awaiting','stopped'].includes(s.phase)) { stopRunProgress(); return; }
@@ -219,9 +233,12 @@ function jumpToBottom() {
   updateJumpButtons();
 }
 function logDetails(node, title, value, open = false) {
-  if (!value) return;
+  if (!value) return null;
   const details = text('details', '', 'tool-log'); details.open = open;
   details.append(text('summary', title), text('pre', value)); node.append(details);
+  // The body is returned so a live step can keep writing into it as output
+  // arrives, instead of waiting for the whole conversation to be repainted.
+  return details.lastElementChild;
 }
 function parsedResponse(content) {
   try { const value = JSON.parse(content); if (value && typeof value.action === 'string') return value; } catch (_) {}
@@ -438,6 +455,7 @@ function controls() {
 // on, no confirmation card appears — every command and file change just runs.
 function trustAllControls() {
   $('trust-all').disabled = !selected || trustAllApplying;
+  $('trust-sudo').disabled = !selected || commandTrustApplying;
 }
 async function loadTrustAll() {
   const version = generation, name = selected;
@@ -447,6 +465,22 @@ async function loadTrustAll() {
     if (version !== generation || selected !== name) return;
     $('trust-all').checked = !!data.trust_all;
   } catch (e) { if (version === generation && selected === name) $('trust-all').checked = false; }
+}
+// A session-scoped grant of one command name, held by the server so it outlives the
+// runtime (which any settings change retires). This is the same grant the
+// confirmation's "Trust session" makes, offered up front, because a passwordless
+// sudo user knows a whole task will need it. It grants only the name: sudo still has
+// to run, and PAI still asks about every other command.
+async function setCommandTrust(cmd, on) {
+  if (!selected) { $('trust-sudo').checked = false; return; }
+  const name = selected;
+  commandTrustApplying = true; trustAllControls();
+  try {
+    await api('trust-cmd', {name, cmd, on});
+    if (selected === name) $('trust-sudo').checked = on;
+    if (on) toast('Allowing ' + cmd + ' in this session');
+  } catch (e) { error(e); $('trust-sudo').checked = !on; }
+  finally { commandTrustApplying = false; trustAllControls(); }
 }
 async function setTrustAll(on) {
   if (!selected) { $('trust-all').checked = false; return; }
@@ -666,6 +700,16 @@ function renderTurns(turns) {
   });
   return cards;
 }
+// A running command reports its output as many small chunks. Repainting the
+// conversation for each one would rebuild up to 200 cards and fetch history again,
+// so write into the log node the last paint left instead — the way the activity
+// panel streams — and only fall back to a refresh when that node is gone (a chunk
+// arriving before the first paint, or after the step's card was rebuilt).
+function streamStepOutput(step) {
+  if (!step.log || step.log.isConnected === false) { scheduleHistory(); return; }
+  step.log.textContent = step.output;
+  step.log.scrollTop = step.log.scrollHeight;
+}
 function paintConversation() {
   $('history').replaceChildren(); const cards = renderTurns(durable);
   const used = new Set();
@@ -684,7 +728,7 @@ function paintConversation() {
     }
     if (card) {
       const represented = match >= 0 && durable[match + 1] && durable[match + 1].Kind === 'tool_result';
-      if (step.output) logDetails(card, 'Execution log', step.output, !step.result);
+      step.log = step.output ? logDetails(card, 'Execution log', step.output, !step.result) : null;
       if (step.result && !represented) { card.append(text('div', step.result.Skipped ? 'Skipped' : step.result.OK ? '✅ Success' : '❌ Failed', 'badge')); logDetails(card, 'Result', [step.result.Message, step.result.Detail].filter(Boolean).join('\n')); }
       else if (!represented) card.append(text('div', step.result ? 'Finished' : 'Executing…', 'progress-status'));
     }
@@ -805,6 +849,7 @@ function snapshot(s) {
   modelBlocked = ['busy','starting'].includes(s.state) || s.phase === 'starting' || s.queued > 0 || !!s.pending;
   sessionBusy = ['busy','starting'].includes(s.state);
   if (!trustAllApplying) $('trust-all').checked = !!s.trust_all;
+  if (!commandTrustApplying) $('trust-sudo').checked = (s.trusted_cmds || []).includes('sudo');
   liveModel = typeof s.model === 'string' ? s.model.trim() : '';
   if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
   modelControls();
@@ -818,6 +863,8 @@ function snapshot(s) {
       $('reasoning-text').scrollTop = $('reasoning-text').scrollHeight;
     }
   const detail = s.active_tool ? statusText(s.active_tool.Detail) : '';
+    $('state-icon').textContent = statusIcon(s);
+    $('state-icon').className = 'status-icon' + (spinningPhases.has(s.phase) && !s.pending ? ' busy-indicator' : '');
     const full = phaseLabel(s) + (detail ? ' · ' + detail : '');
     $('state').textContent = (full.length > 160 ? full.slice(0, 159) + '…' : full) + (s.queued > 0 ? ' · ' + s.queued + ' queued' : '') + (s.error ? ' · ' + s.error : '');
     $('state').title = full;
@@ -1433,7 +1480,7 @@ function activity(event) {
   if (type === 'tool_call') {
     currentStep = {call:data, floor:Math.max(0, historyTotal - 1), output:'', result:null};
     liveSteps.push(currentStep); if (liveSteps.length > 100) liveSteps.shift(); scheduleHistory();
-  } else if (type === 'tool_output' && currentStep) currentStep.output = (currentStep.output + String(data)).slice(-liveTextLimit);
+  } else if (type === 'tool_output' && currentStep) { currentStep.output = (currentStep.output + String(data)).slice(-liveTextLimit); streamStepOutput(currentStep); }
   else if (type === 'tool_result' && currentStep) { currentStep.result = data; scheduleHistory(); }
   else if (type === 'notice') toast(typeof data === 'string' ? data : String(data));
   else if (['done','terminate','ask','user'].includes(type)) scheduleHistory();
@@ -1571,6 +1618,7 @@ $('composer').onsubmit = e => { e.preventDefault(); action('send'); };
 $('steer').onclick = () => action('steer'); $('cancel').onclick = () => action('cancel');
 $('apply-plan').onclick = () => action('send', AUTO_REPLY);
 $('trust-all').onchange = () => setTrustAll($('trust-all').checked);
+$('trust-sudo').onchange = () => setCommandTrust('sudo', $('trust-sudo').checked);
 $('more-sessions').onclick = () => sessions().catch(error);
 $('theme-toggle').onclick = toggleTheme;
 $('show-context').onchange = () => setContextOpen($('show-context').checked);

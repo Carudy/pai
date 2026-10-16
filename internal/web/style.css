@@ -230,6 +230,16 @@ main > header h2,
     text-overflow: ellipsis;
 }
 
+/* One glyph per phase at the head of the status line. A fixed box keeps the text
+   from shifting as the glyphs differ in width, and the spin class is applied only
+   while the machine is the busy one. */
+.status-icon {
+    flex: 0 0 auto;
+    min-width: 1.3em;
+    text-align: center;
+    line-height: 1;
+}
+
 /* ── Sidebar ───────────────────────────────────────────────── */
 
 #sidebar {
@@ -1117,7 +1127,7 @@ header p {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    gap: 5px;
+    gap: 6px;
 }
 
 .composer-input {
@@ -1203,12 +1213,6 @@ header p {
 
 #composer .switch-text {
     white-space: nowrap;
-}
-
-.trust-hint {
-    font-size: 10px;
-    line-height: 1.3;
-    color: var(--muted);
 }
 
 .actions {

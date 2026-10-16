@@ -105,7 +105,11 @@ fixed height that truncates, so the header does not reflow as the state text
 changes. Both status readouts — the phase line and the run clock — sit in one box
 whose width is capped (`--status-width`) rather than sized by its text, so a long
 `Running execute · …` can neither push the session name nor overlap anything; it
-clips. The clock shows only the elapsed time (`12s (this browser)`) and not the
+clips. The line leads with one glyph per phase (⏳ while waiting on the model,
+🤔 reasoning, 🔧 a tool, 🗜 compacting, 🙋/❓ waiting on the reader), and the spinner
+animation is applied only where the machine is the busy one, so a prompt shows a
+still glyph. A prompt stops the clock but leaves the box in place, because hiding
+it made the status area blink in and out around every confirmation. The clock shows only the elapsed time (`12s (this browser)`) and not the
 phase, which the line beside it already names: repeating it said the same thing
 twice and doubled the box's length. The phase stays in the clock's tooltip. The
 name hugs its text so the Rename button stays next to it, with the slack collecting
@@ -261,7 +265,9 @@ rejected; there is no URL authentication.
   unused, since the `ask` action no longer creates a prompt). A confirmation
   whose `pending.untrusted` is non-empty additionally offers trusting those
   command names — or the containing directory when `pending.trust_target` is
-  `path` — for the run (`session`) or for good (`always`).
+  `path` — for the run (`session`) or for good (`always`). A `session` or
+  `always` answer also grants the names in the manager, so the grant outlives the
+  runtime that asked (see below).
 - `GET /api/trust-all?name=...`: `{ "trust_all": bool }`. `POST /api/trust-all`:
   `{ "name": "...", "trust_all": bool }`; 200 `{ "ok": true }`. Trust-all is a
   per-session auto-approval toggle that skips every command and file-change
@@ -269,6 +275,14 @@ rejected; there is no URL authentication.
   recreated for each instruction), never persisted to config, and reported as
   `trust_all` in the snapshot. A blank/over-length name is 400 and a missing
   session 404. Enabling it also resolves a confirmation already pending.
+- `POST /api/trust-cmd`: `{ "name": "...", "cmd": "sudo", "on": bool }`; 200
+  `{ "ok": true, "trusted_cmds": [...] }`. The same session grant as a
+  confirmation's `session` answer, one command name at a time, for the composer's
+  sudo switch: name-based, so `cmd` must be a bare name (a path or a whole command
+  line is 400). Held in the manager for the same reason as `trust_all` — the
+  runtime is retired by any settings change, while the grant is about the
+  conversation — and reported as `trusted_cmds` in the snapshot, which is what the
+  switch renders from.
 
 - `GET /api/reasoning?name=...`: `{ "reasoning": "none"|"low"|"medium"|"high",
   "options": [...] }` — the session's in-memory override, else the configured
@@ -374,13 +388,18 @@ dropped. Transient `notice` events (a trust
 downgrade, a newly trusted directory) surface as short-lived toasts above the
 composer in addition to the activity log.
 
-The composer is three columns: a per-session **Trust all** switch on the left
-(with a danger hint; while on, no confirmation card appears at all), the
-instruction box in the middle, and a 2×2 action pad on the right — Send and
-**Apply plan** (which sends the canned instruction `Apply your plan.` without
-touching the draft), then Steer and Cancel. The switch mirrors the server's
-`trust_all`, which is the authority; it is disabled until a session is selected.
-Narrow screens stack the columns and keep the button grid.
+The composer is three columns: the per-session trust switches on the left —
+**Trust all** (while on, no confirmation card appears at all) and **Allow sudo**
+(the same session grant for the `sudo` name alone, so a whole task does not stop
+at every sudo; it grants the name, so sudo still has to run, and PAI still asks
+about every other command). Both carry their warning in the tooltip rather than a
+visible hint, which is what makes room for two of them; both render their state
+from the snapshot (`trust_all`, `trusted_cmds`), never from what this browser
+asked for). Then the instruction box in the middle, and a 2×2 action pad on the
+right — Send and **Apply plan** (which sends the canned instruction `Apply your
+plan.` without touching the draft), then Steer and Cancel. Both switches are
+disabled until a session is selected, and the server is the authority for their
+state. Narrow screens stack the columns and keep the button grid.
 
 ## Scripts and validation
 
