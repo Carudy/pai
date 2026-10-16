@@ -632,7 +632,7 @@ header p {
 
 #history {
     width: 100%;
-    max-width: 1040px;
+    max-width: 1200px;
     margin: 0 auto;
 }
 
@@ -740,6 +740,13 @@ header p {
 .turn pre {
     font-size: 13px;
     line-height: 1.75;
+}
+
+/* A numbered command list reads as a command, not as raw output: the same accent
+   bar the confirmation card uses marks it. */
+.turn .command-detail {
+    border-left: 3px solid var(--accent);
+    padding: 10px 12px;
 }
 /* A turn's timestamp: a quiet footnote at the card's lower right. */
 .turn-time {
@@ -975,7 +982,7 @@ header p {
 
 .composer-dock > form {
     width: 100%;
-    max-width: 1040px;
+    max-width: 1200px;
     margin-left: auto;
     margin-right: auto;
 }
@@ -1730,7 +1737,7 @@ header p {
         width: clamp(220px, calc(33.333333cqw - 64px), 280px);
     }
     #history {
-        width: clamp(600px, 65cqw, 1040px);
+        width: clamp(620px, 78cqw, 1200px);
     }
 }
 

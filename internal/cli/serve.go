@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/Carudy/pai/internal/runner"
@@ -26,14 +27,28 @@ func serveHelp() string {
   --activity-log                Log tool calls/lifecycle to stdout (default false)
   --token-file <path>            Token file; overrides PAI_SERVE_TOKEN
   --public-origin <origin>       Browser origin, e.g. https://pai.example.com
+  --allow-origin <origin>        Extra browser origin to accept (repeatable)
   --help, -h                    Show help
 
 Non-loopback binds and --public-origin require a token of at least 32 characters.
 For reverse proxies, preserving Host is recommended. Set --public-origin when
 terminating TLS or changing Host; forwarded headers are never trusted.
+--allow-origin is only needed alongside --public-origin: it lets one server answer
+on a second address too (a LAN IP, say) while --public-origin stays canonical. It
+is not a Host allowlist, and each origin still logs in separately.
 Activity logs omit reasoning and tool output; commands may contain sensitive data.
 Remote access requires TLS or a trusted TLS terminator. Clients can run tools
 with this process's permissions. Sessions use their saved workspace; new sessions default to the starting cwd.`
+}
+
+// repeatedFlag collects a flag given more than once, in order.
+type repeatedFlag []string
+
+func (r *repeatedFlag) String() string { return strings.Join(*r, ",") }
+
+func (r *repeatedFlag) Set(value string) error {
+	*r = append(*r, value)
+	return nil
 }
 
 type serveFlags struct {
@@ -41,6 +56,7 @@ type serveFlags struct {
 	port, maxActive int
 	tokenFile       string
 	publicOrigin    string
+	allowOrigins    repeatedFlag
 	help            bool
 	activityLog     bool
 }
@@ -55,6 +71,7 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	fs.IntVar(&f.maxActive, "max-active-sessions", 2, "maximum live workers")
 	fs.StringVar(&f.tokenFile, "token-file", "", "token file")
 	fs.StringVar(&f.publicOrigin, "public-origin", "", "canonical browser origin")
+	fs.Var(&f.allowOrigins, "allow-origin", "extra browser origin to accept (repeatable)")
 	fs.BoolVar(&f.activityLog, "activity-log", false, "log activity to stdout")
 	fs.BoolVar(&f.help, "help", false, "help")
 	fs.BoolVar(&f.help, "h", false, "help")
@@ -85,9 +102,27 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	if publicOriginSet {
 		origin, err := canonicalServeOrigin(f.publicOrigin)
 		if err != nil {
-			return f, err
+			return f, fmt.Errorf("--public-origin: %w", err)
 		}
 		f.publicOrigin = origin
+	}
+	// Canonicalize and de-duplicate the extras; one equal to the canonical origin
+	// adds nothing, so it is dropped rather than kept as a second allowance.
+	if len(f.allowOrigins) > 0 {
+		seen := make(map[string]bool, len(f.allowOrigins))
+		allowed := make([]string, 0, len(f.allowOrigins))
+		for _, raw := range f.allowOrigins {
+			origin, err := canonicalServeOrigin(raw)
+			if err != nil {
+				return f, fmt.Errorf("--allow-origin: %w", err)
+			}
+			if origin == f.publicOrigin || seen[origin] {
+				continue
+			}
+			seen[origin] = true
+			allowed = append(allowed, origin)
+		}
+		f.allowOrigins = allowed
 	}
 	return f, nil
 }
@@ -128,7 +163,7 @@ func runServe(ctx context.Context, args []string, stdout io.Writer, log *tui.Log
 	defer stop()
 	manager := runner.New(runCtx, &serveBackend{store: store, cwd: cwd}, f.maxActive)
 	defer manager.Close()
-	handler := web.New(manager, web.Options{Token: token, PublicOrigin: f.publicOrigin, ServerCwd: cwd})
+	handler := web.New(manager, web.Options{Token: token, PublicOrigin: f.publicOrigin, AllowOrigins: f.allowOrigins, ServerCwd: cwd})
 	// Origin checks alone do not prevent DNS rebinding on unauthenticated loopback.
 	host := listener.Addr().String()
 	server := &http.Server{

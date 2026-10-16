@@ -30,6 +30,13 @@ type Options struct {
 	// PublicOrigin is the canonical browser origin (scheme://host[:port]) when
 	// a proxy changes the request's host or terminates TLS. The CLI validates it.
 	PublicOrigin string
+	// AllowOrigins lists further browser origins accepted for mutations, for
+	// reaching the same server by another address (a LAN IP, say) while
+	// PublicOrigin names the canonical one. Each must be an already-canonical
+	// origin; the CLI validates and canonicalizes them. They widen the origin
+	// check only: cookies are per host, so a request from another origin still
+	// has to log in there, and the Host/DNS-rebinding posture is unchanged.
+	AllowOrigins []string
 	// ServerCwd is the server's launch directory. New sessions default to it and
 	// the UI prefills its working-directory field with it. It is a convenience
 	// hint, not a sandbox.
@@ -89,6 +96,7 @@ type handler struct {
 	manager      *runner.Manager
 	token        string
 	publicOrigin string
+	allowed      []string
 	serverCwd    string
 	mu           sync.Mutex
 	sessions     map[[32]byte]time.Time
@@ -97,7 +105,7 @@ type handler struct {
 // New returns a self-contained handler. It neither owns nor closes m. Configure
 // listener security and server header/idle timeouts at the composition root.
 func New(m *runner.Manager, options Options) http.Handler {
-	return &handler{manager: m, token: options.Token, publicOrigin: options.PublicOrigin, serverCwd: options.ServerCwd, sessions: make(map[[32]byte]time.Time)}
+	return &handler{manager: m, token: options.Token, publicOrigin: options.PublicOrigin, allowed: append([]string(nil), options.AllowOrigins...), serverCwd: options.ServerCwd, sessions: make(map[[32]byte]time.Time)}
 }
 
 // acceptsGzip reports whether the client advertised gzip. Only static assets are
@@ -129,7 +137,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
-		if name == "" {
+		if name == "" || isSessionPath(r.URL.Path) {
+			// A session URL serves the same single-page shell as "/": the app reads
+			// the name from the path and falls back cleanly when it is unknown.
 			name = "index.html"
 		}
 		if !assetSet[name] {
@@ -605,10 +615,28 @@ func parseOrigin(value string) (*url.URL, bool) {
 	origin, err := url.Parse(value)
 	return origin, err == nil && (origin.Scheme == "http" || origin.Scheme == "https") && origin.Host != "" && origin.User == nil && origin.Path == "" && origin.Opaque == "" && !origin.ForceQuery && origin.RawQuery == "" && !strings.Contains(value, "#")
 }
+
+// isSessionPath reports whether path is a session URL (/session/<name>). The
+// segment is never used to read a file — it only has to stay one segment deep —
+// so the name itself is left to the app, which knows when a session is unknown.
+func isSessionPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/session/")
+	return ok && rest != "" && !strings.Contains(rest, "/")
+}
+
+// sameOrigin reports whether a mutating request came from an origin this handler
+// accepts: PublicOrigin when configured (never derived from request headers, so
+// a rewritten Host or an invalid value cannot widen it), otherwise the host the
+// request actually used, plus any explicitly allowed extra origins.
 func (h *handler) sameOrigin(r *http.Request) bool {
 	origin, valid := parseOrigin(r.Header.Get("Origin"))
 	if !valid {
 		return false
+	}
+	for _, allowed := range h.allowed {
+		if accepted, valid := parseOrigin(allowed); valid && origin.Scheme == accepted.Scheme && strings.EqualFold(origin.Host, accepted.Host) {
+			return true
+		}
 	}
 	scheme, host := "http", r.Host
 	if r.TLS != nil {

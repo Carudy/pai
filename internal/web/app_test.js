@@ -47,8 +47,16 @@ function browser() {
       close() { this.closed = true; }
     }
     const storage = new Map();
+    // The session URL is a real path (/session/<name>), so the double records the
+    // navigations and mirrors them onto location.pathname the way a browser does.
+    const pushes = [], replaces = [];
+    const location = {pathname: '/'};
+    const history = {
+      pushState: (_state, _title, url) => { pushes.push(url); location.pathname = url; },
+      replaceState: (_state, _title, url) => { replaces.push(url); location.pathname = url; },
+    };
     class MockDate extends Date { static now() { return now; } }
-    const context = vm.createContext({URL, Date: MockDate, EventSource: MockEventSource, TextEncoder,
+    const context = vm.createContext({URL, Date: MockDate, EventSource: MockEventSource, TextEncoder, location, history,
       localStorage: {getItem: key => (storage.has(key) ? storage.get(key) : null), setItem: (key, value) => storage.set(key, String(value)), removeItem: key => storage.delete(key)},
       confirm: () => true,
       prompt: () => 'renamed',
@@ -59,7 +67,7 @@ function browser() {
     createElement(tag) { return new Element(tag); }
   }});
   vm.runInContext(source, context);
-  return {tick: milliseconds => { now += milliseconds; for (const callback of intervals.values()) callback(); }, timers: () => intervals.size, connections,
+  return {tick: milliseconds => { now += milliseconds; for (const callback of intervals.values()) callback(); }, timers: () => intervals.size, connections, location, pushes, replaces,
         flush: async () => { const callbacks = [...timeouts.values()]; timeouts.clear(); for (const callback of callbacks) await callback(); },
       run: code => vm.runInContext(code, context), get: id => { vm.runInContext(`$('${id}')`, context); return elements.get(id); }, pending: () => elements.get('pending')};
 }
@@ -116,7 +124,7 @@ for (const cleanup of ['disconnect()', 'loginNeeded()']) {
   progress.run("snapshot({state:'busy',queued:0}); " + cleanup);
   assert.equal(progress.timers(), 0);
 }
-progress.run("snapshot({state:'busy',queued:0}); history=async()=>{}; loadSnapshot=async()=>{}; select('two','/fixed')");
+progress.run("snapshot({state:'busy',queued:0}); loadHistory=async()=>{}; loadSnapshot=async()=>{}; select('two','/fixed')");
 assert.equal(progress.timers(), 0, 'selection clears old timer immediately');
 
 for (const name of ['execute','remote','read','write','edit','websearch','custom']) {
@@ -335,6 +343,18 @@ assert.match(readText, /Lines/, 'read labels the line window');
 assert.match(readText, /100:249/, 'read shows one inclusive line range');
 assert.ok(!/offset/.test(readText) && !/limit/.test(readText), 'read does not show offset/limit rows');
 
+// A chained command in a chat card is numbered at its operators, like the CLI,
+// rather than arriving as one long wrapped line. A single command stays plain.
+const commands = browser();
+commands.run('renderTurns(' + JSON.stringify([
+  {Role: 'assistant', Kind: 'output', Content: JSON.stringify({action: 'tool', toolname: 'execute', payload: 'cd /srv && go build ./... && go test ./...'})},
+  {Role: 'assistant', Kind: 'output', Content: JSON.stringify({action: 'tool', toolname: 'execute', payload: 'ls -la'})},
+]) + ')');
+const cmdList = descendants(commands.get('history')).find(n => n.className === 'command-detail');
+assert.ok(cmdList, 'a chained command renders as a command list');
+assert.equal(cmdList.textContent, '   1 cd /srv &&\n   2 go build ./... &&\n   3 go test ./...\n', 'segments are numbered in order with their operators');
+assert.equal(descendants(commands.get('history')).filter(n => n.className === 'command-detail').length, 1, 'a single command is not numbered');
+
 // The context inspector renders the reconstructed message list: a head card, one
 // card per turn with its state, the tail, and the settings strip. loadContext is
 // async, so its synchronous renderer is what is exercised here.
@@ -465,18 +485,18 @@ async function verifyHistory() {
   const p = browser();
   p.run("selected='one'; globalThis.calls=[]; api=async path => { calls.push(path); const offset=Number(/offset=(\\d+)/.exec(path)[1]),limit=Number(/limit=(\\d+)/.exec(path)[1]); return {turns:Array.from({length:Math.min(limit,250-offset)},(_,i)=>({Role:'user',Content:String(offset+i)})),total:250,cwd:'/fixed'}; }");
   p.get('conversation').scrollTop = 123;
-  await p.run('history(true)'); assert.equal(p.get('history').children.length, 30);
+  await p.run('loadHistory(true)'); assert.equal(p.get('history').children.length, 30);
   assert.equal(p.get('history').children[0].textContent, 'You220', 'initial load shows latest tail');
   assert.equal(p.get('conversation').scrollTop, 1000, 'initial history follows latest');
   p.get('conversation').scrollTop = 123;
   p.run("globalThis.originalPaint=paintConversation; paintConversation=()=>{originalPaint(); $('conversation').scrollHeight+=500;}");
-  await p.run('history()'); assert.equal(p.get('history').children.length, 60);
+  await p.run('loadHistory()'); assert.equal(p.get('history').children.length, 60);
   assert.equal(p.get('conversation').scrollTop, 623, 'earlier history offsets the added height to preserve the viewport');
   p.run('paintConversation=originalPaint');
-  await p.run('history(true)'); assert.equal(p.get('history').children.length, 60, 'refresh retains earlier loaded pages');
-  await p.run('history()'); assert.equal(p.get('history').children.length, 90);
+  await p.run('loadHistory(true)'); assert.equal(p.get('history').children.length, 60, 'refresh retains earlier loaded pages');
+  await p.run('loadHistory()'); assert.equal(p.get('history').children.length, 90);
   p.get('conversation').scrollTop = 50;
-  await p.run('history(true)');
+  await p.run('loadHistory(true)');
   assert.equal(p.get('conversation').scrollTop, 50, 'unchanged refresh preserves reading position');
   const card = p.get('history').firstElementChild;
   card.open = true;
@@ -488,11 +508,11 @@ async function verifyHistory() {
   await p.run('refreshHistory()');
   assert.equal(p.get('history').firstElementChild, card, 'poll reload preserves DOM');
   p.run("globalThis.total=251; api=async path=>{const offset=Number(/offset=(\\d+)/.exec(path)[1]),limit=Number(/limit=(\\d+)/.exec(path)[1]); return {turns:Array.from({length:Math.min(limit,total-offset)},(_,i)=>({Role:'user',Content:String(offset+i)})),total,cwd:'/fixed'};}");
-  await p.run('history(true)');
+  await p.run('loadHistory(true)');
   assert.equal(p.get('conversation').scrollTop, 50, 'new durable content preserves reader position');
   p.get('conversation').scrollTop = 1050;
   p.run('total++');
-  await p.run('history(true)');
+  await p.run('loadHistory(true)');
   assert.equal(p.get('conversation').scrollTop, 1500, 'new durable content follows near bottom');
   p.run("connect=()=>{}; loadSnapshot=async()=>{}; globalThis.originalSessions=sessions; sessions=async()=>{}; $('message').value='hello'; api=async()=>({})");
   p.get('conversation').scrollTop = 50;
@@ -572,6 +592,10 @@ for (const [command, expected] of [
   ["grep 'a|b' f && echo \"x;y\"", ["grep 'a|b' f &&",'echo "x;y"']],
   ['echo a\\|b; (echo x && echo y) | cat', ['echo a\\|b;','(echo x && echo y) |','cat']],
   ['echo x 2>&1 && cat', ['echo x 2>&1 &&','cat']],
+  // A lone & backgrounds what precedes it, so it separates like the trust parser
+  // does; &> is a redirection and does not.
+  ['echo a & echo b', ['echo a &','echo b']],
+  ['echo x &> f', ['echo x &> f']],
   ['echo "unfinished | cat', ['echo "unfinished | cat']],
   ['cat <<EOF; text', ['cat <<EOF; text']]
 ]) assert.deepEqual(JSON.parse(page.run('JSON.stringify(shellSegments(' + JSON.stringify(command) + '))')), expected);
@@ -632,13 +656,13 @@ async function verifyModels() {
   await p.run("applyModel({preventDefault(){}})");
   assert.match(p.get('error').textContent, /configured provider/);
   assert.equal(p.get('session-model').value, 'test:custom');
-  p.run("$('session-model').value=' test : custom '; history=async()=>sessionMetadata({model:'test:custom'}); connect=()=>{}; api=async(path,body)=>{if(body.model!=='test:custom') throw Error('not normalized'); return {ok:true};};");
+  p.run("$('session-model').value=' test : custom '; loadHistory=async()=>sessionMetadata({model:'test:custom'}); connect=()=>{}; api=async(path,body)=>{if(body.model!=='test:custom') throw Error('not normalized'); return {ok:true};};");
   await p.run("applyModel({preventDefault(){}})");
   assert.equal(p.get('session-model').value, 'test:custom');
   assert.equal(p.run('modelDirty'), false);
   p.run("$('session-model').value='test:unsaved'; modelDirty=true; api=path=>path==='model'?new Promise(resolve=>globalThis.finishModel=resolve):Promise.resolve({}); modelControls();");
   const stale = p.run("applyModel({preventDefault(){}})");
-  p.run("history=async()=>sessionMetadata({model:'test:other'});");
+  p.run("loadHistory=async()=>sessionMetadata({model:'test:other'});");
   await p.run("select('two')");
   p.run("finishModel({ok:true})"); await stale;
   assert.equal(p.get('session-model').value, 'test:other', 'stale switch cannot overwrite selection');
@@ -741,7 +765,7 @@ async function verifyWorkingDir() {
     assert.equal(p.get('session-working-dir').disabled, true, 'workspace is idle-only');
     assert.equal(p.get('apply-working-dir').disabled, true);
   }
-  p.run("snapshot({state:'awaiting',queued:0}); globalThis.calls=[]; sessions=async()=>{}; connect=()=>{}; history=async()=>sessionMetadata({cwd:'/normalized/new'}); loadSnapshot=async()=>{}; api=async(path,body)=>{calls.push([path,body]);return {ok:true}};");
+  p.run("snapshot({state:'awaiting',queued:0}); globalThis.calls=[]; sessions=async()=>{}; connect=()=>{}; loadHistory=async()=>sessionMetadata({cwd:'/normalized/new'}); loadSnapshot=async()=>{}; api=async(path,body)=>{calls.push([path,body]);return {ok:true}};");
   await p.run("applyWorkingDir({preventDefault(){}})");
   assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [['working-dir', {name:'one', working_dir:'/new'}]]);
   assert.equal(p.get('session-working-dir').value, '/normalized/new', 'Apply shows the server-normalized path');
@@ -756,7 +780,7 @@ async function verifyWorkingDir() {
   p.run("$('session-working-dir').value='  '; workingDirControls()");
   assert.equal(p.get('apply-working-dir').disabled, true, 'blank paths are disabled');
 
-  p.run("api=async()=>({turns:[],total:0,cwd:'/two'}); history=async()=>sessionMetadata({cwd:'/two'}); loadSnapshot=async()=>{}");
+  p.run("api=async()=>({turns:[],total:0,cwd:'/two'}); loadHistory=async()=>sessionMetadata({cwd:'/two'}); loadSnapshot=async()=>{}");
   await p.run("select('two')");
   assert.equal(p.get('session-working-dir').value, '/two');
   p.run('clearWorkspace()');
@@ -764,7 +788,7 @@ async function verifyWorkingDir() {
   assert.equal(p.get('session-working-dir').disabled, true);
 
   const stale = browser();
-  stale.run("selected='one'; modelBlocked=false; sessionMetadata({cwd:'/old'}); $('session-working-dir').value='/new'; cwdDirty=true; workingDirControls(); api=path=>path==='working-dir'?new Promise(resolve=>globalThis.finishApply=resolve):Promise.resolve({}); history=async()=>sessionMetadata({cwd:'/two'}); loadSnapshot=async()=>{}; connect=()=>{};");
+  stale.run("selected='one'; modelBlocked=false; sessionMetadata({cwd:'/old'}); $('session-working-dir').value='/new'; cwdDirty=true; workingDirControls(); api=path=>path==='working-dir'?new Promise(resolve=>globalThis.finishApply=resolve):Promise.resolve({}); loadHistory=async()=>sessionMetadata({cwd:'/two'}); loadSnapshot=async()=>{}; connect=()=>{};");
   const applying = stale.run("applyWorkingDir({preventDefault(){}})");
   assert.equal(stale.get('apply-working-dir').disabled, true, 'Apply is disabled while the request is pending');
   await stale.run("select('two')");
@@ -819,10 +843,65 @@ async function verifyContext() {
   assert.equal(p.run('calls.length'), 0, 'the top of the transcript is not refetched');
 }
 
+// The open session is named in the URL, so a reload or a shared link opens the
+// same conversation and back/forward move between sessions.
+async function verifySessionURL() {
+  const p = browser();
+  p.run("api=async path => path.startsWith('history') ? {turns:[],total:0,cwd:'/a'} : {}; loadSnapshot=async()=>{}; connect=()=>{}; sessions=async()=>[{name:'one'},{name:'two'}];");
+  await p.run('select("one")');
+  assert.deepEqual(p.pushes, ['/session/one'], 'opening a session names it in the URL');
+  assert.equal(p.run('sessionFromURL()'), 'one', 'the name reads back out of the path');
+
+  // A shared link opens that session directly, rewriting the entry the browser
+  // already made rather than adding one for the same page.
+  const link = browser();
+  link.run("api=async path => path.startsWith('history') ? {turns:[],total:0,cwd:'/b'} : {}; loadSnapshot=async()=>{}; connect=()=>{}; location.pathname='/session/two'");
+  link.run('restoreSession([{name:"two",cwd:"/b"}])');
+  assert.equal(link.run('selected'), 'two', 'a shared link opens its session');
+  assert.deepEqual(link.pushes, [], 'the opening load adds no history entry');
+
+  // A stale bookmark must not strand the page: the URL is dropped and the empty
+  // workspace is shown instead.
+  const stale = browser();
+  stale.run("location.pathname='/session/ghost'; api=async()=>({}); sessions=async()=>[]");
+  stale.run('restoreSession([{name:"one",cwd:"/a"}])');
+  assert.equal(stale.run('selected'), '', 'a stale link opens nothing');
+  assert.equal(stale.location.pathname, '/', 'a stale link is dropped from the URL');
+  assert.match(stale.get('error').textContent, /no longer exists/, 'the stale link is reported');
+
+  // Back and forward: the URL is the authority, and clearing goes back to "/".
+  p.run('location.pathname="/session/two"');
+  await p.run('onPopState()');
+  assert.equal(p.run('selected'), 'two', 'forward opens the session the URL names');
+  p.run('location.pathname="/"');
+  await p.run('onPopState()');
+  assert.equal(p.run('selected'), '', 'going back to "/" clears the workspace');
+  assert.equal(p.location.pathname, '/', 'the cleared workspace keeps the bare URL');
+}
+
+// Switching sessions empties the pane before the fetch, so it must say the
+// transcript is on its way instead of looking like an empty conversation.
+async function verifySessionLoading() {
+  const p = browser();
+  p.run("selected='one'; globalThis.calls=0; api=()=>{ calls++; return calls === 1 ? new Promise(resolve=>{globalThis.finishHistory=resolve}) : Promise.resolve({turns:[],total:0}); }");
+  const loading = p.run('loadHistory(true)');
+  assert.match(p.get('history').textContent, /Loading the conversation/, 'a switch shows the transcript is loading');
+  p.run('finishHistory({turns:[],total:0})');
+  await loading;
+  assert.ok(!/Loading the conversation/.test(p.get('history').textContent), 'the placeholder gives way to the transcript');
+  assert.match(p.get('history').textContent, /Best partner, PAI!/, 'an empty transcript still shows the welcome');
+
+  // A failed load must not leave the placeholder spinning forever.
+  const failed = browser();
+  failed.run("selected='one'; api=async()=>{const e=new Error('boom'); throw e;}");
+  await failed.run('loadHistory(true)').catch(() => {});
+  assert.equal(failed.get('history').textContent, '', 'a failed load clears the placeholder');
+}
+
 async function verifySendFailure() {
   const p = browser();
   p.run(`selected='one'; $('login').hidden=true; $('message').value='hello';
-    sessions=async()=>{}; history=async()=>{};
+    sessions=async()=>{}; loadHistory=async()=>{};
     api=async path => path === 'send' ? {ok:true} :
       {name:'one',state:'stopped',queued:0,error:'session working directory: directory does not exist'};`);
   await p.run("action('send')");
@@ -905,4 +984,4 @@ async function verifyAuthGate() {
   assert.equal(p.run('toasted.length'), 1, 'a non-auth failure is toasted');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

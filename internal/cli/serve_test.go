@@ -157,6 +157,40 @@ func TestServeActivityShutdownBound(t *testing.T) {
 	}
 }
 
+// --allow-origin is repeatable, canonicalized and de-duplicated, and a value that
+// is not an origin is rejected loudly rather than ignored.
+func TestServeAllowOrigin(t *testing.T) {
+	f, err := parseServeFlags([]string{
+		"--allow-origin", "http://192.168.1.5:9384/",
+		"--allow-origin", "HTTP://Pai.Lan:9384",
+		"--allow-origin", "http://192.168.1.5:9384",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"http://192.168.1.5:9384", "http://pai.lan:9384"}; !reflect.DeepEqual([]string(f.allowOrigins), want) {
+		t.Fatalf("allowOrigins = %v, want %v", f.allowOrigins, want)
+	}
+
+	// An extra equal to the canonical origin adds nothing, so it is dropped.
+	f, err = parseServeFlags([]string{"--public-origin", "https://pai.example.com", "--allow-origin", "https://pai.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.allowOrigins) != 0 {
+		t.Fatalf("allowOrigins = %v, want none", f.allowOrigins)
+	}
+
+	for _, raw := range []string{"", "pai.example.com", "http://192.168.1.5:9384/path", "ftp://192.168.1.5", "https://user@192.168.1.5"} {
+		if _, err := parseServeFlags([]string{"--allow-origin", raw}); err == nil {
+			t.Errorf("accepted --allow-origin %q", raw)
+		}
+	}
+	if help := serveHelp(); !strings.Contains(help, "--allow-origin") {
+		t.Error("help does not mention --allow-origin")
+	}
+}
+
 func TestServePublicOrigin(t *testing.T) {
 	for raw, want := range map[string]string{
 		"https://pai.example.com":  "https://pai.example.com",

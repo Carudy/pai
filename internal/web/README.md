@@ -26,6 +26,7 @@ Exact exported API:
 type Options struct {
     Token string
     PublicOrigin string
+    AllowOrigins []string
 }
 func New(m *runner.Manager, options Options) http.Handler
 ```
@@ -45,7 +46,12 @@ path (including trailing slash), query, or fragment. Empty means derive the
 expected origin from `r.Host` and `r.TLS`. Nonempty means compare against that
 configured origin exclusively, even if a proxy rewrites the host or terminates
 TLS; malformed explicit values fail closed for mutations rather than falling
-back to request metadata. `New` retains its handler-only return type, with no
+back to request metadata. `AllowOrigins` optionally lists further already-canonical
+origins accepted for mutations, so one server can answer on a second address (a
+LAN IP, say) while `PublicOrigin` stays canonical; each is matched on scheme and
+host exactly, they widen only the origin gate (another origin still has to
+authenticate there, since cookies are per host), and they are not a Host
+allowlist. `New` retains its handler-only return type, with no
 validation error return or panic. Cookie Secure is true when `r.TLS` is nonnil
 **or** PublicOrigin uses HTTPS. Neither Origin checks nor cookie security trust
 `Forwarded` or any `X-Forwarded-*` headers. Host must be validated against the configured public
@@ -136,6 +142,11 @@ rejected; there is no URL authentication.
   succeeds, so a signed-out load cannot flash the workspace before the login form
   appears. A 401 shows the login form; any other first-request failure reveals the
   shell so the user still has the UI and an error toast.
+- `GET /session/<name>`: the same single-page shell as `/`, so a session URL can
+  be bookmarked, shared and reloaded. The app reads the name from the path and
+  falls back to the remembered session (with a notice) when it no longer exists.
+  Anything else under the prefix, or more than one segment deep, is 404; nothing
+  is read from disk by that name, and only `GET` is allowed.
 - `GET /api/models`: `{ "models": ["provider:model"], "default_model": "provider:model" }`.
   Discovery uses the configured default and saved session models, not a config
   model list or remote discovery. Only model names are returned, never credentials.
@@ -266,7 +277,10 @@ than treating transient SSE output as durable turns. Turn cards show their
 `turn.At` timestamp, and token counts are compacted to `k`/`M`. The right-hand
 **Context** panel logs only context-lifecycle events — finished reasoning blocks
 and context notices such as compaction — never tools or run progress, so the
-context's evolution stays legible. An **Inspect** switch in that panel's header
+context's evolution stays legible. Switching sessions shows a loading placeholder
+in the conversation until the transcript arrives, rather than an empty pane.
+A chained command in a card is numbered at its operators (as the CLI prints it),
+so the piece that failed is identifiable at a glance. An **Inspect** switch in that panel's header
 opens an overlay of the messages a send would use — the system head, one card per
 message showing the original and what is actually sent (with a state badge for
 elided, edited, dropped, summarized-away and capped messages), and the tail, with
@@ -302,7 +316,10 @@ another session closes its subscription but never calls Cancel. New named
 sessions start on their first Send, not on selection. The workspace remembers the
 open session in `localStorage` (never a cookie: it is only needed after the page
 loads, so it need not travel on every request and needs no server state) and
-reopens it on reload if it still exists. Transient `notice` events (a trust
+reopens it on reload if it still exists. The open session is also named in the
+URL (`/session/<name>`), which wins over the remembered name; back and forward
+move between sessions, and a link to a session that has gone is reported and
+dropped. Transient `notice` events (a trust
 downgrade, a newly trusted directory) surface as short-lived toasts above the
 composer in addition to the activity log.
 

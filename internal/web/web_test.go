@@ -1157,6 +1157,60 @@ func TestPublicOrigin(t *testing.T) {
 	}
 }
 
+// AllowOrigins accepts extra browser origins for mutations, so one server can
+// answer on a second address (a LAN IP, say) while PublicOrigin stays canonical.
+// It widens nothing else: another origin still has to authenticate there, and an
+// unlisted one is still rejected.
+func TestAllowedOrigins(t *testing.T) {
+	_, m := setup(t, "secret")
+	const public = "https://public.example:8443"
+	const extra = "http://192.168.1.5:9384"
+	h := New(m, Options{Token: "secret", PublicOrigin: public, AllowOrigins: []string{extra}})
+
+	for _, origin := range []string{public, extra} {
+		w := request(h, "POST", "/api/login", `{"token":"secret"}`, nil, origin)
+		if w.Code != 200 {
+			t.Fatalf("origin %q login: %d %s", origin, w.Code, w.Body.String())
+		}
+		cookie := w.Result().Cookies()[0]
+		if w = request(h, "POST", "/api/cancel", `{"name":"missing"}`, cookie, origin); w.Code != 404 {
+			t.Fatalf("origin %q mutation: %d", origin, w.Code)
+		}
+	}
+	for _, origin := range []string{"http://192.168.1.6:9384", "http://evil.example", ""} {
+		if w := request(h, "POST", "/api/cancel", `{"name":"missing"}`, nil, origin); w.Code != 403 {
+			t.Fatalf("unlisted origin %q: %d", origin, w.Code)
+		}
+	}
+	// The extra origin is matched strictly: a different scheme or port is not it.
+	for _, origin := range []string{"https://192.168.1.5:9384", "http://192.168.1.5:9385", "http://192.168.1.5"} {
+		if w := request(h, "POST", "/api/cancel", `{"name":"missing"}`, nil, origin); w.Code != 403 {
+			t.Fatalf("near-miss origin %q: %d", origin, w.Code)
+		}
+	}
+}
+
+// A session URL serves the single-page shell, so a link or a reload opens that
+// conversation; anything else under the prefix is still a 404, and nothing is
+// ever read from disk by that name.
+func TestSessionURLServesTheShell(t *testing.T) {
+	h, _ := setup(t, "")
+	for _, path := range []string{"/", "/session/one", "/session/20260101-120000-abcd"} {
+		w := request(h, "GET", path, "", nil, "")
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "<title>PAI workspace</title>") {
+			t.Fatalf("GET %s = %d %q", path, w.Code, w.Body.String()[:min(40, len(w.Body.String()))])
+		}
+	}
+	for _, path := range []string{"/session/", "/session/a/b", "/session", "/sessions/one", "/session/one/"} {
+		if w := request(h, "GET", path, "", nil, ""); w.Code != 404 {
+			t.Fatalf("GET %s = %d, want 404", path, w.Code)
+		}
+	}
+	if w := request(h, "POST", "/session/one", "", nil, ""); w.Code != 405 {
+		t.Fatalf("POST /session/one = %d, want 405", w.Code)
+	}
+}
+
 func TestConfirmationSnapshotRetainsTool(t *testing.T) {
 	m := runner.New(context.Background(), backend{confirm: true}, 1)
 	t.Cleanup(m.Close)

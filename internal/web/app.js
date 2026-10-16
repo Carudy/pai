@@ -85,7 +85,7 @@ async function applyModel(e) {
     // Retirement closes SSE; invalidate its callbacks and any pre-switch history.
     disconnect(); version = ++generation; historyRequest++;
     liveModel = ''; modelDirty = false; modelMetadata(model);
-    await history(true); if (version !== generation) return;
+    await loadHistory(true); if (version !== generation) return;
         await loadSnapshot(); if (version === generation) connect();
   } catch (err) { if (name === selected && version === generation) { error(err); await loadSnapshot(); } }
   finally { modelApplying = false; modelControls(); }
@@ -108,7 +108,7 @@ async function applyWorkingDir(e) {
     // belong to the runtime that was just stopped by this settings change.
     disconnect(); version = ++generation; historyRequest++;
     cwdDirty = false;
-    await history(true); if (version !== generation) return;
+    await loadHistory(true); if (version !== generation) return;
     await loadSnapshot(); if (version !== generation) return;
     connect();
     await sessions(true);
@@ -546,10 +546,26 @@ function payload(node, value, limit = Infinity) {
     node.append(text('div', key === 'cmd' ? 'CMD' : key.replaceAll('_', ' '), 'field-label'));
     if (key === 'old_string' || key === 'new_string') node.append(diff(String(value[key]).slice(0, limit).split('\n').map(line => (key === 'old_string' ? '-' : '+') + line).join('\n')));
     else if (key === 'content') logDetails(node, 'Content', String(value[key]).slice(0, limit));
+    else if (key === 'cmd') node.append(commandList(String(value[key]).slice(0, limit)));
         else node.append(text('pre', String(value[key]).slice(0, limit)));
   }
   const extra = Object.fromEntries(Object.entries(value).filter(([key]) => !known.includes(key)));
   if (Object.keys(extra).length) rawDetails(node, extra, limit);
+}
+// A chained command reads as one long wrapped line. The CLI breaks it at its
+// operators and numbers the pieces, because the operators decide what still runs
+// when an earlier command fails; a card does the same. shellSegments is
+// presentation only, so nothing here is fed back into execution.
+const commandListLimit = 12;
+function commandList(command) {
+  const segments = shellSegments(command);
+  if (segments.length <= 1) return text('pre', command);
+  const pre = text('pre', '', 'command-detail');
+  segments.forEach((segment, i) => {
+    if (i === commandListLimit) { pre.append(text('span', '        … +' + (segments.length - i) + ' more commands\n')); return; }
+    pre.append(text('span', '  ' + String(i + 1).padStart(2) + ' ' + segment + '\n'));
+  });
+  return pre;
 }
 function rawDetails(node, value, limit = Infinity) {
   const details = text('details', ''); details.append(text('summary', 'Raw details'), text('pre', JSON.stringify(value, null, 2).slice(0, limit))); node.append(details);
@@ -563,7 +579,7 @@ function response(node, data) {
     const reason = completeProse(data.reason); reason.className += ' reason-text';
     node.append(text('div', 'Reason', 'field-label'), reason, text('hr', '', 'response-divider'));
   }
-  if (tool) { node.className += ' tool-card'; if (typeof data.payload === 'string') node.append(text('div', data.toolname === 'execute' ? 'CMD' : 'Query', 'field-label')); if (data.toolname === 'read' && data.payload && typeof data.payload === 'object' && !Array.isArray(data.payload)) readPayload(node, data.payload); else payload(node, data.payload); }
+  if (tool) { node.className += ' tool-card'; if (typeof data.payload === 'string') node.append(text('div', data.toolname === 'execute' ? 'CMD' : 'Query', 'field-label')); if (data.toolname === 'read' && data.payload && typeof data.payload === 'object' && !Array.isArray(data.payload)) readPayload(node, data.payload); else if (['execute','remote'].includes(data.toolname) && typeof data.payload === 'string') node.append(commandList(data.payload)); else payload(node, data.payload); }
   else if (typeof data.payload === 'string') node.append(data.action === 'done' ? completeProse(data.payload) : prose(data.payload));
   else payload(node, data.payload);
   const extra = Object.fromEntries(Object.entries(data).filter(([key]) => !['action','toolname','reason','payload'].includes(key)));
@@ -645,41 +661,52 @@ function sessionMetadata(meta = {}) {
   // refreshes, exactly as model drafts are kept.
   if (!roleDirty) roleSelect.value = [...roleSelect.children].some(option => option.value === savedRole) ? savedRole : '';
 }
-async function history(reset = false, forceBottom = false) {
+async function loadHistory(reset = false, forceBottom = false) {
   const version = generation, request = ++historyRequest;
   const scroller = $('conversation');
-  let probe = await api(query('history', 0, 1));
-  if (version !== generation || request !== historyRequest) return;
-  const offset = reset ? (durable.length ? historyOffset : Math.max(0, probe.total - 30)) : Math.max(0, historyOffset - 30);
-  const wanted = reset ? probe.total - offset : historyOffset - offset;
-  if (!reset && !wanted) return;
-  let collected = [], meta = probe, position = offset;
-  do {
-    meta = await api(query('history', position, Math.max(1, Math.min(200, wanted - collected.length))));
+  // A session switch clears the pane before the fetch, so say the transcript is
+  // on its way rather than showing an empty conversation. paintConversation
+  // replaces it; the finally below drops it if nothing painted (a failure, or a
+  // load another request superseded). blank also means "first paint here", which
+  // is why it is read before the placeholder is inserted.
+  const blank = !$('history').children.length;
+  if (blank) $('history').replaceChildren(loadingNote('Loading the conversation…'));
+  try {
+    let probe = await api(query('history', 0, 1));
     if (version !== generation || request !== historyRequest) return;
-    const turns = meta.turns || []; collected.push(...turns); position += turns.length;
-    if (!turns.length || position >= meta.total) break;
-  } while (collected.length < wanted);
-  const next = reset ? collected : collected.concat(durable);
-  const changed = historyOffset !== offset || JSON.stringify(next) !== JSON.stringify(durable);
-  const initial = !$('history').children.length;
-  const top = scroller.scrollTop, height = scroller.scrollHeight;
-  const follow = height - scroller.clientHeight - top <= 80;
-  // Bound the window when the reader is at the bottom; older turns reload from
-  // the store on scroll-up, so a very long session does not grow without limit.
-  let trimmed = 0;
-  if (next.length > historyLimit && follow) { trimmed = next.length - historyLimit; next.splice(0, trimmed); }
-  durable = next; historyOffset = offset + trimmed; historyTotal = meta.total;
-  if (changed || initial) paintConversation();
-  sessionMetadata(meta);
-  if (!durable.length && (changed || initial)) { const welcome = text('div', '', 'empty'); welcome.append(text('h3', 'Best partner, PAI!'), text('p', 'Give PAI an instruction below.')); $('history').append(welcome); }
-  if (forceBottom || initial || (reset && changed && follow)) scrollBottom();
-  else if (changed) scroller.scrollTop = reset ? top : top + scroller.scrollHeight - height;
+    const offset = reset ? (durable.length ? historyOffset : Math.max(0, probe.total - 30)) : Math.max(0, historyOffset - 30);
+    const wanted = reset ? probe.total - offset : historyOffset - offset;
+    if (!reset && !wanted) return;
+    let collected = [], meta = probe, position = offset;
+    do {
+      meta = await api(query('history', position, Math.max(1, Math.min(200, wanted - collected.length))));
+      if (version !== generation || request !== historyRequest) return;
+      const turns = meta.turns || []; collected.push(...turns); position += turns.length;
+      if (!turns.length || position >= meta.total) break;
+    } while (collected.length < wanted);
+    const next = reset ? collected : collected.concat(durable);
+    const changed = historyOffset !== offset || JSON.stringify(next) !== JSON.stringify(durable);
+    const initial = blank;
+    const top = scroller.scrollTop, height = scroller.scrollHeight;
+    const follow = height - scroller.clientHeight - top <= 80;
+    // Bound the window when the reader is at the bottom; older turns reload from
+    // the store on scroll-up, so a very long session does not grow without limit.
+    let trimmed = 0;
+    if (next.length > historyLimit && follow) { trimmed = next.length - historyLimit; next.splice(0, trimmed); }
+    durable = next; historyOffset = offset + trimmed; historyTotal = meta.total;
+    if (changed || initial) paintConversation();
+    sessionMetadata(meta);
+    if (!durable.length && (changed || initial)) { const welcome = text('div', '', 'empty'); welcome.append(text('h3', 'Best partner, PAI!'), text('p', 'Give PAI an instruction below.')); $('history').append(welcome); }
+    if (forceBottom || initial || (reset && changed && follow)) scrollBottom();
+    else if (changed) scroller.scrollTop = reset ? top : top + scroller.scrollHeight - height;
+  } finally {
+    if (blank && $('history').firstElementChild && $('history').firstElementChild.className === 'loading') $('history').replaceChildren();
+  }
 }
 async function refreshHistory() {
   if (refreshing) { refreshAgain = true; return; }
   refreshing = true;
-  try { do { refreshAgain = false; if (selected) await history(true); } while (refreshAgain); }
+  try { do { refreshAgain = false; if (selected) await loadHistory(true); } while (refreshAgain); }
   catch (e) { error(e); } finally { refreshing = false; }
 }
 function scheduleHistory() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshHistory, 150); }
@@ -795,7 +822,7 @@ function snapshot(s) {
 async function loadSnapshot() {
   const version = generation;
   try { const s = await api(query('snapshot', 0)); if (version === generation) snapshot(s); }
-  catch (e) { if (version !== generation) return; if (e.status === 404) { stopRunProgress(); usageSnapshot({}); $('state').textContent = 'Stored session · no live runtime'; clearPending(); liveModel = ''; modelBlocked = false; sessionBusy = false; modelControls(); controls(); await history(true); } else error(e); }
+  catch (e) { if (version !== generation) return; if (e.status === 404) { stopRunProgress(); usageSnapshot({}); $('state').textContent = 'Stored session · no live runtime'; clearPending(); liveModel = ''; modelBlocked = false; sessionBusy = false; modelControls(); controls(); await loadHistory(true); } else error(e); }
 }
 function disconnect() { stopRunProgress(); clearReasoning(); if (stream) stream.close(); stream = null; clearTimeout(retry); clearTimeout(refreshTimer); }
 function connect() {
@@ -1052,7 +1079,7 @@ async function loadContext() {
   // view until the new one arrives instead of flashing.
   if (!body.children.length) body.replaceChildren(loadingNote('Loading the context…'));
   try {
-    // Probe the length, then load the newest page: like history(), the window is
+    // Probe the length, then load the newest page: like loadHistory(), the window is
     // anchored to the tail rather than the start.
     const probe = await api(contextURL(name, 0, 1));
     if (version !== generation || selected !== name) return;
@@ -1098,9 +1125,10 @@ function onContextScroll() {
   if ($('context-body').scrollTop < 80) loadEarlierContext().catch(error);
 }
 // ── Session actions ─────────────────────────────────────────
-async function select(name, cwd) {
+async function select(name, cwd, replaceURL = false) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
   try { localStorage.setItem(SESSION_KEY, name); } catch {}
+  setSessionURL(name, replaceURL);
   clearReasoning(); usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('title').title = name;
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
@@ -1112,18 +1140,63 @@ async function select(name, cwd) {
   loadReasoning();
   for (const row of $('sessions').children) { const active = row.dataset?.name === name; row.classList.toggle('selected', active); const open = row.firstElementChild; if (open) open.setAttribute('aria-current', active ? 'page' : 'false'); }
   $('app').classList.remove('sessions-open'); $('toggle-sessions').setAttribute('aria-expanded', 'false');
-  try { await history(true, true); } catch (e) { if (e.status !== 404) error(e); }
+  try { await loadHistory(true, true); } catch (e) { if (e.status !== 404) error(e); }
   if (version !== generation) return;
   await loadSnapshot(); if (version === generation) connect();
   if (version === generation && contextOpen()) loadContext();
 }
-// Reopen the remembered session on load, if it still exists in the listed set.
+// The open session is named in the URL (/session/<name>), so a page can be
+// bookmarked, shared and reloaded straight into the same conversation. A real
+// path is what people copy from the address bar; the shell is served for it and
+// the app reads the name back out, falling back cleanly when it has gone stale.
+function sessionFromURL() {
+  const match = globalThis.location.pathname.match(/^\/session\/([^/]+)$/);
+  if (!match) return '';
+  try { return decodeURIComponent(match[1]); } catch { return ''; }
+}
+function setSessionURL(name, replace) {
+  const path = name ? '/session/' + encodeURIComponent(name) : '/';
+  if (globalThis.location.pathname === path) return;
+  // Read the Window API through globalThis: a top-level declaration in this file
+  // replaces the Window property of the same name for the whole script, which is
+  // why the transcript loader is loadHistory rather than history.
+  try {
+    if (replace) globalThis.history.replaceState({name}, '', path);
+    else globalThis.history.pushState({name}, '', path);
+  } catch { /* an origin that forbids pushState must not break the workspace */ }
+}
+// Reopen the session the URL names, or the remembered one, if it still exists in
+// the listed set.
 function restoreSession(list) {
   if (selected) return;
+  const fromURL = sessionFromURL();
+  if (fromURL) {
+    if (list.some(meta => meta.name === fromURL)) { select(fromURL, undefined, true); return; }
+    // A stale bookmark must not strand the page, so drop it and fall back to the
+    // remembered session below.
+    toast('Session "' + fromURL + '" no longer exists.');
+    setSessionURL('', true);
+  }
   let name = '';
   try { name = localStorage.getItem(SESSION_KEY) || ''; } catch { return; }
   if (!name || !list.some(meta => meta.name === name)) return;
-  select(name);
+  select(name, undefined, true);
+}
+// Back and forward walk session pages, so the browser's history is the session's
+// history rather than a pile of identical workspace entries.
+async function onPopState() {
+  const name = sessionFromURL();
+  if (!name) { clearWorkspace(); return; }
+  if (name === selected) return;
+  try {
+    const list = await sessions(true);
+    if (!list.some(meta => meta.name === name)) {
+      toast('Session "' + name + '" no longer exists.');
+      clearWorkspace();
+      return;
+    }
+    await select(name, undefined, true);
+  } catch (e) { error(e); }
 }
 // Ask whether to snapshot the dropped turns before rewinding. Resolves to true
 // (backup), false (plain truncate), or null (cancelled).
@@ -1191,6 +1264,7 @@ async function deleteSession(name) {
 function clearWorkspace() {
   disconnect(); generation++; selected = '';
   try { localStorage.removeItem(SESSION_KEY); } catch {}
+  setSessionURL('', true);
   durable = []; liveSteps = []; currentStep = null; thinking = '';
   liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0;
   sessionBusy = false; liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = false;
@@ -1270,7 +1344,9 @@ function shellSegments(command) {
     if (depth || !['&', '|', ';'].includes(c)) continue;
     // Redirections and case terminators are not command-chain operators.
     if ((c === '|' || c === '&') && command[i - 1] === '>') continue;
-    if (c === '&' && command[i + 1] !== '&') continue;
+    // A lone & backgrounds what precedes it, so like the trust parser's split it
+    // separates the chain; &> is a redirection, not an operator.
+    if (c === '&' && command[i + 1] === '>') continue;
     if (c === ';' && (command[i + 1] === ';' || command[i - 1] === ';')) return [command];
     const end = i + ((c === '&' || c === '|') && command[i + 1] === c ? 2 : c === '|' && command[i + 1] === '&' ? 2 : 1);
     segments.push(command.slice(start, end).trim()); start = end; i = end - 1;
@@ -1344,7 +1420,9 @@ async function renameSession() {
   try {
     const meta = await api('rename', {name, new_name: next});
     await sessions(true);
-    await select(meta.name || next);
+    // A rename refines the page the reader is on, so it replaces that history
+    // entry instead of adding one pointing at the old name.
+    await select(meta.name || next, undefined, true);
   } catch (err) { error(err); }
 }
 let creating = false;
@@ -1389,13 +1467,14 @@ $('theme-toggle').onclick = toggleTheme;
 $('show-context').onchange = () => setContextOpen($('show-context').checked);
 $('context-close').onclick = () => setContextOpen(false);
 $('context-body').onscroll = onContextScroll;
+globalThis.onpopstate = () => { onPopState().catch(error); };
 $('prev-input').onclick = jumpToPrevInput;
 $('to-bottom').onclick = jumpToBottom;
 $('conversation').onscroll = () => {
   updateJumpButtons();
   // Reach the top and load a few more older turns (the initial window is small).
   const scroller = $('conversation');
-  if (scroller.scrollTop <= 8 && historyOffset > 0 && !refreshing) history().catch(error);
+  if (scroller.scrollTop <= 8 && historyOffset > 0 && !refreshing) loadHistory().catch(error);
 };
 $('message').oninput = controls;
 $('message').onkeydown = composerKey;

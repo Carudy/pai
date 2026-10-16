@@ -13,7 +13,7 @@ import (
 )
 
 func canonicalServeOrigin(raw string) (string, error) {
-	invalid := errors.New("public-origin must be an http/https origin without path, query, fragment, or userinfo")
+	invalid := errors.New("must be an http/https origin without path, query, fragment, or userinfo")
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", invalid

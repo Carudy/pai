@@ -776,7 +776,11 @@ pai serve --token-file /path/to/private-token \
 
 The proxy should preserve `Host` and support SSE without response buffering.
 `--public-origin` explicitly configures browser origin validation and Secure
-cookies; forwarded headers are not trusted. Do not expose plain HTTP carrying
+cookies; forwarded headers are not trusted. To reach the same server directly as
+well — by a LAN address, say — list that address with `--allow-origin
+http://192.168.1.5:9384` (repeatable); it is accepted for mutations in addition
+to the canonical origin, and you log in again there, because cookies are per
+host. Do not expose plain HTTP carrying
 a token to an untrusted network. The login authenticates access to tools that
 can execute commands and modify files; this is a single-user service, not a
 multi-tenant sandbox.
