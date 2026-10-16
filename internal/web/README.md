@@ -52,8 +52,11 @@ LAN IP, say) while `PublicOrigin` stays canonical; each is matched on scheme and
 host exactly, they widen only the origin gate (another origin still has to
 authenticate there, since cookies are per host), and they are not a Host
 allowlist. `New` retains its handler-only return type, with no
-validation error return or panic. Cookie Secure is true when `r.TLS` is nonnil
-**or** PublicOrigin uses HTTPS. Neither Origin checks nor cookie security trust
+validation error return or panic. Cookie Secure follows the scheme the browser
+actually used — `r.TLS` nonnil, else the accepted request Origin's scheme — so a
+plain-HTTP allow-origin is given a non-Secure cookie. A Secure cookie sent over
+plain HTTP is dropped by the browser, which would make such a login succeed and
+then 401 on the next request. Neither Origin checks nor cookie security trust
 `Forwarded` or any `X-Forwarded-*` headers. Host must be validated against the configured public
 host/listener by the composition root if DNS rebinding is a concern, especially
 in unauthenticated loopback mode. Origin validation is not a Host allowlist.
@@ -134,7 +137,8 @@ rejected; there is no URL authentication.
 
 - `POST /api/login`: `{ "token": "..." }`; constant-time SHA-256 digest
   comparison; issues a fresh random 256-bit, HttpOnly, SameSite=Strict, Path=/
-  cookie, Secure on TLS or an HTTPS PublicOrigin. Credentials expire after 12 hours, are stored only as
+  cookie, Secure when the connection is TLS or the accepted Origin's scheme is
+  HTTPS (see the cookie rule above). Credentials expire after 12 hours, are stored only as
   hashes in memory, and are lost on restart. At most 128 unexpired credentials
   per handler. All API routes except login require this cookie if Token is set.
   The static assets (`/`, `/app.js`, `/style.css`) are served unauthenticated; the

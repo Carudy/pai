@@ -218,7 +218,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.sessions[key] = now.Add(sessionLifetime)
 		h.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: credential, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil || strings.HasPrefix(h.publicOrigin, "https://"), MaxAge: int(sessionLifetime.Seconds())})
+		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: credential, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: h.cookieSecure(r), MaxAge: int(sessionLifetime.Seconds())})
 		respond(w, 200, map[string]bool{"ok": true})
 		return
 	}
@@ -652,6 +652,30 @@ func (h *handler) sameOrigin(r *http.Request) bool {
 	}
 	return origin.Scheme == scheme && strings.EqualFold(origin.Host, host)
 }
+
+// cookieSecure reports whether the browser may be given the login cookie as
+// Secure. It must match the scheme the browser is actually using: a browser
+// refuses a Secure cookie delivered over plain HTTP, so a session opened through a
+// plain-HTTP allow-origin would log in successfully and then bounce straight back
+// to the login form on the next request.
+//
+// The request's Origin is what names that scheme. By the time a mutation reaches
+// here it has already been checked against the configured origins, so it is the
+// browser's own scheme — including when a proxy terminated TLS and r.TLS is nil —
+// and a forged Origin cannot relax it, because an origin only passes the gate if
+// it was configured with that scheme.
+func (h *handler) cookieSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if origin, valid := parseOrigin(r.Header.Get("Origin")); valid {
+		return origin.Scheme == "https"
+	}
+	// No usable Origin: unreachable for a mutation, which always carries one, so
+	// this only guards a direct call. Fall back to the canonical origin's scheme.
+	return strings.HasPrefix(h.publicOrigin, "https://")
+}
+
 func (h *handler) authenticated(r *http.Request) bool {
 	if h.token == "" {
 		return true

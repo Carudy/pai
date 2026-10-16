@@ -1167,14 +1167,25 @@ func TestAllowedOrigins(t *testing.T) {
 	const extra = "http://192.168.1.5:9384"
 	h := New(m, Options{Token: "secret", PublicOrigin: public, AllowOrigins: []string{extra}})
 
-	for _, origin := range []string{public, extra} {
-		w := request(h, "POST", "/api/login", `{"token":"secret"}`, nil, origin)
+	for _, tc := range []struct {
+		origin string
+		secure bool
+	}{
+		{public, true},
+		// A plain-HTTP origin must not be handed a Secure cookie: the browser would
+		// drop it, so login would succeed and the next request would 401.
+		{extra, false},
+	} {
+		w := request(h, "POST", "/api/login", `{"token":"secret"}`, nil, tc.origin)
 		if w.Code != 200 {
-			t.Fatalf("origin %q login: %d %s", origin, w.Code, w.Body.String())
+			t.Fatalf("origin %q login: %d %s", tc.origin, w.Code, w.Body.String())
 		}
 		cookie := w.Result().Cookies()[0]
-		if w = request(h, "POST", "/api/cancel", `{"name":"missing"}`, cookie, origin); w.Code != 404 {
-			t.Fatalf("origin %q mutation: %d", origin, w.Code)
+		if cookie.Secure != tc.secure {
+			t.Fatalf("origin %q cookie Secure = %v, want %v", tc.origin, cookie.Secure, tc.secure)
+		}
+		if w = request(h, "POST", "/api/cancel", `{"name":"missing"}`, cookie, tc.origin); w.Code != 404 {
+			t.Fatalf("origin %q mutation: %d", tc.origin, w.Code)
 		}
 	}
 	for _, origin := range []string{"http://192.168.1.6:9384", "http://evil.example", ""} {
