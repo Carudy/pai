@@ -57,7 +57,13 @@ func TestPinnedMarkdownAssets(t *testing.T) {
 	}
 }
 
-type backend struct{ confirm bool }
+type backend struct {
+	confirm bool
+	// applied records the context surgery the endpoint asked for, keyed by turn,
+	// as "action:content". A shared map behind a value receiver is enough because
+	// the endpoint test only needs to observe the calls.
+	applied map[int]string
+}
 
 func (backend) List() ([]runner.Meta, error) {
 	return []runner.Meta{{Name: "one", Cwd: "/fixed"}, {Name: "two", Cwd: "/fixed"}}, nil
@@ -83,8 +89,27 @@ func (backend) Context(name string) (runner.ContextView, error) {
 		Config: runner.ContextSettings{KeepTurns: 3, MaxTurns: 20},
 	}, nil
 }
+func (b backend) SetOverride(name string, seq int, action, content string) error {
+	if name == "missing" {
+		return runner.ErrNotFound
+	}
+	if b.applied != nil {
+		b.applied[seq] = action + ":" + content
+	}
+	return nil
+}
+func (b backend) DeleteOverride(name string, seq int) error {
+	if name == "missing" {
+		return runner.ErrNotFound
+	}
+	if b.applied != nil {
+		delete(b.applied, seq)
+	}
+	return nil
+}
 
 var _ runner.ContextBackend = backend{}
+var _ runner.ContextSetter = backend{}
 
 type failedPreparationBackend struct{ backend }
 
@@ -131,9 +156,13 @@ func TestSendPreparationFailureSnapshot(t *testing.T) {
 	}
 }
 
-// The context inspector endpoint returns the view the backend supplies.
+// The context inspector endpoint returns the view the backend supplies, and the
+// POST form records surgery on one turn (or clears it, with reset).
 func TestContextAPI(t *testing.T) {
-	h, _ := setup(t, "")
+	applied := map[int]string{}
+	m := runner.New(context.Background(), backend{applied: applied}, 2)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
 	w := request(h, http.MethodGet, "/api/context?name=one", "", nil, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("context: %d %s", w.Code, w.Body.String())
@@ -148,8 +177,40 @@ func TestContextAPI(t *testing.T) {
 	if w := request(h, http.MethodGet, "/api/context?name=missing", "", nil, ""); w.Code != http.StatusNotFound {
 		t.Errorf("missing session = %d, want 404", w.Code)
 	}
-	if w := request(h, http.MethodPost, "/api/context?name=one", "", nil, "http://pai.test"); w.Code != http.StatusMethodNotAllowed {
-		t.Errorf("POST = %d, want 405", w.Code)
+
+	post := func(body string) int {
+		t.Helper()
+		return request(h, http.MethodPost, "/api/context", body, nil, "http://pai.test").Code
+	}
+	if code := post(`{"name":"one","seq":1,"action":"replace","content":"trimmed"}`); code != http.StatusOK {
+		t.Fatalf("replace = %d", code)
+	}
+	if applied[1] != core.OverrideReplace+":trimmed" {
+		t.Errorf("replace not recorded: %+v", applied)
+	}
+	if code := post(`{"name":"one","seq":1,"action":"drop","content":"ignored"}`); code != http.StatusOK {
+		t.Fatalf("drop = %d", code)
+	}
+	if applied[1] != core.OverrideDrop+":" {
+		t.Errorf("drop not recorded: %+v", applied)
+	}
+	if code := post(`{"name":"one","seq":1,"action":"reset"}`); code != http.StatusOK {
+		t.Fatalf("reset = %d", code)
+	}
+	if _, ok := applied[1]; ok {
+		t.Errorf("reset did not clear: %+v", applied)
+	}
+	if code := post(`{"name":"one","seq":1,"action":"bogus"}`); code != http.StatusBadRequest {
+		t.Errorf("bad action = %d, want 400", code)
+	}
+	if code := post(`{"name":"one","seq":0,"action":"drop"}`); code != http.StatusBadRequest {
+		t.Errorf("zero seq = %d, want 400", code)
+	}
+	if code := post(`{"name":"missing","seq":1,"action":"drop"}`); code != http.StatusNotFound {
+		t.Errorf("missing session = %d, want 404", code)
+	}
+	if w := request(h, http.MethodPut, "/api/context", "", nil, "http://pai.test"); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("PUT = %d, want 405", w.Code)
 	}
 }
 

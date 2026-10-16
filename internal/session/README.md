@@ -13,6 +13,13 @@ See the [module map](../organization.md) for the storage adapter boundary.
 - `Store.SetModel`, `Store.SetRole`, `Store.SetWorkingDir`, and `Store.Truncate`
   change saved metadata or history without touching the rest; `Rename`/`Delete`
   round out the set.
+- `Store.SetOverride`/`Store.DeleteOverride` keep a small **override layer** over
+  the turns: at most one `Override` per `(session, seq)`, either a replacement
+  (`core.OverrideReplace`) or a drop (`core.OverrideDrop`). The layer is keyed by
+  the same `seq` as the turns and cascades with them, so a truncate or rename
+  takes its overrides along. It never rewrites a stored turn — it only changes
+  what a run sends. `Get` loads it alongside the turns; a session with none leaves
+  `Session.Overrides` nil.
 - `NewRecorder` implements `core.Recorder`; `controller.go` adapts session
   operations to the loop's storage port.
 

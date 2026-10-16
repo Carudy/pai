@@ -80,6 +80,11 @@ const cookieName = "pai_session"
 const sessionLifetime = 12 * time.Hour
 const requestLimit = 64 << 10
 
+// maxCardBytes bounds one replacement so a single surgical edit cannot approach
+// the whole request budget; a card's original tool output can be far larger than
+// anything worth pasting back in.
+const maxCardBytes = 32 << 10
+
 type handler struct {
 	manager      *runner.Manager
 	token        string
@@ -389,15 +394,59 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respond(w, 200, history)
 	case "/api/context":
-		if !method(w, r, http.MethodGet) {
-			return
+		switch r.Method {
+		case http.MethodGet:
+			view, err := h.manager.Context(r.URL.Query().Get("name"))
+			if err != nil {
+				managerError(w, err)
+				return
+			}
+			respond(w, 200, view)
+		case http.MethodPost:
+			var body struct {
+				Name    string `json:"name"`
+				Seq     int    `json:"seq"`
+				Action  string `json:"action"`
+				Content string `json:"content"`
+			}
+			if !decode(w, r, &body) {
+				return
+			}
+			if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+				fail(w, 400, "session name must contain 1–256 bytes")
+				return
+			}
+			if body.Seq < 1 {
+				fail(w, 400, "turn sequence must be positive")
+				return
+			}
+			// reset is a request verb, not a stored action: it clears the surgery
+			// and lets the stored text through again.
+			var err error
+			switch body.Action {
+			case core.OverrideReplace:
+				if len(body.Content) > maxCardBytes {
+					fail(w, 413, "replacement text is too large")
+					return
+				}
+				err = h.manager.SetOverride(body.Name, body.Seq, core.OverrideReplace, body.Content)
+			case core.OverrideDrop:
+				err = h.manager.SetOverride(body.Name, body.Seq, core.OverrideDrop, "")
+			case "reset":
+				err = h.manager.DeleteOverride(body.Name, body.Seq)
+			default:
+				fail(w, 400, "action must be replace, drop, or reset")
+				return
+			}
+			if err != nil {
+				managerError(w, err)
+				return
+			}
+			respond(w, 200, map[string]bool{"ok": true})
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			fail(w, 405, "method not allowed")
 		}
-		view, err := h.manager.Context(r.URL.Query().Get("name"))
-		if err != nil {
-			managerError(w, err)
-			return
-		}
-		respond(w, 200, view)
 	case "/api/snapshot":
 		if !method(w, r, http.MethodGet) {
 			return

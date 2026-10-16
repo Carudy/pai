@@ -76,6 +76,44 @@ func (m *Manager) Context(name string) (ContextView, error) {
 	return b.Context(name)
 }
 
+// SetOverride records the user's surgery on one stored turn and retires the idle
+// runtime, so the next instruction re-prepares its history with the change.
+func (m *Manager) SetOverride(name string, seq int, action, content string) error {
+	b, ok := m.backend.(ContextSetter)
+	if !ok {
+		return errors.New("backend does not support context overrides")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.SetOverride(name, seq, action, content); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
+}
+
+// DeleteOverride clears the user's surgery on one stored turn, retiring the idle
+// runtime so the next instruction re-prepares with the stored text.
+func (m *Manager) DeleteOverride(name string, seq int) error {
+	b, ok := m.backend.(ContextSetter)
+	if !ok {
+		return errors.New("backend does not support context overrides")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.DeleteOverride(name, seq); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
+}
+
 // Send queues an instruction, never an answer to a model question. At capacity
 // an idle worker is evicted and joined before its slot is reused.
 func (m *Manager) Send(name, text string) error {

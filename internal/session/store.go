@@ -21,6 +21,12 @@ type Store interface {
 	SetRole(name, role string) error
 	// SetWorkingDir updates the workspace without changing conversation history.
 	SetWorkingDir(name, cwd string) error
+	// SetOverride stores or replaces the user's surgery on one turn, returning
+	// ErrNotFound when the session or the turn does not exist.
+	SetOverride(name string, o Override) error
+	// DeleteOverride clears the surgery on one turn, or ErrNotFound when there is
+	// none to clear.
+	DeleteOverride(name string, seq int) error
 	// Truncate keeps the first `keep` turns and drops the rest, or ErrNotFound.
 	// It backs rewinding to an earlier point in a conversation.
 	Truncate(name string, keep int) error

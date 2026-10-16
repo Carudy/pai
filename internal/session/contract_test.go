@@ -57,14 +57,16 @@ func mustCreate(t *testing.T, store Store, meta Meta) {
 func TestStoreContractMissingSession(t *testing.T) {
 	store := openContractStore(t)
 	for name, op := range map[string]func() error{
-		"Get":           func() error { _, err := store.Get("missing"); return err },
-		"Append":        func() error { return store.Append("missing", core.Turn{Content: "x"}) },
-		"SetModel":      func() error { return store.SetModel("missing", "m") },
-		"SetRole":       func() error { return store.SetRole("missing", "coder") },
-		"SetWorkingDir": func() error { return store.SetWorkingDir("missing", "/d") },
-		"Truncate":      func() error { return store.Truncate("missing", 1) },
-		"Rename":        func() error { return store.Rename("missing", "other") },
-		"Delete":        func() error { return store.Delete("missing") },
+		"Get":            func() error { _, err := store.Get("missing"); return err },
+		"Append":         func() error { return store.Append("missing", core.Turn{Content: "x"}) },
+		"SetModel":       func() error { return store.SetModel("missing", "m") },
+		"SetRole":        func() error { return store.SetRole("missing", "coder") },
+		"SetWorkingDir":  func() error { return store.SetWorkingDir("missing", "/d") },
+		"SetOverride":    func() error { return store.SetOverride("missing", Override{Seq: 1, Action: core.OverrideDrop}) },
+		"DeleteOverride": func() error { return store.DeleteOverride("missing", 1) },
+		"Truncate":       func() error { return store.Truncate("missing", 1) },
+		"Rename":         func() error { return store.Rename("missing", "other") },
+		"Delete":         func() error { return store.Delete("missing") },
 	} {
 		if err := op(); !errors.Is(err, ErrNotFound) {
 			t.Errorf("%s on a missing session = %v, want ErrNotFound", name, err)
@@ -78,6 +80,97 @@ func TestStoreContractMissingSession(t *testing.T) {
 	}
 	if err := store.Append("bad/name", core.Turn{Content: "x"}); err == nil {
 		t.Error("Append accepted an invalid name")
+	}
+}
+
+// Overrides ride alongside turns: one row per (session, seq), cleared when the
+// turn they name goes away, and carried by a rename.
+func TestStoreContractOverrides(t *testing.T) {
+	store := openContractStore(t)
+	mustCreate(t, store, Meta{Name: "one", Role: "devops"})
+	var turns []core.Turn
+	for i := 0; i < 3; i++ {
+		turns = append(turns, core.Turn{Role: "user", Kind: "input", Content: string(rune('a' + i))})
+	}
+	if err := store.Append("one", turns...); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.SetOverride("one", Override{Seq: 1, Action: core.OverrideReplace, Content: "rewritten"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetOverride("one", Override{Seq: 2, Action: core.OverrideDrop, Content: "ignored"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get("one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Overrides) != 2 {
+		t.Fatalf("overrides = %+v, want 2", got.Overrides)
+	}
+	if o := got.Overrides[1]; o.Action != core.OverrideReplace || o.Content != "rewritten" {
+		t.Errorf("override 1 = %+v", o)
+	}
+	// A drop stores no text even if the caller passes some.
+	if o := got.Overrides[2]; o.Action != core.OverrideDrop || o.Content != "" {
+		t.Errorf("override 2 = %+v, want an empty drop", o)
+	}
+
+	// Setting the same turn again replaces rather than accumulates.
+	if err := store.SetOverride("one", Override{Seq: 1, Action: core.OverrideDrop}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = store.Get("one")
+	if len(got.Overrides) != 2 || got.Overrides[1].Action != core.OverrideDrop {
+		t.Fatalf("upsert did not replace: %+v", got.Overrides)
+	}
+
+	// A turn that does not exist is ErrNotFound, not a foreign-key error.
+	if err := store.SetOverride("one", Override{Seq: 99, Action: core.OverrideDrop}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("override on a missing turn = %v, want ErrNotFound", err)
+	}
+	if err := store.SetOverride("one", Override{Seq: 1, Action: "nope"}); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("invalid action = %v, want a validation error", err)
+	}
+
+	// Reset drops the row; resetting again is ErrNotFound.
+	if err := store.DeleteOverride("one", 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteOverride("one", 2); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second reset = %v, want ErrNotFound", err)
+	}
+
+	// Truncating away a turn cascades its override; an override on a surviving turn
+	// stays.
+	if err := store.SetOverride("one", Override{Seq: 3, Action: core.OverrideDrop}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Truncate("one", 1); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = store.Get("one")
+	if len(got.Overrides) != 1 {
+		t.Fatalf("after truncate overrides = %+v, want only the surviving turn", got.Overrides)
+	}
+	if _, ok := got.Overrides[3]; ok {
+		t.Errorf("the dropped turn's override survived: %+v", got.Overrides)
+	}
+
+	// A surviving override follows a rename.
+	if err := store.SetOverride("one", Override{Seq: 1, Action: core.OverrideReplace, Content: "kept"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Rename("one", "two"); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := store.Get("two")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := moved.Overrides[1]; o.Action != core.OverrideReplace || o.Content != "kept" {
+		t.Fatalf("override did not follow rename: %+v", moved.Overrides)
 	}
 }
 

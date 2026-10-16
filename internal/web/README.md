@@ -187,7 +187,16 @@ rejected; there is no URL authentication.
   (`original`, `sent`, and a `state` of `sent` | `elided` | `edited` | `dropped` |
   `summarized_away` | `capped`), the system `tail`, the `model`, and the
   compaction `config` in effect. It reads persisted state only, so it works with
-  or without a live runtime; 404 for an unknown session.
+  or without a live runtime; 404 for an unknown session. The projection applies the
+  user's overrides, so an edited or dropped turn reports what would actually be
+  sent.
+- `POST /api/context`: `{ "name": "...", "seq": N, "action":
+  "replace"|"drop"|"reset", "content": "..." }`; 200 `{ "ok": true }`. Records
+  the user's surgery on one turn — `replace` swaps its text (capped at 32 KiB,
+  else 413), `drop` omits it, `reset` clears the override and restores the stored
+  text. It changes only what the next send uses, never the stored turn, and
+  requires an idle session (else 409). An unknown action or a non-positive `seq`
+  is 400; a missing session or turn is 404.
 - `GET /api/snapshot?name=...`: `runner.Snapshot`; live state, or a retained
   stopped/error snapshot after a failure (including initialization failures that
   happened before SSE subscribed). The manager retains at most 32 failed-session
@@ -259,8 +268,15 @@ card per message showing the original and what is actually sent (with a state
 badge for elided, edited, dropped, summarized-away and capped messages), and the
 tail, with the compaction settings that produced them. Messages are grouped by
 user turn — the unit compaction and `max_turns` count — and the floating jump
-arrows are hidden while the overlay is open. It is read-only and reconstructed
-from the store, so it shows what compaction did rather than a guess. A Reasoning dropdown sets the session's
+arrows are hidden while the overlay is open. Cards that are in the replay window
+offer per-message **Edit…** (an inline textarea seeded from the sent text),
+**Drop**, and — when overridden — **Reset**; an edited card hides its stored
+original behind a detail, and a card outside the window (summarized-away or
+capped) shows why it cannot be edited rather than a no-op control. The controls
+are disabled while the session runs. It is reconstructed from the store rather
+than captured live, so it shows what compaction and the overrides actually did
+rather than a guess; applying surgery retires the idle runtime, so the next send
+uses it. A Reasoning dropdown sets the session's
 effort (in memory; applies to the next run). Snapshots recover pending
 prompt titles/IDs and retained `pending.tool` approval context (native core
 keys `Name`, `Target`, `Dir`, `Detail`, `Reason`, `Diff`) on reconnect, page reload, and

@@ -168,15 +168,9 @@ const (
 	StateCapped         = "capped"          // past session.max_turns
 )
 
-// Override action labels for Override.Action.
-const (
-	OverrideReplace = "replace"
-	OverrideDrop    = "drop"
-)
-
 // Override is a user's surgery on one stored turn, keyed by Turn.Seq.
 type Override struct {
-	Action  string // OverrideReplace | OverrideDrop
+	Action  string // core.OverrideReplace | core.OverrideDrop
 	Content string // replacement text for OverrideReplace
 }
 
@@ -190,10 +184,10 @@ func ApplyOverrides(turns []core.Turn, overrides map[int]Override) []core.Turn {
 	out := make([]core.Turn, 0, len(turns))
 	for _, t := range turns {
 		o, ok := overrides[t.Seq]
-		if ok && o.Action == OverrideDrop {
+		if ok && o.Action == core.OverrideDrop {
 			continue
 		}
-		if ok && o.Action == OverrideReplace {
+		if ok && o.Action == core.OverrideReplace {
 			t.Content = o.Content
 		}
 		out = append(out, t)
@@ -244,9 +238,9 @@ func ContextCards(turns []core.Turn, overrides map[int]Override, cfg config.Cont
 			} else {
 				c.State = StateCapped
 			}
-		case hasOverride && o.Action == OverrideDrop:
+		case hasOverride && o.Action == core.OverrideDrop:
 			c.State = StateDropped
-		case hasOverride && o.Action == OverrideReplace:
+		case hasOverride && o.Action == core.OverrideReplace:
 			c.Sent = sent[t.Seq]
 			c.State = StateEdited
 		default:

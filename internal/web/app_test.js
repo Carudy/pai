@@ -23,6 +23,7 @@ class Element {
   append(...nodes) { for (const node of nodes) { node.parent = this; this.children.push(node); } }
   replaceChildren(...nodes) { this._text = ''; this.children = []; this.append(...nodes); }
   setAttribute(key, value) { this.attributes[key] = value; }
+  focus() { this.focused = true; }
   remove() { this.parent.children.splice(this.parent.children.indexOf(this), 1); }
 }
 function browser() {
@@ -355,6 +356,49 @@ assert.match(ctxText, /#1/, 'cards are numbered');
 assert.match(ctxText, /elided/, 'an elided card shows its state');
 assert.match(ctxText, /summarized away/, 'a not-sent card states why');
 assert.match(inspector.get('context-meta').textContent, /keep 3/, 'the settings strip is rendered');
+// Surgery controls appear only where they can change the send: a card in the
+// replay window offers Edit/Drop, one outside it explains why it cannot.
+const inspectorButtons = () => descendants(inspector.get('context-body')).filter(n => n.tag === 'button');
+const inspectorNotes = () => descendants(inspector.get('context-body')).filter(n => n.className === 'ctx-note').map(n => n.textContent);
+assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', 'Edit…', 'Drop'], 'sent and elided cards are editable');
+assert.deepEqual(inspectorNotes(), ['not editable — before the last summary'], 'a summarized-away card says why it is frozen');
+inspector.run('renderContext(' + JSON.stringify({
+  head: 'H', tail: 'T', model: 'deepseek:test',
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  cards: [
+    {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'trimmed', state: 'edited'},
+    {seq: 2, role: 'user', kind: 'tool_result', original: 'big body', sent: '', state: 'dropped'},
+    {seq: 3, role: 'user', kind: 'input', original: 'old', sent: '', state: 'capped'},
+  ],
+}) + ')');
+// An edited card also offers Reset and hides the stored original behind a detail;
+// a dropped card offers Reset instead of a redundant Drop.
+assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', 'Reset', 'Edit…', 'Reset'], 'overridden cards offer Reset');
+assert.deepEqual(inspectorNotes(), ['not editable — beyond max_turns'], 'a capped card says why it is frozen');
+// Clicking Edit… swaps the body for a textarea seeded from what is sent.
+const editButton = inspectorButtons().find(b => b.textContent === 'Edit…');
+editButton.onclick();
+const editor = descendants(inspector.get('context-body')).find(n => n.tag === 'textarea');
+assert.ok(editor, 'Edit… swaps in an editor');
+assert.equal(editor.value, 'trimmed', 'the editor seeds from the sent text');
+const editorLabels = inspectorButtons().map(b => b.textContent);
+assert.ok(editorLabels.includes('Save') && editorLabels.includes('Cancel'), 'the editor offers Save and Cancel');
+// Save is withheld while the box is empty, so a stray keystroke cannot blank a
+// turn that Drop exists to remove outright.
+const saveButton = inspectorButtons().find(b => b.textContent === 'Save');
+assert.equal(saveButton.disabled, false, 'non-empty text can be saved');
+editor.value = '   '; editor.oninput();
+assert.equal(saveButton.disabled, true, 'a blank replacement cannot be saved');
+// A capped/summarized card is not editable while the session runs either: busy
+// disables every control rather than silently dropping the click.
+inspector.run('sessionBusy=true; renderContext(' + JSON.stringify({
+  head: 'H', tail: 'T', model: 'm',
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  cards: [{seq: 1, role: 'user', kind: 'input', original: 'hi', sent: 'hi', state: 'sent'}],
+}) + ')');
+assert.ok(inspectorButtons().every(b => b.disabled), 'a running session disables the surgery controls');
+assert.match(inspectorNotes().join(' '), /paused while the session runs/, 'the reason for the pause is shown');
+inspector.run('sessionBusy=false');
 // The toggle drives the app class and aria; a never-settling api keeps the async
 // loadContext out of the way, since the class flip is what is under test.
 inspector.run('api=()=>new Promise(()=>{}); setContextOpen(true)');

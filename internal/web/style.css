@@ -1501,6 +1501,65 @@ header p {
     opacity: 0.55;
 }
 
+#context-body .ctx-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-top: 1px solid var(--border);
+}
+
+#context-body .ctx-note {
+    font-size: 11px;
+    opacity: 0.6;
+}
+
+#context-body .ctx-btn {
+    font: inherit;
+    font-size: 11px;
+    padding: 2px 10px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--soft);
+    color: var(--ink);
+    cursor: pointer;
+}
+
+#context-body .ctx-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+#context-body .ctx-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+#context-body .ctx-btn.ctx-primary {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+#context-body .ctx-btn.ctx-danger {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+#context-body .ctx-edit {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    font: inherit;
+    font-size: 12px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--ink);
+    resize: vertical;
+}
+
 #context-body .ctx-system .ctx-body {
     color: var(--muted);
 }

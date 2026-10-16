@@ -33,6 +33,14 @@ const (
 	KindSummary = "summary"
 )
 
+// Context override actions: a user's surgery on one turn. Shared vocabulary for
+// the store that keeps it, the projection that reports it, and the loop that
+// applies it. The transcript is never rewritten — only what a run sends.
+const (
+	OverrideReplace = "replace"
+	OverrideDrop    = "drop"
+)
+
 // Turn is one conversation turn, as persisted and replayed.
 type Turn struct {
 	Role    string // "user" | "assistant"

@@ -106,6 +106,16 @@ type ContextBackend interface {
 	Context(name string) (ContextView, error)
 }
 
+// ContextSetter is optional; it persists the user's surgery on one turn's place
+// in the context-to-send. action is core.OverrideReplace or core.OverrideDrop;
+// DeleteOverride clears it. Like the other setters it must not require a live
+// runtime, but the manager retires any idle one so the next instruction
+// re-prepares with the new projection.
+type ContextSetter interface {
+	SetOverride(name string, seq int, action, content string) error
+	DeleteOverride(name string, seq int) error
+}
+
 // RewindBackend is optional; truncating a session's persisted history must not
 // require a backend that cannot persist. backup requests a snapshot of the
 // dropped turns (nil lets the backend choose its configured default).

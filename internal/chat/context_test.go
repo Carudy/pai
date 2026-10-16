@@ -290,8 +290,8 @@ func TestContextCardsOverrides(t *testing.T) {
 		{Seq: 3, Kind: core.KindInput, Content: "b"},
 	}
 	overrides := map[int]Override{
-		1: {Action: OverrideDrop},
-		2: {Action: OverrideReplace, Content: "short"},
+		1: {Action: core.OverrideDrop},
+		2: {Action: core.OverrideReplace, Content: "short"},
 	}
 	cards := ContextCards(turns, overrides, cfg, 0)
 	if cards[0].State != StateDropped || cards[0].Sent != "" {

@@ -101,10 +101,12 @@ func resolveSession(cfg *config.UserConfig, flags CliFlags) (session.Store, *ses
 
 	// Only part of the transcript is replayed into the model. A summary
 	// checkpoint, if any, replaces everything before it; max_turns then caps the
-	// tail after it. This overwrites sess.Turns, so the recap the caller prints
-	// (and the resumed history) is drawn from the replayed tail — summary plus the
-	// capped tail — not the full transcript still on disk.
+	// tail after it. User overrides are applied to the replay window, not the disk
+	// transcript. This overwrites sess.Turns, so the recap the caller prints (and
+	// the resumed history) is drawn from the replayed, overridden tail — summary
+	// plus the capped tail — not the full transcript still on disk.
 	sess.Turns = chat.ReplayTurns(sess.Turns, cfg.SessionMaxTurns)
+	sess.Turns = chat.ApplyOverrides(sess.Turns, toChatOverrides(sess.Overrides))
 	return store, sess, nil
 }
 
@@ -166,6 +168,19 @@ func summarizeResponse(content string) string {
 		return clip(resp.Reason, 120)
 	}
 	return clip(resp.GetPayload(), 120)
+}
+
+// toChatOverrides maps stored surgery into the projection's own type. The two
+// structs are deliberately separate so session never depends on chat.
+func toChatOverrides(o map[int]session.Override) map[int]chat.Override {
+	if len(o) == 0 {
+		return nil
+	}
+	out := make(map[int]chat.Override, len(o))
+	for seq, v := range o {
+		out[seq] = chat.Override{Action: v.Action, Content: v.Content}
+	}
+	return out
 }
 
 // toMessages converts persisted turns into a replayable conversation.

@@ -42,6 +42,17 @@ type Meta struct {
 type Session struct {
 	Meta  Meta
 	Turns []core.Turn
+	// Overrides is the user's context surgery keyed by Turn.Seq; nil when none.
+	// It changes only what a runtime sends, never the stored turn.
+	Overrides map[int]Override
+}
+
+// Override is a user's surgery on one stored turn, keyed by Turn.Seq. The turn
+// itself is never rewritten.
+type Override struct {
+	Seq     int
+	Action  string // core.OverrideReplace | core.OverrideDrop
+	Content string // replacement text for OverrideReplace; empty for OverrideDrop
 }
 
 // nameRe restricts session names so they stay portable identifiers, safe in

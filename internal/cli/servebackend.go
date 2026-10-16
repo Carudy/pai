@@ -98,7 +98,7 @@ func (b *serveBackend) Context(name string) (runner.ContextView, error) {
 	if err != nil {
 		return runner.ContextView{}, fmt.Errorf("load role: %w", err)
 	}
-	cards := chat.ContextCards(s.Turns, nil, cfg.Context, cfg.SessionMaxTurns)
+	cards := chat.ContextCards(s.Turns, toChatOverrides(s.Overrides), cfg.Context, cfg.SessionMaxTurns)
 	view := runner.ContextView{
 		Head:  rp.Head(),
 		Tail:  rp.Tail(),
@@ -116,6 +116,47 @@ func (b *serveBackend) Context(name string) (runner.ContextView, error) {
 		view.Cards[i] = runner.ContextCard{Seq: c.Seq, Role: c.Role, Kind: c.Kind, Original: c.Original, Sent: c.Sent, State: c.State}
 	}
 	return view, nil
+}
+
+// SetOverride records the user's surgery on one turn. It changes only what a run
+// sends, never the stored turn; the manager has already retired the idle runtime
+// so the next instruction re-prepares with it.
+func (b *serveBackend) SetOverride(name string, seq int, action, content string) error {
+	if !session.ValidName(name) {
+		return errors.New("invalid session name")
+	}
+	if seq < 1 {
+		return errors.New("turn sequence must be positive")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	err := b.store.SetOverride(name, session.Override{Seq: seq, Action: action, Content: content})
+	return overrideError(err)
+}
+
+// DeleteOverride clears the surgery on one turn, restoring its stored text.
+func (b *serveBackend) DeleteOverride(name string, seq int) error {
+	if !session.ValidName(name) {
+		return errors.New("invalid session name")
+	}
+	if seq < 1 {
+		return errors.New("turn sequence must be positive")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return overrideError(b.store.DeleteOverride(name, seq))
+}
+
+// overrideError translates the store's missing-session/turn signal into the
+// runner's, so the manager and HTTP layer share one meaning for "not found".
+func overrideError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, session.ErrNotFound) {
+		return runner.ErrNotFound
+	}
+	return fmt.Errorf("context override: %w", err)
 }
 
 func (b *serveBackend) Prepare(name string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), error) {
@@ -485,7 +526,8 @@ func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, p
 			return fail(fmt.Errorf("create session: %w", err))
 		}
 	}
-	return cfg, client, &serveRecorder{backend: b, name: name}, toMessages(chat.ReplayTurns(s.Turns, cfg.SessionMaxTurns)), func() {}, cwd, nil
+	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
+	return cfg, client, &serveRecorder{backend: b, name: name}, toMessages(served), func() {}, cwd, nil
 }
 
 type serveRecorder struct {
@@ -517,6 +559,7 @@ func (b *serveBackend) ReasoningDefault() (string, error) {
 
 var _ runner.Backend = (*serveBackend)(nil)
 var _ runner.ContextBackend = (*serveBackend)(nil)
+var _ runner.ContextSetter = (*serveBackend)(nil)
 var _ runner.ModelBackend = (*serveBackend)(nil)
 var _ runner.WorkingDirSetter = (*serveBackend)(nil)
 var _ runner.ReasoningBackend = (*serveBackend)(nil)

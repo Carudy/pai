@@ -849,6 +849,13 @@ function scheduleContext() {
   contextTimer = setTimeout(() => { if (contextOpen() && selected) loadContext(); }, 200);
 }
 function byteSize(value) { return tokenCount(String(value || '').length) + ' B'; }
+// Surgery is only meaningful on a card that is actually sent; a summarized-away
+// or capped turn is outside the replay window, so an override on it would change
+// nothing. The inspector says so instead of offering a control that is a no-op.
+function contextEditable(card) {
+  return ['sent', 'elided', 'edited', 'dropped'].includes(card.state);
+}
+let contextApplying = false;
 function contextCard(card) {
   const node = text('article', '', card.kind === 'input' ? 'ctx-card ctx-turn' : 'ctx-card');
   const head = text('div', '', 'ctx-head');
@@ -862,6 +869,13 @@ function contextCard(card) {
   const body = text('div', '', 'ctx-body');
   if (sent) {
     body.append(prose(card.sent));
+    // An edit hides the stored text; keep it one click away so the surgery is
+    // always reversible against what it replaced.
+    if (card.state === 'edited') {
+      const detail = document.createElement('details');
+      detail.append(text('summary', 'show the stored original'), prose(card.original));
+      body.append(detail);
+    }
   } else if (card.state === 'elided') {
     body.append(prose(card.sent));
     const detail = document.createElement('details');
@@ -870,8 +884,79 @@ function contextCard(card) {
   } else {
     body.append(text('div', 'not sent — ' + (contextLabels[card.state] || card.state), 'ctx-muted'), prose(card.original));
   }
-  node.append(head, body);
+  const actions = text('div', '', 'ctx-actions');
+  node.append(head, body, actions);
+  fillContextActions(actions, body, card);
   return node;
+}
+// fillContextActions rebuilds a card's action row, so Cancel can restore it after
+// an inline edit without a round trip.
+function fillContextActions(actions, body, card) {
+  actions.replaceChildren();
+  if (!contextEditable(card)) {
+    actions.append(text('span', card.state === 'capped'
+      ? 'not editable — beyond max_turns'
+      : 'not editable — before the last summary', 'ctx-note'));
+    return;
+  }
+  const frozen = !selected || sessionBusy || contextApplying;
+  if (sessionBusy) actions.append(text('span', 'editing is paused while the session runs', 'ctx-note'));
+  const button = (label, cls, title, fn) => {
+    const b = text('button', label, 'ctx-btn' + (cls ? ' ' + cls : ''));
+    b.type = 'button'; b.title = title; b.disabled = frozen; b.onclick = fn;
+    return b;
+  };
+  actions.append(button('Edit…', '', 'Replace this turn with your own text', () => beginContextEdit(actions, body, card)));
+  if (card.state !== 'dropped') {
+    actions.append(button('Drop', 'ctx-danger', 'Omit this turn from what is sent', () => applyContextOverride(card.seq, 'drop', '')));
+  }
+  if (card.state === 'edited' || card.state === 'dropped') {
+    actions.append(button('Reset', '', 'Restore the stored text', () => applyContextOverride(card.seq, 'reset', '')));
+  }
+}
+function beginContextEdit(actions, body, card) {
+  const seed = card.state === 'edited' ? card.sent : card.original;
+  const area = document.createElement('textarea');
+  area.className = 'ctx-edit';
+  area.value = seed;
+  area.rows = Math.min(24, Math.max(4, seed.split('\n').length + 1));
+  const frozen = !selected || sessionBusy || contextApplying;
+  area.disabled = frozen;
+  const save = text('button', 'Save', 'ctx-btn ctx-primary');
+  save.type = 'button';
+  save.disabled = frozen || !seed.trim();
+  save.onclick = () => applyContextOverride(card.seq, 'replace', area.value);
+  // An empty replacement would silently blank the turn; Drop is the explicit way
+  // to omit one, so Save stays off until there is something to save.
+  area.oninput = () => { save.disabled = area.disabled || !area.value.trim(); };
+  const cancel = text('button', 'Cancel', 'ctx-btn');
+  cancel.type = 'button';
+  cancel.onclick = () => loadContext();
+  body.replaceChildren(area);
+  actions.replaceChildren(save, cancel);
+  area.focus();
+}
+async function applyContextOverride(seq, action, content) {
+  if (!selected || sessionBusy || contextApplying) return;
+  const name = selected;
+  let version = generation;
+  contextApplying = true;
+  let ok = true;
+  try {
+    await api('context', {name, seq, action, content});
+  } catch (e) {
+    ok = false;
+    if (name === selected && version === generation) error(e);
+  }
+  // Clear the guard before re-rendering, or the fresh controls render disabled.
+  contextApplying = false;
+  if (!ok || version !== generation) return;
+  // Applying surgery retires the runtime, which closes SSE: drop the dead stream
+  // and reload what the session now would send (like a model or role change).
+  disconnect(); version = ++generation;
+  toast(action === 'reset' ? 'Restored the stored turn.' : action === 'drop' ? 'This turn will be dropped on the next send.' : 'This turn will be replaced on the next send.');
+  await loadContext(); if (version !== generation) return;
+  await loadSnapshot(); if (version === generation) connect();
 }
 function contextSystemCard(title, content, note) {
   const node = text('article', '', 'ctx-card ctx-system');

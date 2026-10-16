@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS turns (
   content TEXT NOT NULL,
   at      INTEGER NOT NULL,
   PRIMARY KEY (name, seq)
+);
+CREATE TABLE IF NOT EXISTS turn_overrides (
+  name       TEXT NOT NULL,
+  seq        INTEGER NOT NULL,
+  action     TEXT NOT NULL,
+  content    TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (name, seq),
+  FOREIGN KEY (name, seq) REFERENCES turns(name, seq) ON DELETE CASCADE ON UPDATE CASCADE
 );`)
 	return err
 }
@@ -115,6 +124,27 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 		return nil, err
 	}
 	sess.Meta.Turns = len(sess.Turns)
+
+	// The override layer rides along with the session: it is small, keyed by the
+	// same seq, and every reader that wants the turns wants the surgery on them.
+	orows, err := s.db.Query(`SELECT seq, action, content FROM turn_overrides WHERE name = ?`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer orows.Close()
+	for orows.Next() {
+		var o Override
+		if err := orows.Scan(&o.Seq, &o.Action, &o.Content); err != nil {
+			return nil, err
+		}
+		if sess.Overrides == nil {
+			sess.Overrides = make(map[int]Override)
+		}
+		sess.Overrides[o.Seq] = o
+	}
+	if err := orows.Err(); err != nil {
+		return nil, err
+	}
 	return sess, nil
 }
 
@@ -211,6 +241,79 @@ func (s *sqliteStore) SetModel(name, model string) error { return s.setField(nam
 func (s *sqliteStore) SetRole(name, role string) error   { return s.setField(name, "role", role) }
 func (s *sqliteStore) SetWorkingDir(name, cwd string) error {
 	return s.setField(name, "cwd", cwd)
+}
+
+// SetOverride stores or replaces the user's surgery on one turn. It upserts, so a
+// turn has at most one override, and it reports ErrNotFound when the session or
+// the turn it names does not exist rather than leaking a foreign-key error.
+func (s *sqliteStore) SetOverride(name string, o Override) error {
+	if err := validate(name); err != nil {
+		return err
+	}
+	if o.Action != core.OverrideReplace && o.Action != core.OverrideDrop {
+		return fmt.Errorf("invalid override action %q", o.Action)
+	}
+	// A drop carries no text, so normalize here and keep the row shape one kind.
+	content := o.Content
+	if o.Action == core.OverrideDrop {
+		content = ""
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	exists, err := turnExists(tx, name, o.Seq)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("%w: %s turn %d", ErrNotFound, name, o.Seq)
+	}
+
+	_, err = tx.Exec(
+		`INSERT INTO turn_overrides(name, seq, action, content, updated_at) VALUES(?, ?, ?, ?, ?)
+		 ON CONFLICT(name, seq) DO UPDATE SET action = excluded.action, content = excluded.content, updated_at = excluded.updated_at`,
+		name, o.Seq, o.Action, content, time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("set override: %w", err)
+	}
+	return tx.Commit()
+}
+
+// DeleteOverride clears the surgery on one turn, restoring its stored text. A
+// turn with no override is ErrNotFound, so reset is not silently ambiguous.
+func (s *sqliteStore) DeleteOverride(name string, seq int) error {
+	if err := validate(name); err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`DELETE FROM turn_overrides WHERE name = ? AND seq = ?`, name, seq)
+	if err != nil {
+		return fmt.Errorf("delete override: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: override on %s turn %d", ErrNotFound, name, seq)
+	}
+	return nil
+}
+
+// turnExists reports whether the named session holds that turn, distinguishing
+// "no such session or turn" (ErrNotFound) from a real query failure.
+func turnExists(tx *sql.Tx, name string, seq int) (bool, error) {
+	var sessionExists int
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM sessions WHERE name = ?`, name).Scan(&sessionExists); err != nil {
+		return false, err
+	}
+	if sessionExists == 0 {
+		return false, nil
+	}
+	var turnExists int
+	if err := tx.QueryRow(`SELECT COUNT(1) FROM turns WHERE name = ? AND seq = ?`, name, seq).Scan(&turnExists); err != nil {
+		return false, err
+	}
+	return turnExists > 0, nil
 }
 
 // Truncate keeps the first keep turns and drops the rest. seq is dense and
