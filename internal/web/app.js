@@ -45,9 +45,10 @@ async function models() {
   modelControls();
 }
 // A datalist filters its suggestions by the field's current value, which hides
-// the other presets whenever a model is already set. Render our own dropdown so
-// every suggestion is visible on focus, while the field still accepts free text.
-function renderModelOptions(filter) {
+// Render our own dropdown so the suggestions are visible on focus, while the field
+// still accepts free text. `show` gates visibility: only focus or typing opens it,
+// so a background refresh (models() on boot) never pops the list open by itself.
+function renderModelOptions(filter, show = false) {
   const list = $('model-options'), input = $('session-model');
   const query = String(filter || '').trim().toLowerCase();
   const matches = modelList.filter(model => !query || model.toLowerCase().includes(query));
@@ -58,6 +59,7 @@ function renderModelOptions(filter) {
     option.onmousedown = event => { event.preventDefault(); chooseModel(model); };
     return option;
   }));
+  if (!show) return;
   const open = matches.length > 0 && !input.disabled;
   list.hidden = !open;
   input.setAttribute('aria-expanded', String(open));
@@ -291,6 +293,9 @@ function initPendingDrag() { initDraggable($('pending'), '#pending-title'); }
 function initReasoningDrag() { initDraggable($('reasoning-preview'), '#reasoning-preview h3', REASONING_POS_KEY); }
 function showReasoning() { restorePosition($('reasoning-preview'), REASONING_POS_KEY); $('reasoning-preview').hidden = false; }
 const text = (tag, value, className) => { const node = document.createElement(tag); node.textContent = value; if (className) node.className = className; return node; };
+// A small inline spinner for a fetch that should not block the rest of the UI.
+function spinner() { const node = text('span', '⏳', 'busy-indicator'); node.setAttribute('aria-hidden', 'true'); return node; }
+function loadingNote(message) { const line = text('p', '', 'loading'); line.append(spinner(), text('span', message)); return line; }
 function actionRow(buttons) { const row = text('div', '', 'pending-actions'); row.append(...buttons); return row; }
 // Errors and notices share one top-center stack, so a transient message always
 // looks and behaves the same wherever it originates. Each card self-dismisses on
@@ -347,7 +352,7 @@ async function api(path, body) {
 function query(endpoint, offset, limit = 100) { return endpoint + '?name=' + encodeURIComponent(selected) + '&offset=' + offset + '&limit=' + limit; }
 async function sessions(reset = false) {
   if (reset) { sessionOffset = 0; $('sessions').replaceChildren(); }
-  $('sessions-status').textContent = 'Loading sessions…';
+  $('sessions-status').replaceChildren(spinner(), text('span', 'Loading sessions…'));
   let page;
   try { page = await api('sessions?offset=' + sessionOffset + '&limit=100'); }
   catch (e) { $('sessions-status').textContent = 'Could not load sessions. Please retry or reload.'; throw e; }
@@ -895,6 +900,9 @@ async function loadContext() {
   const body = $('context-body');
   if (!selected) { $('context-meta').textContent = ''; body.replaceChildren(text('p', 'Open a session to inspect its context.', 'ctx-config')); return; }
   const version = generation, name = selected;
+  // Show the spinner only when there is nothing yet; a refresh keeps the current
+  // view until the new one arrives instead of flashing.
+  if (!body.children.length) body.replaceChildren(loadingNote('Loading the context…'));
   try {
     const view = await api('context?name=' + encodeURIComponent(name));
     if (version !== generation || selected !== name) return;
@@ -1181,8 +1189,8 @@ $('role-form').onsubmit = applyRole;
 $('working-dir-form').onsubmit = applyWorkingDir;
 $('session-working-dir').oninput = () => { cwdDirty = true; workingDirControls(); };
 $('rename-session').onclick = renameSession;
-$('session-model').oninput = () => { modelDirty = true; renderModelOptions($('session-model').value); modelControls(); };
-$('session-model').onfocus = () => renderModelOptions($('session-model').value);
+$('session-model').oninput = () => { modelDirty = true; renderModelOptions($('session-model').value, true); modelControls(); };
+$('session-model').onfocus = () => renderModelOptions($('session-model').value, true);
 $('session-model').onblur = () => setTimeout(closeModelOptions, 120);
 $('session-model').onkeydown = event => { if (event.key === 'Escape') closeModelOptions(); };
 $('session-role-select').onchange = () => { roleDirty = true; controls(); };

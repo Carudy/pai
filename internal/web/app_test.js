@@ -7,6 +7,9 @@ const source = fs.readFileSync(__dirname + '/app.js', 'utf8').split("$('login-fo
 class Element {
   constructor(tag) {
     this.tag = tag; this.tagName = tag.toUpperCase(); this.children = []; this._text = ''; this.value = ''; this.dataset = {}; this.attributes = {};
+    // Mirror the DOM's defaults, so code that leaves a property untouched reads
+    // false rather than undefined.
+    this.hidden = false; this.checked = false; this.disabled = false;
     this.scrollTop = 0; this.scrollHeight = 1000; this.clientHeight = 400; this.offsetHeight = 20;
     this.style = {};
     this.classes = new Set();
@@ -24,7 +27,17 @@ class Element {
 }
 function browser() {
   const html = fs.readFileSync(__dirname + '/index.html', 'utf8');
-  const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], new Element(match[1])]));
+  // One Element per id, with hidden/disabled seeded from the markup so the double
+  // matches the page it stands in for (#model-options ships hidden, #session-model
+  // ships disabled, #app ships hidden until auth confirms).
+  const elements = new Map([...html.matchAll(/<[a-z][a-z0-9-]*\b[^>]*>/gi)].map(tag => {
+    const id = (tag[0].match(/id="([^"]+)"/) || [])[1];
+    if (!id) return null;
+    const node = new Element(id);
+    node.hidden = /(^|\s)hidden(\s|>|\/)/.test(tag[0]);
+    node.disabled = /(^|\s)disabled(\s|>|\/)/.test(tag[0]);
+    return [id, node];
+  }).filter(Boolean));
   let now = 0, timerID = 0;
     const intervals = new Map(), timeouts = new Map(), connections = [];
     elements.get('run-progress').append(new Element('span'), elements.get('run-elapsed'));
@@ -616,13 +629,15 @@ function verifyModelOptions() {
   const p = browser();
   p.run("modelList=['deepseek:deepseek-v4-flash','openai:gpt-4o','llama:spark']; selected='one'; $('session-model').disabled=false; renderModelOptions('')");
   let list = p.get('model-options');
-  assert.equal(list.hidden, false, 'focus opens the suggestion list');
+  assert.equal(list.hidden, true, 'a background refresh must not open the list');
   assert.deepEqual(list.children.map(node => node.textContent), ['deepseek:deepseek-v4-flash', 'openai:gpt-4o', 'llama:spark']);
-  p.run("renderModelOptions('openai')");
+  p.run("renderModelOptions('', true)");
+  assert.equal(list.hidden, false, 'focus opens the suggestion list');
+  p.run("renderModelOptions('openai', true)");
   assert.deepEqual(p.get('model-options').children.map(node => node.textContent), ['openai:gpt-4o'], 'typing filters the list');
-  p.run("renderModelOptions('nope')");
+  p.run("renderModelOptions('nope', true)");
   assert.equal(p.get('model-options').hidden, true, 'no matches closes the list');
-  p.run("renderModelOptions(''); chooseModel('llama:spark')");
+  p.run("renderModelOptions('', true); chooseModel('llama:spark')");
   assert.equal(p.get('session-model').value, 'llama:spark', 'choosing a suggestion fills the field');
   assert.equal(p.get('model-options').hidden, true, 'choosing closes the list');
   assert.equal(p.run('modelDirty'), true, 'a chosen suggestion is an unsaved edit');

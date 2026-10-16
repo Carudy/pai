@@ -1347,6 +1347,16 @@ header p {
     color: var(--accent);
 }
 
+/* A small "loading…" note with an inline spinner. */
+.loading {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 8px 0;
+    font-size: 12px;
+    color: var(--muted);
+}
+
 /* ── Context inspector ─────────────────────────────────────── */
 /* A read-only view of the exact message list a send would use. It overlays the
    conversation but stays below #pending (z-index 2), so an approval card is

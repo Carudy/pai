@@ -42,10 +42,10 @@ Machine-specific gotchas that waste time if ignored:
 
   Use plain `go mod download` (no `all`) — `all` widens `go.sum` beyond what
   `go mod tidy` keeps, producing a spurious diff.
-- **`node` is not on PATH**, so `go test ./internal/web` skips
-  `TestPendingPromptUI`. Run the harness directly:
-  `/nix/store/7cr3l1m9yyng2hscs8lj4x4bj0hm7908-nodejs-24.21.0/bin/node internal/web/app_test.js`.
-  The real-DOM sanitizer cases still need `PAI_WEB_JSDOM=/path/to/jsdom`.
+- **Browser JavaScript:** run the harness with `node internal/web/app_test.js` (Node
+  is on PATH). `go test ./internal/web` also runs it via `TestPendingPromptUI`, so
+  a JS regression fails the Go suite. The real-DOM sanitizer cases still need
+  `PAI_WEB_JSDOM=/path/to/jsdom`.
 - **`timeout` is not on PATH on macOS** (use `gtimeout`, or a bounded tool
   timeout); its absence once silently made a command look like it succeeded.
 
@@ -59,7 +59,7 @@ once after merging, rather than repeating suites.
 |---|---|
 | Docs/comments only | Inspect links/content and `git diff --check`; no build/test |
 | CSS/layout/copy | `go test ./internal/web -run 'TestPage\|TestHTML'` plus a browser check if available |
-| Browser JavaScript | `node internal/web/app_test.js` when Node is available, plus `internal/web` tests; report skipped JS/browser validation |
+| Browser JavaScript | `node internal/web/app_test.js`, plus `internal/web` tests (which run the same harness); report any real-DOM/jsdom cases left unverified |
 | Isolated Go implementation | `gofmt` the changed files, then targeted package tests (`-run` first, broaden as needed) |
 | Shared interfaces, runtime lifecycle, cross-package wiring | Tests for affected packages and direct consumers; build once at the integration checkpoint |
 | Storage/platform code | Test affected packages; cross-compile affected targets if platform behavior changed |
