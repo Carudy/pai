@@ -298,7 +298,7 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 		if choice == core.TrustDeny {
 			output := cancelled()
 			report(rt, output, nil, "Command succeeded")
-			return observation("execute", cmd, nil, output, execTruncate(cfg)), nil
+			return observation("exec", nil, output, execTruncate(cfg)), nil
 		}
 		applyTrust(rt, choice, names)
 	}
@@ -313,7 +313,7 @@ func runExecute(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason
 
 	output, execErr := tool.ExecuteCommandAt(ctx, cmd, dir, toolStream(rt))
 	report(rt, output, execErr, "Command succeeded")
-	return observation("execute", cmd, execErr, output, execTruncate(cfg)), nil
+	return observation("exec", execErr, output, execTruncate(cfg)), nil
 }
 
 // runRemote runs a command on a remote host over SSH.
@@ -351,7 +351,7 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 		if choice == core.TrustDeny {
 			output := cancelled()
 			report(rt, output, nil, "Remote command succeeded")
-			return observation("remote", rp.Cmd, nil, output, execTruncate(cfg)), nil
+			return observation("remote", nil, output, execTruncate(cfg)), nil
 		}
 		applyTrust(rt, choice, names)
 	}
@@ -366,7 +366,7 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 
 	output, execErr := rt.Remote.ExecuteRemote(ctx, rp, toolStream(rt))
 	report(rt, output, execErr, "Remote command succeeded")
-	return observation("remote", rp.Cmd, execErr, output, execTruncate(cfg)), nil
+	return observation("remote", execErr, output, execTruncate(cfg)), nil
 }
 
 // runWebsearch searches the web for current information. A search failure is
@@ -450,26 +450,22 @@ func runPapersearchWith(ctx context.Context, cfg *config.UserConfig, rt *Runtime
 	return "[papersearch result]\n" + sr.Format(cfg.Context.PaperLimit), nil
 }
 
-// observation formats the history entry fed back to the model. The tool name and the
-// command share the header line, and the command stays on purpose: once an observation
-// is elided, its first lines are all the model sees, so the head has to say what ran and
-// not only what came back. The exit status leads the output (tool.ExecResult.String), so
-// the old "EXIT_ERROR:" and "OUTPUT:" scaffolding is gone; a non-nil error is the only
-// extra line. Naming the tool matches the action's "toolname", so the pair reads as one
-// step.
-func observation(name, cmd string, execErr error, output tool.ExecResult, trunc chat.Truncate) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "[tool %s result]", name)
-	if cmd = strings.TrimSpace(cmd); cmd != "" {
-		b.WriteString(" ")
-		b.WriteString(cmd)
+// observation formats the history entry fed back to the model. The tool and its outcome
+// share one header line, so an elided observation still says which tool ran and how it
+// ended in a single line; the body is the output alone.
+//
+// The command is deliberately not repeated. The action that ran it is always the message
+// before — assistant turns are never elided, and the over-run trim keeps the action — so
+// the pair stays readable, and after elision the header is one line instead of three.
+func observation(name string, execErr error, output tool.ExecResult, trunc chat.Truncate) string {
+	status := fmt.Sprintf("exit code %d", output.ExitCode)
+	switch {
+	case output.TimedOut:
+		status = "timed out"
+	case execErr != nil:
+		status = "error: " + execErr.Error()
 	}
-	b.WriteString("\n")
-	if execErr != nil {
-		fmt.Fprintf(&b, "error: %v\n", execErr)
-	}
-	b.WriteString(trunc.Apply(output.String()))
-	return b.String()
+	return fmt.Sprintf("[%s result]: %s\n%s", name, status, trunc.Apply(output.Output))
 }
 
 // execTruncate builds the observation budget for local/remote command output.

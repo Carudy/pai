@@ -9,31 +9,42 @@ import (
 	"github.com/Carudy/pai/internal/tool"
 )
 
-// The observation is what the model re-reads, so its shape is deliberate: the tool
-// name and the command share the header (the first lines are all that survives
-// elision), the exit status leads the output, and a tool-level error is the only
-// extra line. The old EXIT_ERROR/OUTPUT scaffolding is gone.
+// The observation is what the model re-reads, so its shape is deliberate: one header
+// line carrying the tool and its outcome (the first lines are all that survives
+// elision, so they must say both), and then the output alone. The command lives in the
+// action before it, which is never elided.
 func TestObservationShape(t *testing.T) {
 	trunc := chat.Truncate{MaxBytes: 1000, HeadLines: 80, TailLines: 40}
 
-	got := observation("execute", "df -h", nil, tool.ExecResult{ExitCode: 0, Output: "/dev/disk1\n"}, trunc)
-	want := "[tool execute result] df -h\n[exit 0]\n/dev/disk1\n"
+	got := observation("exec", nil, tool.ExecResult{ExitCode: 0, Output: "/dev/disk1\n"}, trunc)
+	want := "[exec result]: exit code 0\n/dev/disk1\n"
 	if got != want {
 		t.Errorf("observation = %q, want %q", got, want)
 	}
 
-	got = observation("execute", "false", errors.New("start process"), tool.ExecResult{ExitCode: 1}, trunc)
-	if !strings.HasPrefix(got, "[tool execute result] false\nerror: start process\n[exit 1]") {
-		t.Errorf("a tool-level error should be its own line: %q", got)
+	got = observation("exec", nil, tool.ExecResult{ExitCode: 2, Output: "boom\n"}, trunc)
+	if !strings.HasPrefix(got, "[exec result]: exit code 2\n") {
+		t.Errorf("a failing command keeps its code on the header: %q", got)
 	}
 
-	// An unknown command still names the tool, so the observation is never anonymous.
-	if got := observation("remote", "  ", nil, tool.ExecResult{ExitCode: 0, Output: "ok\n"}, trunc); !strings.HasPrefix(got, "[tool remote result]\n") {
-		t.Errorf("empty command should not leave a trailing space: %q", got)
+	got = observation("exec", errors.New("start process"), tool.ExecResult{ExitCode: -1}, trunc)
+	if !strings.HasPrefix(got, "[exec result]: error: start process\n") {
+		t.Errorf("a tool-level error belongs on the header: %q", got)
 	}
 
-	// A timed-out run keeps the marker tool.ExecResult supplies.
-	if got := observation("execute", "sleep 10", nil, tool.ExecResult{TimedOut: true}, trunc); !strings.Contains(got, "[timed out]") {
-		t.Errorf("timeout marker lost: %q", got)
+	// A timed-out run keeps the marker even though it also carries an error.
+	got = observation("exec", errors.New("signal: killed"), tool.ExecResult{TimedOut: true, Output: "partial\n"}, trunc)
+	if !strings.HasPrefix(got, "[exec result]: timed out\npartial\n") {
+		t.Errorf("timeout should win over the error text: %q", got)
+	}
+
+	// The body is the output alone: no exit line, no command, no OUTPUT label.
+	if strings.Contains(got, "[exit") || strings.Contains(got, "COMMAND") || strings.Contains(got, "OUTPUT:") {
+		t.Errorf("old scaffolding leaked into the observation: %q", got)
+	}
+
+	// A remote run is named after its own tool.
+	if got := observation("remote", nil, tool.ExecResult{ExitCode: 0}, trunc); !strings.HasPrefix(got, "[remote result]: exit code 0\n") {
+		t.Errorf("remote header = %q", got)
 	}
 }

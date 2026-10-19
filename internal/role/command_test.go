@@ -121,7 +121,7 @@ func TestCompactCommandSummarizesOldTurns(t *testing.T) {
 	cc.history = []provider.Message{
 		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"},
 		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: `{"action":"tool","toolname":"execute","payload":"df -h","reason":"r"}`},
-		{Role: provider.RoleUser, Kind: core.KindToolResult, Content: "[cmd result]\nCOMMAND: df -h\nOUTPUT:\nok"},
+		{Role: provider.RoleUser, Kind: core.KindToolResult, Content: "[exec result]: exit code 0\nok"},
 		{Role: provider.RoleUser, Kind: core.KindInput, Content: "now do more"},
 		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: `{"action":"done","payload":"ok","reason":"r"}`},
 	}

@@ -309,9 +309,10 @@ func describeTurn(t core.Turn, width int) string {
 		return clip("["+string(resp.Action)+"] "+resp.GetPayload(), width)
 
 	case "tool_result":
-		// Newer observations put the command on the header line, so the first line is the
-		// whole story; older ones carry a "COMMAND: ..." line of their own, and a search
-		// result has neither.
+		// Newer observations are one header line — "[exec result]: exit code 0" — and
+		// older ones carry a "COMMAND: ..." line of their own; a search result has
+		// neither. The command is not repeated any more because the action above it
+		// holds it, and that action is rendered on the line before this one.
 		label, rest, _ := strings.Cut(t.Content, "\n")
 		for line := range strings.SplitSeq(rest, "\n") {
 			if cmd, ok := strings.CutPrefix(line, "COMMAND: "); ok {

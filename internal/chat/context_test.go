@@ -89,7 +89,7 @@ func TestElideObservationKeepsHeadAndTail(t *testing.T) {
 // calls it took, so the model never loses the task it is in the middle of.
 func TestCompactHistoryElidesOnlyOldTurns(t *testing.T) {
 	c := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: 1, ElideMinBytes: 10, ElideHeadLines: 3, ElideTailLines: 2}
-	big := "[tool execute result] df -h\n[exit 0]\n" + strings.Repeat("row\n", 100)
+	big := "[exec result]: exit code 0\n" + strings.Repeat("row\n", 100)
 
 	history := []provider.Message{
 		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"}, // turn 1 (old)
@@ -104,10 +104,11 @@ func TestCompactHistoryElidesOnlyOldTurns(t *testing.T) {
 	if len(out) != len(history) {
 		t.Fatalf("length changed: %d", len(out))
 	}
-	// The shape is head, marker, tail: the header names what ran and the tail keeps the
-	// last lines, where errors and summaries land. Everything between them is gone.
-	want := "[tool execute result] df -h\n[exit 0]\nrow\n" +
-		elisionMarker + " [98 lines of earlier output elided; re-run the command if you need them]\nrow\n"
+	// The shape is head, marker, tail: the header names the tool and its outcome, and the
+	// tail keeps the last lines, where errors and summaries land. Everything between them
+	// is gone.
+	want := "[exec result]: exit code 0\nrow\nrow\n" +
+		elisionMarker + " [97 lines of earlier output elided; re-run the command if you need them]\nrow\n"
 	if out[1].Content != want {
 		t.Errorf("elided observation = %q, want %q", out[1].Content, want)
 	}
