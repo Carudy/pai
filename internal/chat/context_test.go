@@ -124,23 +124,68 @@ func TestCompactHistoryElidesOnlyOldTurns(t *testing.T) {
 
 // Nothing happens until the history reaches the size trigger.
 func TestCompactHistoryRespectsTrigger(t *testing.T) {
-	big := strings.Repeat("x\n", 50)
+	big := strings.Repeat("x\n", 4000) // 8000 bytes, about 2000 tokens
 	turn := func(name string) []provider.Message {
 		return []provider.Message{
 			{Role: provider.RoleUser, Kind: core.KindInput, Content: name},
 			toolResult(big),
 		}
 	}
-	two := append(turn("one"), turn("two")...)
-	// A budget above the whole history leaves it alone; one below triggers the sweep.
-	above := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: EstimateTokens(two) + 1, ElideMinBytes: 1, ElideHeadLines: 3}
-	if out := CompactHistory(two, above); out[1].Content != big {
-		t.Error("compaction ran below the size trigger")
+	var history []provider.Message
+	for i := range 12 {
+		history = append(history, turn("task "+strings.Repeat("x", i))...)
 	}
-	below := above
-	below.ElideAfterTokens = EstimateTokens(two)
-	if out := CompactHistory(two, below); out[1].Content == big {
+	size := EstimateTokens(history)
+
+	above := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: size + 1, ElideMinBytes: 1, ElideHeadLines: 3}
+	if _, info := compact(history, above); info.Observations != 0 {
+		t.Errorf("compaction ran below the size trigger: %+v", info)
+	}
+	at := above
+	at.ElideAfterTokens = size
+	if _, info := compact(history, at); info.Observations == 0 {
 		t.Error("a history at the trigger was not elided")
+	}
+}
+
+// Above the budget the front moves in whole batches, so a turn that leaves the window
+// alone does not rewrite the prompt: one more turn changes nothing until a full batch
+// has accumulated, and then the front jumps.
+func TestCompactHistoryBatchesTheFront(t *testing.T) {
+	big := strings.Repeat("x\n", 4000) // 8000 bytes, about 2000 tokens
+	build := func(old int) []provider.Message {
+		msgs := make([]provider.Message, 0, 2*old+1)
+		for i := range old {
+			msgs = append(msgs,
+				provider.Message{Role: provider.RoleUser, Kind: core.KindInput, Content: "t" + strings.Repeat("x", i)},
+				toolResult(big))
+		}
+		return append(msgs, provider.Message{Role: provider.RoleUser, Kind: core.KindInput, Content: "now"})
+	}
+	// A 32k trigger makes one batch 4k tokens — two old turns' worth of output.
+	c := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: 32000, ElideMinBytes: 1, ElideHeadLines: 2}
+	elided := func(old int) (int, []provider.Message) {
+		out, info := compact(build(old), c)
+		return info.Observations, out
+	}
+
+	first, out := elided(20)
+	if first == 0 {
+		t.Fatal("a 40k history should have elided something")
+	}
+	second, _ := elided(21)
+	if second != first {
+		t.Errorf("one more turn moved the front: %d -> %d elided", first, second)
+	}
+	// The turn just outside the keep window is still verbatim, which is what batching
+	// buys at the price of a little more context.
+	if out[len(out)-2].Content != big {
+		t.Error("the newest old observation should still be verbatim")
+	}
+
+	// Two more turns are a whole batch, so the front catches up with them.
+	if later, _ := elided(25); later <= second {
+		t.Errorf("a whole batch did not move the front: %d -> %d elided", second, later)
 	}
 }
 

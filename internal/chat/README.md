@@ -72,9 +72,11 @@ The trigger is size rather than age. A prompt cache is an exact prefix, so elidi
 one old observation — which sits near the front of the history — invalidates every
 token after it, the whole recent tail. Gating on the context size keeps a small
 session from being rewritten at all, which is where the edit would land closest to
-the front and buy the least. It does not yet batch the front, so above the budget a
-busy session still pays one break per turn; a fixed step size or a cold-cache check
-would fix that.
+the front and buy the least. Above the budget the front moves in whole batches (an
+eighth of the trigger, so 32k tokens by default), so one turn leaving the window
+does not rewrite the prompt by itself; the price is that up to a batch of old
+output is still replayed verbatim, which with a warm cache costs a tenth of its
+size per request.
 
 The second layer is optional and costs one extra model call: with
 `summarize_after_tokens` set, once the prompt exceeds that token budget the

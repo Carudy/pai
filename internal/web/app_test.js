@@ -1033,7 +1033,7 @@ async function verifyTokenEstimate() {
   assert.equal(p.get('context-size').textContent, 'Context · ~12.4k', 'the panel reports the projected size as an estimate');
 assert.equal(p.get('context-detail').textContent, 'estimated · 340 turns', 'with the window on its own row');
   assert.equal(p.get('token-usage').hidden, true, 'no spend is invented before a run reports any');
-  assert.equal(p.get('context-usage').title.includes('four bytes per token'), true, 'the estimate says how it was derived');
+  assert.equal(p.get('context-usage').title.includes('ASCII at four bytes per token, everything else at two'), true, 'the estimate says how it was derived');
 
   // A configured budget is shown against the estimate, and the button is offered
   // for an idle session that has something to compress.

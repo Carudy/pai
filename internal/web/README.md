@@ -229,10 +229,13 @@ rejected; there is no URL authentication.
   `summarize_after_tokens` when the key is unset — `elide_min_bytes`,
   `elide_head_lines`, `elide_tail_lines`). `estimated_tokens` is the size
   this projection would send — after the same replay-time edits the loop applies
-  (over-run cut, elision) — from the same four-bytes-per-token estimate that seeds
-  the loop's summarization budget on resume, so a client can show a context
+  (over-run cut, elision) — from the same token estimate that seeds the loop's
+  summarization budget on resume, so a client can show a context
   size for a session no run has reported usage for yet; it is computed over
-  every turn in the replay regardless of the paged window. `user_turns` is how many user turns the
+  every turn in the replay regardless of the paged window. The estimate counts
+  ASCII at four bytes per token and everything else at two, because the old flat
+  four-byte rule undercounted CJK and dense code — the text these sessions are made
+  of — by roughly a third. `user_turns` is how many user turns the
   replay holds and `compact_turns` how many a compaction would fold into a
   summary; the latter is 0 when every turn still fits inside `keep_turns`, which
   is what lets the UI explain a manual compact that has nothing to do instead of

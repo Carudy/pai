@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
@@ -33,17 +34,35 @@ func SplitForSummary(history []provider.Message, keepTurns int) (span, recent []
 	return history[:cut], history[cut:]
 }
 
-// EstimateTokens is a rough size for a message list, used only when the provider
-// has not reported real usage (on resume, or a stream without usage). Four bytes
-// per token is a coarse approximation: close for prose, but it can undercount code
-// or non-Latin text, so callers pass the composed prompt (system head and tail
-// included) rather than the bare history.
+// EstimateTokens is a rough size for a message list, used when the provider has not
+// reported real usage (on resume, the panel before a first call, or a stream without
+// usage) and to gate the replay-time edits.
+//
+// Tokens are not bytes, and the difference matters most for exactly the text PAI
+// handles: prose runs about four bytes per token, while CJK text and dense code are
+// closer to two. Counting ASCII at four bytes and every other byte at two keeps the
+// number near the truth for mixed text, and it errs high for accented Latin — the
+// safe direction for a budget, which then compacts or elides slightly early rather
+// than after the window is gone.
 func EstimateTokens(msgs []provider.Message) int {
 	total := 0
 	for _, m := range msgs {
-		total += len(m.Content)
+		total += estimateText(m.Content)
 	}
-	return total / 4
+	return total
+}
+
+// estimateText is EstimateTokens for one string: ASCII at four bytes per token,
+// everything else at two (so a three-byte CJK character counts as 1.5).
+func estimateText(s string) int {
+	ascii := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] < utf8.RuneSelf {
+			ascii++
+		}
+	}
+	wide := len(s) - ascii
+	return (ascii+3)/4 + (wide+1)/2
 }
 
 // SummaryMessage wraps a summary as a system message so it reads as context

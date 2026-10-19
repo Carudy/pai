@@ -325,10 +325,11 @@ func messagesFromTurns(turns []core.Turn) []provider.Message {
 // the edit would land almost at the front and buy a couple of kilobytes at the price
 // of re-reading the whole request.
 //
-// What this does not yet do is batch the front: above the budget it still advances
-// as each turn leaves the window, so a busy session pays one break per turn. Making
-// the sweep coarser needs either a step size (the front advances every N turns) or a
-// clock (elide only when the provider's cache has expired anyway).
+// Above the budget the front still has to move as turns leave the window, so it moves
+// in whole batches (see elideFront): a turn that crosses the boundary alone does not
+// rewrite the prompt. The price of batching is that up to one batch of old output is
+// replayed verbatim, which under a warm cache costs a tenth of its size per request —
+// cheaper than the one full re-read a per-turn edit would cost.
 //
 // Only tool results are candidates. User input, assistant replies and user
 // answers carry the task and its decisions, so they are never dropped. The full
@@ -391,6 +392,41 @@ func DescribeNoCompaction(history []provider.Message, keepTurns int) string {
 	return fmt.Sprintf("nothing to compact: all %d user turn(s) still fit inside the keep_turns = %d window", UserTurns(recent), keepTurns)
 }
 
+// elideBatchFraction sizes one elision batch as a share of the trigger: with the
+// default 256k trigger a batch is 32k tokens. It bounds the price of batching — the
+// output still replayed verbatim — at an eighth of the elision budget, and it collapses
+// to per-turn elision when the trigger is tiny, which is what a small budget wants.
+const elideBatchFraction = 8
+
+// elideFront returns the index where the verbatim replay ends and elision begins: the
+// start of the keep window, pulled back to the last whole batch of raw history.
+//
+// Anchoring the steps to the start of the replayed list — rather than to the previous
+// sweep, which this function cannot see — keeps it a pure function of the history: the
+// same input always yields the same front, a longer history never moves it backwards,
+// and it advances only when another batch has accumulated. A batch of zero means no
+// batching, so the front follows the window turn by turn.
+func elideFront(history []provider.Message, keepTurns, batch int) int {
+	cut := keepFrom(history, keepTurns)
+	if cut <= 0 || batch <= 0 {
+		return cut
+	}
+	whole := (EstimateTokens(history[:cut]) / batch) * batch
+	if whole == 0 {
+		return 0 // nothing has accumulated a whole batch yet
+	}
+	// The front is the first turn that straddles the boundary; only tool results before
+	// it are elided, so landing mid-turn costs nothing.
+	total := 0
+	for i := 0; i < cut; i++ {
+		total += estimateText(history[i].Content)
+		if total > whole {
+			return i
+		}
+	}
+	return cut
+}
+
 // compact is CompactHistory plus a report of what it did; it returns the input
 // slice unchanged (and a zero report) whenever nothing is old enough to elide.
 func compact(history []provider.Message, c config.ContextConfig) ([]provider.Message, CompactionInfo) {
@@ -404,7 +440,7 @@ func compact(history []provider.Message, c config.ContextConfig) ([]provider.Mes
 		return history, CompactionInfo{}
 	}
 
-	cutoff := keepFrom(history, c.KeepTurns)
+	cutoff := elideFront(history, c.KeepTurns, limit/elideBatchFraction)
 	if cutoff <= 0 {
 		return history, CompactionInfo{}
 	}

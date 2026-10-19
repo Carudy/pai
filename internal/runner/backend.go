@@ -42,11 +42,11 @@ type ContextView struct {
 	Config ContextSettings `json:"config"`
 	Total  int             `json:"total"`
 	Offset int             `json:"offset"`
-	// EstimatedTokens is the size this projection would send, from chat's
-	// four-bytes-per-token estimate — the same figure the loop seeds its
-	// summarization budget with on resume. It lets a client show a context size for
-	// a session no run has reported usage for yet. It is an estimate, not a
-	// measurement, and it is computed over every turn regardless of the window.
+	// EstimatedTokens is the size this projection would send, from chat's token
+	// estimate — the same figure the loop seeds its summarization budget with on
+	// resume. It lets a client show a context size for a session no run has reported
+	// usage for yet. It is an estimate, not a measurement, and it is computed over
+	// every turn regardless of the window.
 	EstimatedTokens int `json:"estimated_tokens"`
 	// CompactTurns is how many user turns a compaction would fold into a summary,
 	// and UserTurns how many the replay holds. Zero CompactTurns means a manual

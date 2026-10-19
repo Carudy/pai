@@ -899,7 +899,7 @@ function paintContextUsage() {
   // qualifiers sit underneath instead of squeezing it.
   line.textContent = `Context · ~${tokenCount(estimate.tokens)}${budget}`;
   detail.textContent = `estimated · ${estimate.turns} turns`;
-  block.title = 'The size the next request would send, estimated at four bytes per token — code and non-Latin text are undercounted.'
+  block.title = 'The size the next request would send, estimated from its bytes: ASCII at four bytes per token, everything else at two, so CJK and code are not undercounted.'
     + (s.usage_calls > 0 ? ` The last request reported ${tokenCount(s.usage.Prompt)} prompt tokens.` : '')
     + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${tokenCount(s.context_tokens)} tokens.` : '');
 }

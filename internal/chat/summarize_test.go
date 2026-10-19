@@ -63,6 +63,21 @@ func TestEstimateTokens(t *testing.T) {
 	if got := EstimateTokens(msgs); got != 100 {
 		t.Errorf("EstimateTokens = %d, want 100", got)
 	}
+
+	// Tokens are not bytes: the estimate has to see CJK and other non-ASCII text, which
+	// a flat four-bytes-per-token rule undercounted by about half. A three-byte
+	// character counts as 1.5 tokens here; the exact figure depends on the tokenizer,
+	// and erring high is the safe side for a budget.
+	cjk := []provider.Message{{Content: strings.Repeat("中", 300)}} // 900 bytes
+	if got := EstimateTokens(cjk); got < 400 || got > 500 {
+		t.Errorf("EstimateTokens(CJK) = %d, want ~450", got)
+	}
+
+	// Mixed text is counted per byte class, so neither half is lost.
+	mixed := []provider.Message{{Content: strings.Repeat("x", 400) + strings.Repeat("中", 300)}}
+	if got := EstimateTokens(mixed); got != 550 {
+		t.Errorf("EstimateTokens(mixed) = %d, want 550", got)
+	}
 }
 
 func TestSummaryMessage(t *testing.T) {
