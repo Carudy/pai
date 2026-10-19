@@ -143,8 +143,10 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 	if sess != nil {
 		// Pin the session's birth into the head: it is what the session was created
 		// with, so a resumed run composes the same bytes the previous one sent, and
-		// the provider's prefix cache still matches.
+		// the provider's prefix cache still matches. The token scale is the same idea
+		// for sizes: the estimate is calibrated by what this session's provider counted.
 		rt.SessionBirth = sess.Meta.CreatedAt
+		rt.TokenScale = sess.Meta.TokenScale()
 	}
 	if app != nil {
 		rt.Observer = app.Observer()

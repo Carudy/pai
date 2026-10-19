@@ -899,7 +899,11 @@ function paintContextUsage() {
   // qualifiers sit underneath instead of squeezing it.
   line.textContent = `Context · ~${tokenCount(estimate.tokens)}${budget}`;
   detail.textContent = `estimated · ${estimate.turns} turns`;
+  // The estimate is calibrated against what this session's provider actually counted
+  // on its last request; say so when that correction is in play.
+  const scale = Number(estimate.scale) || 0;
   block.title = 'The size the next request would send, estimated from its bytes: ASCII at four bytes per token, everything else at two, so CJK and code are not undercounted.'
+    + (scale > 0 && scale !== 1 ? ` Calibrated ×${scale.toFixed(2)} against the provider's own count for this session.` : '')
     + (s.usage_calls > 0 ? ` The last request reported ${tokenCount(s.usage.Prompt)} prompt tokens.` : '')
     + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${tokenCount(s.context_tokens)} tokens.` : '');
 }
@@ -1285,6 +1289,7 @@ async function loadContext(full = true) {
       compact: Number(probe.compact_turns) || 0,
       userTurns: Number(probe.user_turns) || 0,
       keepTurns: Number(probeConfig.keep_turns) || 0,
+      scale: Number(probe.estimate_scale) || 0,
     };
     paintTokens();
     controls();

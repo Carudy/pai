@@ -36,6 +36,25 @@ type Meta struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Turns     int       `json:"turns,omitempty"`
+
+	// PromptTokens and PromptEstimate are the last request's prompt size as the
+	// provider reported it, and the size PAI's estimator predicted for that same
+	// prompt. Their ratio is how the estimate is calibrated against a real tokenizer;
+	// see TokenScale. Zero means no request has reported yet.
+	PromptTokens   int `json:"prompt_tokens,omitempty"`
+	PromptEstimate int `json:"prompt_estimate,omitempty"`
+}
+
+// TokenScale converts PAI's token estimate into the provider's accounting, learned
+// from the last request (reported / estimated for the same prompt). It returns 1 when
+// there is nothing to learn from, and is clamped so one odd report cannot move a
+// budget by more than a factor of two.
+func (m Meta) TokenScale() float64 {
+	if m.PromptTokens <= 0 || m.PromptEstimate <= 0 {
+		return 1
+	}
+	scale := float64(m.PromptTokens) / float64(m.PromptEstimate)
+	return min(max(scale, 0.5), 2)
 }
 
 // Session is metadata plus turns, oldest first.
@@ -93,4 +112,13 @@ func NewRecorder(store Store, name string) *Recorder {
 
 func (r *Recorder) AppendTurn(t core.Turn) error { return r.store.Append(r.name, t) }
 
-var _ core.Recorder = (*Recorder)(nil)
+// SetUsage records the last request's token accounting, which is what calibrates the
+// token estimate (see Meta.TokenScale).
+func (r *Recorder) SetUsage(reported, estimate int) error {
+	return r.store.SetUsage(r.name, reported, estimate)
+}
+
+var (
+	_ core.Recorder      = (*Recorder)(nil)
+	_ core.UsageRecorder = (*Recorder)(nil)
+)

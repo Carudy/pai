@@ -34,7 +34,7 @@ func chat(
 	p Ports,
 	history []provider.Message,
 	stream bool,
-) (content string, newHistory []provider.Message, usage *provider.Usage, err error) {
+) (content string, newHistory []provider.Message, usage *provider.Usage, promptEstimate int, err error) {
 
 	params := provider.CompletionParams{
 		Model:           cfg.Model,
@@ -43,6 +43,9 @@ func chat(
 		ResponseFormat:  &provider.ResponseFormat{Type: "json_object"},
 		ReasoningEffort: cfg.ReasoningEffort,
 	}
+	// The estimate travels back with the response so the caller can pair it with the
+	// reported prompt size: their ratio is what calibrates later estimates.
+	promptEstimate = EstimateTokens(params.Messages)
 
 	showReasoning := cfg.ReasoningEffort != provider.ReasoningEffortNone
 	if stream {
@@ -55,11 +58,11 @@ func chat(
 		}
 	}
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, 0, err
 	}
 
 	newHistory = append(history, provider.Message{Role: provider.RoleAssistant, Content: content, Kind: core.KindOutput})
-	return content, newHistory, usage, nil
+	return content, newHistory, usage, promptEstimate, nil
 }
 
 // extractCompletion unpacks a non-streaming response, streaming any reasoning
@@ -75,8 +78,9 @@ func extractCompletion(resp *provider.ChatCompletion, showReasoning bool, obs co
 	return choice.Message.Content, resp.Usage
 }
 
-// ChatStr sends the conversation and returns the assistant's raw JSON string.
-func ChatStr(ctx context.Context, cfg *config.UserConfig, rp *RolePrompt, p Ports, history []provider.Message) (string, []provider.Message, *provider.Usage, error) {
+// ChatStr sends the conversation and returns the assistant's raw JSON string, plus the
+// estimated token size of the prompt it sent.
+func ChatStr(ctx context.Context, cfg *config.UserConfig, rp *RolePrompt, p Ports, history []provider.Message) (string, []provider.Message, *provider.Usage, int, error) {
 	return chat(ctx, cfg, rp, p, history, cfg.Streaming)
 }
 

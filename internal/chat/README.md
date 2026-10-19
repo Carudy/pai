@@ -68,6 +68,14 @@ is reduced to its first `elide_head_lines` and last `elide_tail_lines` lines wit
 visible marker, so the model knows it was omitted and can re-run the command if it
 needs the result.
 
+The estimate is a byte heuristic, not a tokenizer, so it is calibrated from what the
+provider reports: the session stores the last request's prompt size next to the
+estimate made for that same prompt, and their ratio corrects every later estimate —
+the budgets stay stated in provider tokens, and the elision trigger is converted back
+into estimate units internally. That way a CJK-heavy or code-heavy session trims and
+summarizes at the size its config actually names instead of wherever the heuristic
+drifted to.
+
 The trigger is size rather than age. A prompt cache is an exact prefix, so eliding
 one old observation — which sits near the front of the history — invalidates every
 token after it, the whole recent tail. Gating on the context size keeps a small

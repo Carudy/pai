@@ -35,13 +35,17 @@ type Runtime struct {
 	// head so a resumed run composes the same bytes the previous one did. The zero
 	// time means this run is ephemeral, and the head states no start time.
 	SessionBirth time.Time
-	Provider     provider.Provider
-	Observer     core.Observer
-	Prompter     core.Prompter
-	Logger       core.Logger
-	Recorder     core.Recorder // nil = ephemeral (not persisted)
-	Interactive  bool
-	Remote       *tool.RemoteManager // lazily created by the remote tool
+	// TokenScale converts the token estimate into the provider's own accounting,
+	// learned from the session's last request (see session.Meta.TokenScale). Zero
+	// means uncalibrated.
+	TokenScale  float64
+	Provider    provider.Provider
+	Observer    core.Observer
+	Prompter    core.Prompter
+	Logger      core.Logger
+	Recorder    core.Recorder // nil = ephemeral (not persisted)
+	Interactive bool
+	Remote      *tool.RemoteManager // lazily created by the remote tool
 
 	// Sessions backs the in-session storage commands (/rename, /new). nil when no
 	// store is configured.
@@ -213,6 +217,15 @@ func Run(ctx context.Context, cfg *config.UserConfig, rt *Runtime, history []pro
 		rt.Observer.Output("project instructions: " + rp.ContextSource)
 	}
 
+	// The elision trigger is stated in provider tokens, but an estimate is what decides
+	// it; convert it once, for the whole run, so a calibrated session trims at the size
+	// it actually asked for. cfg is shared, so scale a copy.
+	if scaled := chat.ScaledContext(cfg.Context, rt.TokenScale); scaled != cfg.Context {
+		copyCfg := *cfg
+		copyCfg.Context = scaled
+		cfg = &copyCfg
+	}
+
 	err = loop(ctx, cfg, rt, rp, history, userInput)
 	rt.closeTurn(err)
 	return err
@@ -263,8 +276,9 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 	// Seed the budget check for a resumed session, before any real usage is known.
 	// Size the composed prompt (system head and tail included) as it will actually be
 	// sent — the over-run cut and elision included — so the budget starts from the
-	// request rather than from text that will not leave the machine.
-	rt.promptTokens = chat.EstimateTokens(cc.rp.Messages(chat.ServedHistory(cc.history, cfg.Context)))
+	// request rather than from text that will not leave the machine. The scale turns the
+	// estimate into the provider's accounting, which is the unit the budget is stated in.
+	rt.promptTokens = chat.ScaleTokens(chat.EstimateTokens(cc.rp.Messages(chat.ServedHistory(cc.history, cfg.Context))), rt.TokenScale)
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -410,7 +424,7 @@ func step(
 
 	ports := rt.chatPorts()
 
-	content, newHistory, usage, err := chat.ChatStr(ctx, cfg, rp, ports, history)
+	content, newHistory, usage, promptEstimate, err := chat.ChatStr(ctx, cfg, rp, ports, history)
 	if err != nil {
 		return false, nil, err
 	}
@@ -426,10 +440,18 @@ func step(
 			Total:      usage.Total(),
 			Cached:     usage.CachedPromptTokens,
 		})
+		// Store the pair the estimate is calibrated from: what the provider counted for
+		// this prompt, against what the estimator predicted for it. The store is shared,
+		// so the panel and the next resumed run inherit the correction.
+		if rec, ok := rt.Recorder.(core.UsageRecorder); ok && promptEstimate > 0 {
+			if err := rec.SetUsage(usage.PromptTokens, promptEstimate); err != nil {
+				rt.Logger.Errorf("recording token accounting: %v\n", err)
+			}
+		}
 	} else {
 		// A provider that reports no usage would otherwise freeze the budget at the
 		// seed estimate; size the prompt we just sent instead.
-		rt.promptTokens = chat.EstimateTokens(rp.Messages(chat.ServedHistory(history, cfg.Context)))
+		rt.promptTokens = chat.ScaleTokens(chat.EstimateTokens(rp.Messages(chat.ServedHistory(history, cfg.Context))), rt.TokenScale)
 	}
 
 	resp, history, err := chat.ParseResponseWithRetry(ctx, cfg, rp, ports, content, history)

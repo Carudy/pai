@@ -20,6 +20,9 @@ type Meta struct {
 	Cwd       string    `json:"cwd"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// TokenScale converts PAI's token estimate into the provider's own accounting,
+	// learned from the session's last request. Zero means uncalibrated.
+	TokenScale float64 `json:"token_scale,omitempty"`
 }
 type History struct {
 	Meta
@@ -43,11 +46,14 @@ type ContextView struct {
 	Total  int             `json:"total"`
 	Offset int             `json:"offset"`
 	// EstimatedTokens is the size this projection would send, from chat's token
-	// estimate — the same figure the loop seeds its summarization budget with on
-	// resume. It lets a client show a context size for a session no run has reported
-	// usage for yet. It is an estimate, not a measurement, and it is computed over
-	// every turn regardless of the window.
+	// estimate (calibrated when the session has reported usage) — the same figure the
+	// loop seeds its summarization budget with on resume. It lets a client show a
+	// context size for a session no run has reported usage for yet. It is an estimate,
+	// not a measurement, and it is computed over every turn regardless of the window.
 	EstimatedTokens int `json:"estimated_tokens"`
+	// EstimateScale is the factor applied to the raw estimate to reach that figure, from
+	// the session's last reported request. 0/1 means the figure is uncalibrated.
+	EstimateScale float64 `json:"estimate_scale,omitempty"`
 	// CompactTurns is how many user turns a compaction would fold into a summary,
 	// and UserTurns how many the replay holds. Zero CompactTurns means a manual
 	// compaction has nothing to do, so a client can explain that instead of

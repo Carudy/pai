@@ -235,7 +235,11 @@ rejected; there is no URL authentication.
   every turn in the replay regardless of the paged window. The estimate counts
   ASCII at four bytes per token and everything else at two, because the old flat
   four-byte rule undercounted CJK and dense code — the text these sessions are made
-  of — by roughly a third. `user_turns` is how many user turns the
+  of — by roughly a third. Once the session has reported usage it is also
+  **calibrated**: `estimate_scale` is `reported / estimated` from the last request
+  (clamped to `[0.5, 2]`, absent when uncalibrated), and `estimated_tokens` already
+  includes that correction — so the trigger sizes in `config` stay in the provider's
+  tokens and remain comparable with the figure. `user_turns` is how many user turns the
   replay holds and `compact_turns` how many a compaction would fold into a
   summary; the latter is 0 when every turn still fits inside `keep_turns`, which
   is what lets the UI explain a manual compact that has nothing to do instead of

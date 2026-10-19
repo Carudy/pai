@@ -43,7 +43,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   cwd        TEXT NOT NULL,
   title      TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  prompt_tokens   INTEGER NOT NULL DEFAULT 0,
+  prompt_estimate INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS turns (
   name    TEXT NOT NULL REFERENCES sessions(name) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -63,6 +65,49 @@ CREATE TABLE IF NOT EXISTS turn_overrides (
   PRIMARY KEY (name, seq),
   FOREIGN KEY (name, seq) REFERENCES turns(name, seq) ON DELETE CASCADE ON UPDATE CASCADE
 );`)
+	if err != nil {
+		return err
+	}
+	// Additive columns for databases created before they existed: CREATE TABLE IF NOT
+	// EXISTS only covers a fresh file, and there is no schema version to bump.
+	for _, col := range [][2]string{
+		{"prompt_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"prompt_estimate", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		if err := s.ensureColumn("sessions", col[0], col[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureColumn adds a column when an older database predates it. table and decl are
+// literals from this package, never user input.
+func (s *sqliteStore) ensureColumn(table, column, decl string) error {
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if found {
+		return nil
+	}
+	_, err = s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, decl))
 	return err
 }
 
@@ -92,8 +137,9 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 		updatedAt int64
 	)
 	err := s.db.QueryRow(
-		`SELECT name, role, model, cwd, title, created_at, updated_at FROM sessions WHERE name = ?`, name).
-		Scan(&m.Name, &m.Role, &m.Model, &m.Cwd, &m.Title, &createdAt, &updatedAt)
+		`SELECT name, role, model, cwd, title, created_at, updated_at, prompt_tokens, prompt_estimate
+		 FROM sessions WHERE name = ?`, name).
+		Scan(&m.Name, &m.Role, &m.Model, &m.Cwd, &m.Title, &createdAt, &updatedAt, &m.PromptTokens, &m.PromptEstimate)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 	}
@@ -241,6 +287,21 @@ func (s *sqliteStore) SetModel(name, model string) error { return s.setField(nam
 func (s *sqliteStore) SetRole(name, role string) error   { return s.setField(name, "role", role) }
 func (s *sqliteStore) SetWorkingDir(name, cwd string) error {
 	return s.setField(name, "cwd", cwd)
+}
+
+// SetUsage records the prompt size a provider reported next to the estimate made for
+// that same prompt. It does not touch updated_at: accounting is not conversation
+// activity, and bumping the timestamp would reorder the session list on every turn.
+func (s *sqliteStore) SetUsage(name string, reported, estimate int) error {
+	res, err := s.db.Exec(`UPDATE sessions SET prompt_tokens = ?, prompt_estimate = ? WHERE name = ?`,
+		reported, estimate, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	return nil
 }
 
 // SetOverride stores or replaces the user's surgery on one turn. It upserts, so a

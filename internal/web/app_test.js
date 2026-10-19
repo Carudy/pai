@@ -1034,6 +1034,12 @@ async function verifyTokenEstimate() {
 assert.equal(p.get('context-detail').textContent, 'estimated · 340 turns', 'with the window on its own row');
   assert.equal(p.get('token-usage').hidden, true, 'no spend is invented before a run reports any');
   assert.equal(p.get('context-usage').title.includes('ASCII at four bytes per token, everything else at two'), true, 'the estimate says how it was derived');
+  // Calibration rides along on the projection: the figure is already converted, and
+  // the tooltip says the session's provider is what taught it the conversion.
+  p.run("contextEstimate = {tokens: 8000, turns: 340, scale: 0.5}; paintTokens()");
+  assert.equal(p.get('context-size').textContent, 'Context · ~8k', 'the calibrated figure is what the panel shows');
+  assert.match(p.get('context-usage').title, /Calibrated ×0\.50/, 'the tooltip names the correction');
+  p.run("contextEstimate = {tokens: 12400, turns: 340, scale: 0}; paintTokens()");
 
   // A configured budget is shown against the estimate, and the button is offered
   // for an idle session that has something to compress.

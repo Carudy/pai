@@ -68,7 +68,7 @@ var bornAt = time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
 
 func (b *workspaceBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), Meta, error) {
 	cfg, p, rec, history, cleanup, err := b.Prepare(name)
-	return cfg, p, rec, history, cleanup, Meta{Cwd: b.dir, CreatedAt: bornAt}, err
+	return cfg, p, rec, history, cleanup, Meta{Cwd: b.dir, CreatedAt: bornAt, TokenScale: 0.5}, err
 }
 func (b *workspaceBackend) Create(name, cwd string) (Meta, error) {
 	dir, err := ResolveWorkingDir(cwd)
@@ -94,14 +94,19 @@ func TestWorkspacePlumbing(t *testing.T) {
 	m.mu.Lock()
 	got := m.entries["one"].rt.WorkingDir
 	birth := m.entries["one"].rt.SessionBirth
+	scale := m.entries["one"].rt.TokenScale
 	m.mu.Unlock()
 	if got != dir {
 		t.Fatalf("runtime cwd: %q", got)
 	}
 	// The head is byte-identical only if a fresh runtime pins the same birth time, so
-	// the backend's Meta has to reach the runtime.
+	// the backend's Meta has to reach the runtime; the token scale rides along for the
+	// same reason (it calibrates every estimate the run makes).
 	if !birth.Equal(bornAt) {
 		t.Fatalf("runtime birth: %v, want %v", birth, bornAt)
+	}
+	if scale != 0.5 {
+		t.Fatalf("runtime token scale: %v, want 0.5", scale)
 	}
 	if err := m.SendWithWorkspace("one", "task", t.TempDir()); err == nil {
 		t.Fatal("active mismatch accepted")

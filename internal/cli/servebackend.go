@@ -27,7 +27,8 @@ type serveBackend struct {
 }
 
 func serveMeta(m session.Meta) runner.Meta {
-	return runner.Meta{Name: m.Name, Role: m.Role, Model: m.Model, Cwd: m.Cwd, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
+	return runner.Meta{Name: m.Name, Role: m.Role, Model: m.Model, Cwd: m.Cwd,
+		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, TokenScale: m.TokenScale()}
 }
 
 func (b *serveBackend) List() ([]runner.Meta, error) {
@@ -105,7 +106,11 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 	if err != nil {
 		return runner.ContextView{}, fmt.Errorf("load role: %w", err)
 	}
-	cards := chat.ContextCards(s.Turns, toChatOverrides(s.Overrides), cfg.Context, cfg.SessionMaxTurns)
+	// The same trigger conversion the loop applies, so what Inspect shows is what a
+	// request would send when the estimate has been calibrated against this session.
+	scale := s.Meta.TokenScale()
+	servedCfg := chat.ScaledContext(cfg.Context, scale)
+	cards := chat.ContextCards(s.Turns, toChatOverrides(s.Overrides), servedCfg, cfg.SessionMaxTurns)
 	start := min(offset, len(cards))
 	end := min(start+limit, len(cards))
 	window := cards[start:end]
@@ -113,7 +118,7 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 	// edits it applies (over-run cut, elision), so the number a client shows is the one
 	// that would actually be sent and the one the summarization budget starts from.
 	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.Context.KeepTurns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
-	servedMsgs := chat.ServedHistory(toMessages(served), cfg.Context)
+	servedMsgs := chat.ServedHistory(toMessages(served), servedCfg)
 	// What a compaction would absorb, in the same terms the loop decides with, so
 	// the client can say why a manual compress has nothing to do.
 	span, _ := chat.SplitForSummary(servedMsgs, cfg.Context.KeepTurns)
@@ -123,7 +128,8 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 		Model:           s.Meta.Model,
 		Total:           len(cards),
 		Offset:          start,
-		EstimatedTokens: chat.EstimateTokens(rp.Messages(servedMsgs)),
+		EstimatedTokens: chat.ScaleTokens(chat.EstimateTokens(rp.Messages(servedMsgs)), scale),
+		EstimateScale:   scale,
 		CompactTurns:    chat.UserTurns(span),
 		UserTurns:       chat.UserTurns(servedMsgs),
 		Cards:           make([]runner.ContextCard, len(window)),
@@ -564,6 +570,16 @@ func (r *serveRecorder) AppendTurn(t core.Turn) error {
 	defer r.backend.mu.Unlock()
 	if err := r.backend.store.Append(r.name, t); err != nil {
 		return fmt.Errorf("append session turn: %w", err)
+	}
+	return nil
+}
+
+// SetUsage persists the token accounting the estimate is calibrated from.
+func (r *serveRecorder) SetUsage(reported, estimate int) error {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	if err := r.backend.store.SetUsage(r.name, reported, estimate); err != nil {
+		return fmt.Errorf("record session usage: %w", err)
 	}
 	return nil
 }

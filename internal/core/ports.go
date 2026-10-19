@@ -59,6 +59,15 @@ type Recorder interface {
 	AppendTurn(t Turn) error
 }
 
+// UsageRecorder is implemented by recorders whose store can also hold token
+// accounting: the prompt size a provider reported next to the estimate made for that
+// same prompt. The loop type-asserts it, so a recorder that cannot is still valid, and
+// the ratio it stores is what calibrates every later estimate (see
+// session.Meta.TokenScale).
+type UsageRecorder interface {
+	SetUsage(reported, estimate int) error
+}
+
 // Sessions gives the agent loop control over where the conversation is stored,
 // so in-session commands can name a temporary conversation, rename it, or start
 // a fresh one. It is nil when no store is configured; the commands then report

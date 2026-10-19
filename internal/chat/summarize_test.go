@@ -80,6 +80,32 @@ func TestEstimateTokens(t *testing.T) {
 	}
 }
 
+// The scale converts an estimate into the provider's accounting, and the elision trigger
+// back the other way, so a calibrated session trims at the size it asked for.
+func TestScaleTokensAndContext(t *testing.T) {
+	for _, scale := range []float64{0, 1} {
+		if got := ScaleTokens(1000, scale); got != 1000 {
+			t.Errorf("ScaleTokens(1000, %v) = %d, want the estimate itself", scale, got)
+		}
+	}
+	if got := ScaleTokens(1000, 0.8); got != 800 {
+		t.Errorf("ScaleTokens(1000, 0.8) = %d, want 800", got)
+	}
+
+	direct := config.ContextConfig{ElideAfterTokens: 256000}
+	if got := ScaledContext(direct, 1).ElideAfterTokens; got != 256000 {
+		t.Errorf("an uncalibrated context moved: %d", got)
+	}
+	if got := ScaledContext(direct, 0.8).ElideAfterTokens; got != 320000 {
+		t.Errorf("trigger = %d, want 320000 (256k real at 0.8 estimate/real)", got)
+	}
+	// A derived trigger is materialized, so the conversion survives the derivation.
+	derived := config.ContextConfig{SummarizeAfterTokens: 512000}
+	if got := ScaledContext(derived, 0.5).ElideAfterTokens; got != 512000 {
+		t.Errorf("derived trigger = %d, want 512000", got)
+	}
+}
+
 func TestSummaryMessage(t *testing.T) {
 	m := SummaryMessage("  did the thing  ")
 	if m.Role != provider.RoleSystem {

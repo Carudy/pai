@@ -90,7 +90,7 @@ func (w *worker) run() {
 		if v := w.reasoningOverride(); v != "" {
 			copyCfg.ReasoningEffort = provider.ReasoningEffort(v)
 		}
-		rt := &role.Runtime{WorkingDir: cwd, SessionBirth: meta.CreatedAt, Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w, Interactive: true, SessionName: w.name}
+		rt := &role.Runtime{WorkingDir: cwd, SessionBirth: meta.CreatedAt, TokenScale: meta.TokenScale, Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w, Interactive: true, SessionName: w.name}
 		w.m.mu.Lock()
 		w.rt = rt
 		// Seed the conversation's grants, so a command the user already trusted for

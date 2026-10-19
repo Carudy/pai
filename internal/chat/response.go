@@ -139,7 +139,7 @@ The other actions take a string payload: {"action":"done|ask|terminate","payload
 				err, ToolExample())
 			history = append(history, provider.Message{Role: provider.RoleUser, Content: correctionMsg})
 
-			content, history, _, err = ChatStr(ctx, cfg, rp, p, history)
+			content, history, _, _, err = ChatStr(ctx, cfg, rp, p, history)
 			if err != nil {
 				return nil, history, err
 			}

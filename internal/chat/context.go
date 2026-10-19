@@ -2,6 +2,7 @@ package chat
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -309,6 +310,22 @@ func messagesFromTurns(turns []core.Turn) []provider.Message {
 		msgs = append(msgs, provider.Message{Role: t.Role, Content: t.Content, Kind: t.Kind})
 	}
 	return msgs
+}
+
+// ScaledContext returns c with its elision trigger converted into estimator units, so
+// a calibrated estimate fires at the provider-token size the config asks for: with a
+// scale of 0.8 (the estimate runs 25% high) a 256k trigger becomes 320k estimates.
+//
+// The trigger is what it is converted and not the estimates themselves, so every caller
+// keeps passing plain config and the derivation stays a pure function of (history,
+// config). scale <= 0 or 1 returns c unchanged.
+func ScaledContext(c config.ContextConfig, scale float64) config.ContextConfig {
+	limit := c.ElideLimit()
+	if scale <= 0 || scale == 1 || limit <= 0 {
+		return c
+	}
+	c.ElideAfterTokens = int(math.Round(float64(limit) / scale))
+	return c
 }
 
 // CompactHistory returns a copy of history in which old tool observations are

@@ -20,6 +20,12 @@ See the [module map](../organization.md) for the storage adapter boundary.
   takes its overrides along. It never rewrites a stored turn — it only changes
   what a run sends. `Get` loads it alongside the turns; a session with none leaves
   `Session.Overrides` nil.
+- `Store.SetUsage` stores the last request's reported prompt size next to the
+  estimate made for that same prompt. `Meta.TokenScale` is their ratio (clamped to
+  `[0.5, 2]`, and 1 until something has reported), which is how `chat` calibrates
+  its byte-based token estimate against the provider's real tokenizer. The pair is
+  accounting, not activity: `SetUsage` leaves `updated_at` alone so the session list
+  does not reorder on every turn.
 - `NewRecorder` implements `core.Recorder`; `controller.go` adapts session
   operations to the loop's storage port.
 

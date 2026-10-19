@@ -17,6 +17,10 @@ type Store interface {
 	Append(name string, turns ...core.Turn) error
 	// SetModel updates metadata without changing conversation history.
 	SetModel(name, model string) error
+	// SetUsage records the last request's reported prompt size and the estimate PAI
+	// made for that same prompt, which is what calibrates the estimate (see
+	// Meta.TokenScale).
+	SetUsage(name string, reported, estimate int) error
 	// SetRole updates the session's role without changing conversation history.
 	SetRole(name, role string) error
 	// SetWorkingDir updates the workspace without changing conversation history.

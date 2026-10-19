@@ -53,6 +53,27 @@ func TestServeBackendContext(t *testing.T) {
 	if view.EstimatedTokens <= (len(view.Head)+len(view.Tail))/4 {
 		t.Errorf("estimated tokens = %d, want more than the head+tail estimate %d", view.EstimatedTokens, (len(view.Head)+len(view.Tail))/4)
 	}
+	// Nothing has reported usage yet, so the figure is the raw estimate.
+	if view.EstimateScale != 1 {
+		t.Errorf("estimate scale = %v, want 1 before any report", view.EstimateScale)
+	}
+
+	// Once the session has reported its own count, the same projection is calibrated: the
+	// client sees the number the provider would charge, not the estimator's guess.
+	raw := view.EstimatedTokens
+	if err := store.SetUsage("ctx", raw/2, raw); err != nil {
+		t.Fatal(err)
+	}
+	calibrated, err := b.Context("ctx", 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calibrated.EstimateScale < 0.49 || calibrated.EstimateScale > 0.51 {
+		t.Errorf("estimate scale = %v, want ~0.5", calibrated.EstimateScale)
+	}
+	if calibrated.EstimatedTokens >= raw {
+		t.Errorf("calibrated estimate = %d, want less than the raw %d", calibrated.EstimatedTokens, raw)
+	}
 	if view.Total != 4 || view.Offset != 0 || len(view.Cards) != 4 {
 		t.Fatalf("full window = total %d offset %d cards %d, want 4/0/4", view.Total, view.Offset, len(view.Cards))
 	}

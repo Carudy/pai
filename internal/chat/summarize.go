@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -63,6 +64,16 @@ func estimateText(s string) int {
 	}
 	wide := len(s) - ascii
 	return (ascii+3)/4 + (wide+1)/2
+}
+
+// ScaleTokens converts an estimate into the provider's accounting, using the factor a
+// session recorded from its last request (1 when it has none). Every place that
+// compares an estimate against a budget stated in real tokens goes through this.
+func ScaleTokens(estimate int, scale float64) int {
+	if scale <= 0 || scale == 1 {
+		return estimate
+	}
+	return int(math.Round(float64(estimate) * scale))
 }
 
 // SummaryMessage wraps a summary as a system message so it reads as context
