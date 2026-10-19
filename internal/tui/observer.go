@@ -39,8 +39,13 @@ func (o *LineObserver) Compacting() {
 
 func (o *LineObserver) Usage(u core.Usage) {
 	o.closeReasoning()
-	fmt.Fprintf(o.W, "%s\n", RenderStr("Token", fmt.Sprintf("[token: %s in, %s out, %s total]",
-		humanCount(u.Prompt), humanCount(u.Completion), humanCount(u.Total))))
+	// The cached share is only named when the provider accounts for it: most say
+	// nothing, and an absent field is not a miss.
+	detail := fmt.Sprintf("%s in, %s out, %s total", humanCount(u.Prompt), humanCount(u.Completion), humanCount(u.Total))
+	if u.Cached > 0 {
+		detail += fmt.Sprintf(", %s cached", humanCount(u.Cached))
+	}
+	fmt.Fprintf(o.W, "%s\n", RenderStr("Token", fmt.Sprintf("[token: %s]", detail)))
 }
 
 func (o *LineObserver) Notice(text string) {

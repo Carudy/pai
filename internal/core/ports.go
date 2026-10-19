@@ -76,11 +76,14 @@ type Sessions interface {
 	SetRole(role string) error
 }
 
-// Usage is token accounting for a single model call.
+// Usage is token accounting for a single model call. Cached is the part of Prompt
+// the provider served from its prefix cache; it stays 0 for providers that report no
+// cache accounting, which a renderer should show as nothing rather than as a miss.
 type Usage struct {
 	Prompt     int
 	Completion int
 	Total      int
+	Cached     int
 }
 
 // ToolCall describes a tool about to run.

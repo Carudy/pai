@@ -201,9 +201,29 @@ function runSnapshot(s) {
   runState = s.state;
 }
 function activityScroll() { $('events').scrollTop = $('events').scrollHeight; }
+// Set while an animated follow is in flight. Its own scroll events must not read as
+// reader input, or the follow would cancel halfway; and it only ever moves down, so
+// an upward move is always the reader.
+let autoScroll = false, lastScrollTop = 0;
 function scrollBottom() {
   const scroller = $('conversation');
+  // Assigning scrollTop aborts a running smooth scroll, so this is also the way out.
+  autoScroll = false;
   scroller.scrollTop = scroller.scrollHeight;
+  lastScrollTop = scroller.scrollTop;
+  followTail = true;
+  updateJumpButtons();
+}
+// A new card is entered from its heading, not its end: a long answer or tool log is
+// read from where it starts, while a short card still lands at the bottom because
+// the browser clamps the scroll.
+function scrollToCard(card) {
+  if (!card || typeof card.scrollIntoView !== 'function') { scrollBottom(); return; }
+  autoScroll = true;
+  // An explicit behavior overrides the CSS scroll-behavior, so the reduced-motion
+  // preference has to be read here as well.
+  const quiet = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  card.scrollIntoView({block: 'start', behavior: quiet ? 'auto' : 'smooth'});
   followTail = true;
   updateJumpButtons();
 }
@@ -229,8 +249,27 @@ function jumpToPrevInput() {
 }
 function jumpToBottom() {
   const scroller = $('conversation');
+  // An explicit jump to the newest message is intent to follow it from here on.
+  autoScroll = false;
   scroller.scrollTop = scroller.scrollHeight;
+  lastScrollTop = scroller.scrollTop;
+  followTail = true;
   updateJumpButtons();
+}
+// The pane's scroll handler, and the only place reader intent is read: a programmatic
+// follow sets autoScroll, so its own downward events are skipped and cannot cancel the
+// follow halfway, while an upward move is the reader taking over.
+function onConversationScroll() {
+  const scroller = $('conversation');
+  if (autoScroll) {
+    if (scroller.scrollTop > lastScrollTop) { lastScrollTop = scroller.scrollTop; updateJumpButtons(); return; }
+    autoScroll = false;
+  }
+  lastScrollTop = scroller.scrollTop;
+  followTail = atConversationBottom();
+  updateJumpButtons();
+  // Reach the top and load a few more older turns (the initial window is small).
+  if (scroller.scrollTop <= 8 && historyOffset > 0 && !refreshing) loadHistory().catch(error);
 }
 function logDetails(node, title, value, open = false) {
   if (!value) return null;
@@ -734,6 +773,7 @@ function paintConversation() {
     }
   }
   updateJumpButtons();
+  return cards;
 }
 // ── History and session metadata ────────────────────────────
 function sessionMetadata(meta = {}) {
@@ -775,15 +815,22 @@ async function loadHistory(reset = false, forceBottom = false) {
     const initial = blank;
     const top = scroller.scrollTop, height = scroller.scrollHeight;
     const follow = followTail;
+    // Where the painted window ended, so everything past it after the reload is new.
+    const shownEnd = historyOffset + durable.length;
     // Bound the window when the reader is at the bottom; older turns reload from
     // the store on scroll-up, so a very long session does not grow without limit.
     let trimmed = 0;
     if (next.length > historyLimit && follow) { trimmed = next.length - historyLimit; next.splice(0, trimmed); }
     durable = next; historyOffset = offset + trimmed; historyTotal = meta.total;
-    if (changed || initial) paintConversation();
+    let cards = null;
+    if (changed || initial) cards = paintConversation();
     sessionMetadata(meta);
     if (!durable.length && (changed || initial)) { const welcome = text('div', '', 'empty'); welcome.append(text('h3', 'Best partner, PAI!'), text('p', 'Give PAI an instruction below.')); $('history').append(welcome); }
-    if (forceBottom || initial || (changed && follow)) scrollBottom();
+    // A trimmed window still maps through the offset it kept: new turns begin at
+    // shownEnd, which shifts by exactly the number of dropped cards.
+    const appended = cards && historyOffset + durable.length > shownEnd ? cards[shownEnd - historyOffset] : null;
+    if (forceBottom || initial) scrollBottom();
+    else if (changed && follow) { if (appended) scrollToCard(appended); else scrollBottom(); }
     else if (changed) scroller.scrollTop = reset ? top : top + scroller.scrollHeight - height;
   } finally {
     if (blank && $('history').firstElementChild && $('history').firstElementChild.className === 'loading') $('history').replaceChildren();
@@ -810,15 +857,24 @@ function usageSnapshot(s) { usageState = s || {}; paintTokens(); }
 // Provider-reported spend, this round and for the run. The context figure is not
 // here: it belongs to the context panel, and it is the projection's rather than
 // the last request's prompt size (see paintContextUsage).
+//
+// The cache share is shown only when the provider reports one: most
+// OpenAI-compatible servers say nothing about their prefix cache, and a silent
+// 0 is not a miss, so rendering "cache 0%" would be a lie.
 function paintTokens() {
   const s = usageState;
   const node = $('token-usage'), round = $('token-round'), run = $('token-total');
   round.textContent = ''; run.textContent = ''; node.title = ''; node.hidden = true;
   if (s.usage_calls > 0) {
     const total = s.total_usage, latest = s.usage;
-    round.textContent = `Round · in ${tokenCount(latest.Prompt)} · out ${tokenCount(latest.Completion)}`;
+    const cached = latest.Cached > 0 && latest.Prompt > 0;
+    const share = cached ? Math.round(100 * latest.Cached / latest.Prompt) : 0;
+    round.textContent = `Round · in ${tokenCount(latest.Prompt)}`
+      + (cached ? ` · cache ${share}%` : '')
+      + ` · out ${tokenCount(latest.Completion)}`;
     run.textContent = `Run · in ${tokenCount(total.Prompt)} · out ${tokenCount(total.Completion)} · total ${tokenCount(total.Total)}`;
     node.title = `Latest request: sent ${tokenCount(latest.Prompt)} · received ${tokenCount(latest.Completion)} · total ${tokenCount(latest.Total)}.`
+      + (cached ? ` ${tokenCount(latest.Cached)} of the prompt (${share}%) came from the provider's prefix cache.` : '')
       + ' This run covers this worker runtime only; resuming a retired runtime starts fresh.';
     node.hidden = false;
   }
@@ -833,13 +889,16 @@ function paintTokens() {
 // immediately after a compaction or a card edit.
 function paintContextUsage() {
   const s = usageState, estimate = contextEstimate;
-  const block = $('context-usage'), line = $('context-size');
-  line.textContent = ''; block.title = '';
+  const block = $('context-usage'), line = $('context-size'), detail = $('context-detail');
+  line.textContent = ''; detail.textContent = ''; block.title = '';
   if (!estimate || !estimate.turns) return;
   const budget = s.context_tokens > 0
     ? ` / ${tokenCount(s.context_tokens)} (${Math.round(100 * estimate.tokens / s.context_tokens)}%)`
     : '';
-  line.textContent = `Context · ~${tokenCount(estimate.tokens)}${budget} · estimated · ${estimate.turns} turns`;
+  // Two lines: the figure and its budget stay readable at panel width, and the
+  // qualifiers sit underneath instead of squeezing it.
+  line.textContent = `Context · ~${tokenCount(estimate.tokens)}${budget}`;
+  detail.textContent = `estimated · ${estimate.turns} turns`;
   block.title = 'The size the next request would send, estimated at four bytes per token — code and non-Latin text are undercounted.'
     + (s.usage_calls > 0 ? ` The last request reported ${tokenCount(s.usage.Prompt)} prompt tokens.` : '')
     + (s.context_tokens > 0 ? ` Compaction summarizes older turns once a prompt exceeds ${tokenCount(s.context_tokens)} tokens.` : '');
@@ -975,7 +1034,7 @@ function connect() {
 // the loop applies — what compaction did, not a guess. The cards are windowed:
 // the newest page loads first and older pages are fetched as the reader reaches
 // the top, so a long transcript is never sent whole.
-const contextLabels = {sent:'sent', elided:'elided', edited:'edited', dropped:'dropped', summarized_away:'summarized away', capped:'capped'};
+const contextLabels = {sent:'sent', elided:'elided', trimmed:'over-ran', edited:'edited', dropped:'dropped', summarized_away:'summarized away', capped:'capped'};
 const contextPage = 30;
 let contextTimer = null;
 // The loaded window: cards is contiguous, offset is the index of its first card,
@@ -1019,7 +1078,7 @@ function contextRaw(value) { return text('pre', String(value ?? '')); }
 // or capped turn is outside the replay window, so an override on it would change
 // nothing. The inspector says so instead of offering a control that is a no-op.
 function contextEditable(card) {
-  return ['sent', 'elided', 'edited', 'dropped'].includes(card.state);
+  return ['sent', 'elided', 'trimmed', 'edited', 'dropped'].includes(card.state);
 }
 let contextApplying = false;
 function contextCard(card) {
@@ -1042,10 +1101,15 @@ function contextCard(card) {
       detail.append(text('summary', 'show the stored original'), contextRaw(card.original));
       body.append(detail);
     }
-  } else if (card.state === 'elided') {
+  } else if (card.state === 'elided' || card.state === 'trimmed') {
     body.append(contextRaw(card.sent));
     const detail = document.createElement('details');
-    detail.append(text('summary', 'show the original (' + byteSize(card.original) + ')'), contextRaw(card.original));
+    // The two read differently: one dropped aged-out tool output, the other dropped
+    // text the model wrote after its action, which is worth seeing rather than
+    // silently trusting.
+    detail.append(text('summary', card.state === 'trimmed'
+      ? 'show what the model wrote past its action (' + byteSize(card.original) + ')'
+      : 'show the original (' + byteSize(card.original) + ')'), contextRaw(card.original));
     body.append(detail);
   } else {
     body.append(text('div', 'not sent — ' + (contextLabels[card.state] || card.state), 'ctx-muted'), contextRaw(card.original));
@@ -1169,8 +1233,16 @@ function renderContext(view) {
   contextCards = cards;
   contextOffset = offset;
   contextTotal = Number.isFinite(view.total) ? view.total : offset + cards.length;
+  const elide = cfg.elide_after_tokens > 0
+    ? 'elide >' + cfg.elide_min_bytes + 'B above ' + tokenCount(cfg.elide_after_tokens) + ' tokens'
+    : 'elision off';
   $('context-meta').textContent = (view.model || '') + ' · keep ' + cfg.keep_turns + ' user turns · max ' + (cfg.max_turns || '∞') +
-    ' turns · elide >' + cfg.elide_min_bytes + 'B after ' + cfg.elide_after_turns + ' turns';
+    ' turns · ' + elide;
+  $('context-meta').title = cfg.elide_after_tokens > 0
+    ? 'Old tool output is elided to its first ' + cfg.elide_head_lines + ' and last ' + cfg.elide_tail_lines +
+      ' lines once the history reaches ' + tokenCount(cfg.elide_after_tokens) + ' estimated tokens (elide_after_tokens; half of summarize_after_tokens when unset).'
+    : 'No elision: set summarize_after_tokens or elide_after_tokens to trim old tool output.';
+  $('context-meta').title += ' Rewriting a message invalidates the provider\'s cached prompt prefix, so the trigger is context size rather than turn age.';
   contextBox = contextWindowNode();
   const body = $('context-body');
   body.replaceChildren(
@@ -1269,7 +1341,7 @@ async function select(name, cwd, replaceURL = false) {
   liveCard = null; liveType = ''; liveText = '';
     $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   updateJumpButtons();
-  $('conversation').scrollTop = 0; followTail = true; controls();
+  $('conversation').scrollTop = 0; autoScroll = false; lastScrollTop = 0; followTail = true; controls();
   loadTrustAll();
   loadReasoning();
   for (const row of $('sessions').children) { const active = row.dataset?.name === name; row.classList.toggle('selected', active); const open = row.firstElementChild; if (open) open.setAttribute('aria-current', active ? 'page' : 'false'); }
@@ -1629,13 +1701,7 @@ $('context-body').onscroll = onContextScroll;
 globalThis.onpopstate = () => { onPopState().catch(error); };
 $('prev-input').onclick = jumpToPrevInput;
 $('to-bottom').onclick = jumpToBottom;
-$('conversation').onscroll = () => {
-  followTail = atConversationBottom();
-  updateJumpButtons();
-  // Reach the top and load a few more older turns (the initial window is small).
-  const scroller = $('conversation');
-  if (scroller.scrollTop <= 8 && historyOffset > 0 && !refreshing) loadHistory().catch(error);
-};
+$('conversation').onscroll = onConversationScroll;
 $('message').oninput = controls;
 $('message').onkeydown = composerKey;
 $('toggle-sessions').onclick = () => {

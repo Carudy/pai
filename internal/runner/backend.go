@@ -18,6 +18,7 @@ type Meta struct {
 	Role      string    `json:"role"`
 	Model     string    `json:"model"`
 	Cwd       string    `json:"cwd"`
+	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 type History struct {
@@ -69,11 +70,12 @@ type ContextCard struct {
 // ContextSettings is the compaction configuration applied to a session, so a
 // client can show the knobs that produced the view.
 type ContextSettings struct {
-	KeepTurns       int `json:"keep_turns"`
-	ElideAfterTurns int `json:"elide_after_turns"`
-	ElideMinBytes   int `json:"elide_min_bytes"`
-	ElideHeadLines  int `json:"elide_head_lines"`
-	MaxTurns        int `json:"max_turns"`
+	KeepTurns        int `json:"keep_turns"`
+	ElideAfterTokens int `json:"elide_after_tokens"`
+	ElideMinBytes    int `json:"elide_min_bytes"`
+	ElideHeadLines   int `json:"elide_head_lines"`
+	ElideTailLines   int `json:"elide_tail_lines"`
+	MaxTurns         int `json:"max_turns"`
 }
 
 // Prepare transfers ownership of its resources to the worker. Cleanup is called
@@ -90,9 +92,12 @@ type Backend interface {
 // made mandatory on Backend would break backends that cannot provide it.
 
 // WorkspaceBackend resolves the immutable workspace when preparing a runtime.
-// Resource ownership follows Backend.Prepare, including on failure.
+// The returned Meta carries the session's working directory and its creation time:
+// the runtime pins that birth time into the prompt head, so a fresh runtime
+// reconstructs the same bytes a retired one sent and the provider's prefix cache
+// still matches. Resource ownership follows Backend.Prepare, including on failure.
 type WorkspaceBackend interface {
-	PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), string, error)
+	PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), Meta, error)
 }
 
 type CreationBackend interface {

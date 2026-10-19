@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
@@ -29,14 +30,18 @@ import (
 type Runtime struct {
 	// WorkingDir scopes local tools and project instructions to this run. Set it
 	// before Run and do not mutate it while running. Empty preserves process cwd.
-	WorkingDir  string
-	Provider    provider.Provider
-	Observer    core.Observer
-	Prompter    core.Prompter
-	Logger      core.Logger
-	Recorder    core.Recorder // nil = ephemeral (not persisted)
-	Interactive bool
-	Remote      *tool.RemoteManager // lazily created by the remote tool
+	WorkingDir string
+	// SessionBirth is when the persisted session was created, pinned into the prompt
+	// head so a resumed run composes the same bytes the previous one did. The zero
+	// time means this run is ephemeral, and the head states no start time.
+	SessionBirth time.Time
+	Provider     provider.Provider
+	Observer     core.Observer
+	Prompter     core.Prompter
+	Logger       core.Logger
+	Recorder     core.Recorder // nil = ephemeral (not persisted)
+	Interactive  bool
+	Remote       *tool.RemoteManager // lazily created by the remote tool
 
 	// Sessions backs the in-session storage commands (/rename, /new). nil when no
 	// store is configured.
@@ -194,7 +199,7 @@ func Run(ctx context.Context, cfg *config.UserConfig, rt *Runtime, history []pro
 		}
 		rt.WorkingDir = wd
 	}
-	rp, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.RoleExtra, rt.WorkingDir)
+	rp, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.RoleExtra, rt.WorkingDir, rt.SessionBirth)
 	if err != nil {
 		return fmt.Errorf("load role %q: %w", cfg.DefaultRole, err)
 	}
@@ -256,9 +261,10 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 	}
 
 	// Seed the budget check for a resumed session, before any real usage is known.
-	// Size the composed prompt (system head and tail included), not the bare
-	// history, so the role and tool block is counted too.
-	rt.promptTokens = chat.EstimateTokens(cc.rp.Messages(cc.history))
+	// Size the composed prompt (system head and tail included) as it will actually be
+	// sent — the over-run cut and elision included — so the budget starts from the
+	// request rather than from text that will not leave the machine.
+	rt.promptTokens = chat.EstimateTokens(cc.rp.Messages(chat.ServedHistory(cc.history, cfg.Context)))
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -418,11 +424,12 @@ func step(
 			Prompt:     usage.PromptTokens,
 			Completion: usage.CompletionTokens,
 			Total:      usage.Total(),
+			Cached:     usage.CachedPromptTokens,
 		})
 	} else {
 		// A provider that reports no usage would otherwise freeze the budget at the
 		// seed estimate; size the prompt we just sent instead.
-		rt.promptTokens = chat.EstimateTokens(rp.Messages(history))
+		rt.promptTokens = chat.EstimateTokens(rp.Messages(chat.ServedHistory(history, cfg.Context)))
 	}
 
 	resp, history, err := chat.ParseResponseWithRetry(ctx, cfg, rp, ports, content, history)
@@ -430,9 +437,15 @@ func step(
 		return false, nil, err
 	}
 
-	// Persist the accepted assistant turn (after any format retries).
+	// Persist the accepted assistant turn (after any format retries). The store keeps
+	// exactly what the model wrote; the over-run is cut when the turn is replayed
+	// (see chat.TrimToAction), so the original stays available for inspection.
 	if n := len(history); n > 0 && history[n-1].Role == provider.RoleAssistant {
-		rt.record(core.Turn{Role: "assistant", Kind: core.KindOutput, Content: history[n-1].Content})
+		accepted := history[n-1].Content
+		rt.record(core.Turn{Role: "assistant", Kind: core.KindOutput, Content: accepted})
+		if note := chat.DescribeTrim(accepted); note != "" {
+			rt.Observer.Output(note)
+		}
 	}
 
 	// For tool/done the reason is shown alongside the action itself, so printing

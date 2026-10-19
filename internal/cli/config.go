@@ -54,9 +54,10 @@ var configKeys = map[string]configKey{
 	"context.head_lines":             {section: "context", key: "head_lines", kind: "int"},
 	"context.tail_lines":             {section: "context", key: "tail_lines", kind: "int"},
 	"context.keep_turns":             {section: "context", key: "keep_turns", kind: "int"},
-	"context.elide_after_turns":      {section: "context", key: "elide_after_turns", kind: "int"},
+	"context.elide_after_tokens":     {section: "context", key: "elide_after_tokens", kind: "int"},
 	"context.elide_min_bytes":        {section: "context", key: "elide_min_bytes", kind: "int"},
 	"context.elide_head_lines":       {section: "context", key: "elide_head_lines", kind: "int"},
+	"context.elide_tail_lines":       {section: "context", key: "elide_tail_lines", kind: "int"},
 	"context.summarize_after_tokens": {section: "context", key: "summarize_after_tokens", kind: "int"},
 }
 
@@ -334,12 +335,14 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return strconv.Itoa(cfg.Context.TailLines)
 	case "context.keep_turns":
 		return strconv.Itoa(cfg.Context.KeepTurns)
-	case "context.elide_after_turns":
-		return strconv.Itoa(cfg.Context.ElideAfterTurns)
+	case "context.elide_after_tokens":
+		return strconv.Itoa(cfg.Context.ElideAfterTokens)
 	case "context.elide_min_bytes":
 		return strconv.Itoa(cfg.Context.ElideMinBytes)
 	case "context.elide_head_lines":
 		return strconv.Itoa(cfg.Context.ElideHeadLines)
+	case "context.elide_tail_lines":
+		return strconv.Itoa(cfg.Context.ElideTailLines)
 	case "context.summarize_after_tokens":
 		return strconv.Itoa(cfg.Context.SummarizeAfterTokens)
 	case "session.persist":

@@ -62,9 +62,13 @@ type workspaceBackend struct {
 	dir string
 }
 
-func (b *workspaceBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), string, error) {
+// bornAt is the session birth these fakes report, so a test can check that the
+// runtime pins it into the prompt head.
+var bornAt = time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
+
+func (b *workspaceBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), Meta, error) {
 	cfg, p, rec, history, cleanup, err := b.Prepare(name)
-	return cfg, p, rec, history, cleanup, b.dir, err
+	return cfg, p, rec, history, cleanup, Meta{Cwd: b.dir, CreatedAt: bornAt}, err
 }
 func (b *workspaceBackend) Create(name, cwd string) (Meta, error) {
 	dir, err := ResolveWorkingDir(cwd)
@@ -89,9 +93,15 @@ func TestWorkspacePlumbing(t *testing.T) {
 	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" })
 	m.mu.Lock()
 	got := m.entries["one"].rt.WorkingDir
+	birth := m.entries["one"].rt.SessionBirth
 	m.mu.Unlock()
 	if got != dir {
 		t.Fatalf("runtime cwd: %q", got)
+	}
+	// The head is byte-identical only if a fresh runtime pins the same birth time, so
+	// the backend's Meta has to reach the runtime.
+	if !birth.Equal(bornAt) {
+		t.Fatalf("runtime birth: %v, want %v", birth, bornAt)
 	}
 	if err := m.SendWithWorkspace("one", "task", t.TempDir()); err == nil {
 		t.Fatal("active mismatch accepted")
@@ -131,16 +141,16 @@ func (b *workingDirBackend) SetWorkingDir(name, cwd string) error {
 	return nil
 }
 
-func (b *workingDirBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), string, error) {
+func (b *workingDirBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), Meta, error) {
 	b.mu.Lock()
 	dir := b.dir
 	b.mu.Unlock()
 	dir, err := ResolveWorkingDir(dir)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
+		return nil, nil, nil, nil, nil, Meta{}, err
 	}
 	cfg, p, rec, history, cleanup, err := b.Prepare(name)
-	return cfg, p, rec, history, cleanup, dir, err
+	return cfg, p, rec, history, cleanup, Meta{Cwd: dir, CreatedAt: bornAt}, err
 }
 
 func TestWorkingDirSwitch(t *testing.T) {

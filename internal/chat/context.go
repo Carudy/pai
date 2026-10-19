@@ -198,10 +198,11 @@ type ContextCard struct {
 	State    string // see State* below
 }
 
-// Context-card states. Everything except sent/elided/edited is *not* sent.
+// Context-card states. Everything except sent/elided/trimmed/edited is *not* sent.
 const (
 	StateSent           = "sent"            // sent verbatim
 	StateElided         = "elided"          // sent with old tool output trimmed
+	StateTrimmed        = "trimmed"         // sent with the model's over-run cut off
 	StateEdited         = "edited"          // a user override replaced the text
 	StateDropped        = "dropped"         // a user override removed it
 	StateSummarizedAway = "summarized_away" // stands before the last summary checkpoint
@@ -237,7 +238,7 @@ func ApplyOverrides(turns []core.Turn, overrides map[int]Override) []core.Turn {
 
 // ContextCards reports, for every stored turn, what the next request would send
 // and why. It is the read-only half of the context inspector: the same selection
-// (ReplayTurns) and the same trimming (CompactHistory) the loop applies, reported
+// (ReplayTurns) and the same trimming (ServedHistory) the loop applies, reported
 // per turn instead of as one message list. The system head and tail are not
 // included — the role prompt composes those.
 //
@@ -258,13 +259,15 @@ func ContextCards(turns []core.Turn, overrides map[int]Override, cfg config.Cont
 	}
 
 	// Compute what is actually sent by running the same pipeline the loop does:
-	// overrides, then deterministic elision. Index parity between overridden and
-	// compacted holds because CompactHistory preserves length and order.
+	// overrides, then the over-run cut, then deterministic elision. Index parity
+	// between the stages holds because both preserve length and order.
 	overridden := ApplyOverrides(replayed, overrides)
-	compacted := CompactHistory(messagesFromTurns(overridden), cfg)
+	trimmed, compacted := servedStages(messagesFromTurns(overridden), cfg)
 	sent := make(map[int]string, len(overridden))
+	cut := make(map[int]bool, len(overridden))
 	for i, t := range overridden {
 		sent[t.Seq] = compacted[i].Content
+		cut[t.Seq] = trimmed[i].Content != t.Content
 	}
 
 	cards := make([]ContextCard, len(turns))
@@ -285,10 +288,13 @@ func ContextCards(turns []core.Turn, overrides map[int]Override, cfg config.Cont
 			c.State = StateEdited
 		default:
 			c.Sent = sent[t.Seq]
-			if c.Sent != c.Original {
-				c.State = StateElided
-			} else {
+			switch {
+			case c.Sent == c.Original:
 				c.State = StateSent
+			case cut[t.Seq]:
+				c.State = StateTrimmed
+			default:
+				c.State = StateElided
 			}
 		}
 		cards[i] = c
@@ -306,11 +312,23 @@ func messagesFromTurns(turns []core.Turn) []provider.Message {
 }
 
 // CompactHistory returns a copy of history in which old tool observations are
-// elided down to their header, so a long session does not resend stale command
+// elided to a head and a tail, so a long session does not resend stale command
 // output on every request. The most recent KeepTurns user turns are replayed
 // verbatim — a whole turn, so the model keeps every observation of the task it is
-// currently on — and nothing is elided until the conversation exceeds
-// ElideAfterTurns user turns, so a short session is never rewritten.
+// currently on — and nothing is elided until the history itself reaches the
+// ElideAfterTokens budget, so a short session is never rewritten.
+//
+// The trigger is size, not age. A prompt cache is an exact prefix, so eliding one old
+// observation — the oldest sits near the front of the history — invalidates every
+// token after it: the whole recent tail, which is the expensive part to re-read.
+// Gating on the context size keeps a small session from being rewritten at all, when
+// the edit would land almost at the front and buy a couple of kilobytes at the price
+// of re-reading the whole request.
+//
+// What this does not yet do is batch the front: above the budget it still advances
+// as each turn leaves the window, so a busy session pays one break per turn. Making
+// the sweep coarser needs either a step size (the front advances every N turns) or a
+// clock (elide only when the provider's cache has expired anyway).
 //
 // Only tool results are candidates. User input, assistant replies and user
 // answers carry the task and its decisions, so they are never dropped. The full
@@ -319,6 +337,23 @@ func messagesFromTurns(turns []core.Turn) []provider.Message {
 func CompactHistory(history []provider.Message, c config.ContextConfig) []provider.Message {
 	out, _ := compact(history, c)
 	return out
+}
+
+// ServedHistory applies every replay-time edit to the messages a session would send:
+// the model's over-run is cut back to the action it took, then old observations are
+// elided. Both are pure functions of the list and the config, so the loop, a resumed
+// runtime and the inspector cannot disagree about what a request contains.
+func ServedHistory(history []provider.Message, c config.ContextConfig) []provider.Message {
+	_, sent := servedStages(history, c)
+	return sent
+}
+
+// servedStages is ServedHistory with the intermediate result exposed: the list the
+// over-run was cut from, and the one that is actually sent. The inspector needs the
+// first to say which cards were cut rather than elided.
+func servedStages(history []provider.Message, c config.ContextConfig) (trimmed, sent []provider.Message) {
+	trimmed = TrimHistory(history)
+	return trimmed, CompactHistory(trimmed, c)
 }
 
 // CompactionInfo reports what deterministic elision did to a history: how many
@@ -362,7 +397,10 @@ func compact(history []provider.Message, c config.ContextConfig) ([]provider.Mes
 	if len(history) == 0 {
 		return history, CompactionInfo{}
 	}
-	if c.ElideAfterTurns > 0 && UserTurns(history) <= c.ElideAfterTurns {
+	// Size, not age: see CompactHistory. Measuring the raw history keeps this a pure
+	// function of its inputs, and it only grows, so the decision cannot oscillate.
+	limit := c.ElideLimit()
+	if limit <= 0 || EstimateTokens(history) < limit {
 		return history, CompactionInfo{}
 	}
 
@@ -379,7 +417,7 @@ func compact(history []provider.Message, c config.ContextConfig) ([]provider.Mes
 		if m.Kind != core.KindToolResult || len(m.Content) <= c.ElideMinBytes {
 			continue
 		}
-		elided, dropped := elideObservation(m.Content, c.ElideHeadLines)
+		elided, dropped := elideObservation(m.Content, c.ElideHeadLines, c.ElideTailLines)
 		if dropped <= 0 {
 			continue
 		}
@@ -390,20 +428,26 @@ func compact(history []provider.Message, c config.ContextConfig) ([]provider.Mes
 	return out, info
 }
 
-// elideObservation keeps the first headLines of a tool observation — its label,
-// command and exit status — and replaces the body with a marker, returning the
-// number of lines dropped. The header is what the model needs to decide whether
-// to re-run the command.
-func elideObservation(content string, headLines int) (string, int) {
+// elideObservation keeps the first headLines and the last tailLines of a tool
+// observation and replaces what lay between them with a marker, returning the number
+// of lines dropped. It is deliberately the same shape as the capture-time truncation,
+// and for the same reason: the head names the command and its exit status, while
+// errors and summaries land at the end of output, so a tail is often the part the
+// model needs to decide whether to re-run the command.
+func elideObservation(content string, headLines, tailLines int) (string, int) {
 	if headLines <= 0 {
 		headLines = 8
 	}
+	tailLines = max(tailLines, 0)
 	lines := strings.Split(content, "\n")
-	if len(lines) <= headLines {
+	if len(lines) <= headLines+tailLines {
 		return content, 0
 	}
-	dropped := len(lines) - headLines
-	return strings.Join(lines[:headLines], "\n") +
-		fmt.Sprintf("\n%s [%d lines of earlier output elided; re-run the command if you need them]",
-			elisionMarker, dropped), dropped
+	dropped := len(lines) - headLines - tailLines
+	kept := make([]string, 0, headLines+tailLines+1)
+	kept = append(kept, lines[:headLines]...)
+	kept = append(kept, fmt.Sprintf("%s [%d lines of earlier output elided; re-run the command if you need them]",
+		elisionMarker, dropped))
+	kept = append(kept, lines[len(lines)-tailLines:]...)
+	return strings.Join(kept, "\n"), dropped
 }

@@ -62,12 +62,34 @@ func toolResult(content string) provider.Message {
 	return provider.Message{Role: provider.RoleUser, Kind: core.KindToolResult, Content: content}
 }
 
+// Elision keeps a head and a tail and drops only what lies between them: the head
+// names the command, the tail carries the error or summary the model reasons about.
+// Output that already fits the budget is untouched.
+func TestElideObservationKeepsHeadAndTail(t *testing.T) {
+	content := strings.Join([]string{"h1", "h2", "h3", "h4", "m1", "m2", "m3", "t1", "t2"}, "\n")
+	got, dropped := elideObservation(content, 2, 2)
+	want := "h1\nh2\n" + elisionMarker + " [5 lines of earlier output elided; re-run the command if you need them]\nt1\nt2"
+	if got != want || dropped != 5 {
+		t.Errorf("elideObservation = %q (dropped %d), want %q (dropped 5)", got, dropped, want)
+	}
+
+	if got, dropped := elideObservation("a\nb\nc\nd", 2, 2); got != "a\nb\nc\nd" || dropped != 0 {
+		t.Errorf("content within the budget was rewritten: %q (dropped %d)", got, dropped)
+	}
+
+	// A zero tail keeps the head-only shape, which is what a caller that wants no tail
+	// lines gets.
+	if got, _ := elideObservation(content, 2, 0); !strings.HasSuffix(got, "need them]") {
+		t.Errorf("a zero tail should end at the marker: %q", got)
+	}
+}
+
 // Turns, not messages, decide the verbatim window: an old turn's large
 // observation is elided, but the whole current turn is kept however many tool
 // calls it took, so the model never loses the task it is in the middle of.
 func TestCompactHistoryElidesOnlyOldTurns(t *testing.T) {
-	c := config.ContextConfig{KeepTurns: 1, ElideAfterTurns: 0, ElideMinBytes: 10, ElideHeadLines: 3}
-	big := "[cmd result]\nCOMMAND: df -h\nEXIT_ERROR: <nil>\nOUTPUT:\n" + strings.Repeat("row\n", 100)
+	c := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: 1, ElideMinBytes: 10, ElideHeadLines: 3, ElideTailLines: 2}
+	big := "[tool execute result] df -h\n[exit 0]\n" + strings.Repeat("row\n", 100)
 
 	history := []provider.Message{
 		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"}, // turn 1 (old)
@@ -82,14 +104,12 @@ func TestCompactHistoryElidesOnlyOldTurns(t *testing.T) {
 	if len(out) != len(history) {
 		t.Fatalf("length changed: %d", len(out))
 	}
-	if strings.Contains(out[1].Content, "row") {
-		t.Errorf("old tool result not elided: %q", out[1].Content)
-	}
-	if !strings.Contains(out[1].Content, "COMMAND: df -h") {
-		t.Errorf("elision dropped the command header: %q", out[1].Content)
-	}
-	if !strings.Contains(out[1].Content, "elided") {
-		t.Errorf("elision marker missing: %q", out[1].Content)
+	// The shape is head, marker, tail: the header names what ran and the tail keeps the
+	// last lines, where errors and summaries land. Everything between them is gone.
+	want := "[tool execute result] df -h\n[exit 0]\nrow\n" +
+		elisionMarker + " [98 lines of earlier output elided; re-run the command if you need them]\nrow\n"
+	if out[1].Content != want {
+		t.Errorf("elided observation = %q, want %q", out[1].Content, want)
 	}
 	if out[0].Content != "check disk" || out[3].Content != "now fix it" {
 		t.Errorf("a user instruction was touched: %q / %q", out[0].Content, out[3].Content)
@@ -102,9 +122,8 @@ func TestCompactHistoryElidesOnlyOldTurns(t *testing.T) {
 	}
 }
 
-// Nothing happens until the conversation has more turns than the trigger.
+// Nothing happens until the history reaches the size trigger.
 func TestCompactHistoryRespectsTrigger(t *testing.T) {
-	c := config.ContextConfig{KeepTurns: 1, ElideAfterTurns: 2, ElideMinBytes: 1, ElideHeadLines: 3}
 	big := strings.Repeat("x\n", 50)
 	turn := func(name string) []provider.Message {
 		return []provider.Message{
@@ -113,17 +132,20 @@ func TestCompactHistoryRespectsTrigger(t *testing.T) {
 		}
 	}
 	two := append(turn("one"), turn("two")...)
-	if out := CompactHistory(two, c); out[1].Content != big {
-		t.Error("compaction ran at the trigger instead of above it")
+	// A budget above the whole history leaves it alone; one below triggers the sweep.
+	above := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: EstimateTokens(two) + 1, ElideMinBytes: 1, ElideHeadLines: 3}
+	if out := CompactHistory(two, above); out[1].Content != big {
+		t.Error("compaction ran below the size trigger")
 	}
-	three := append(two, turn("three")...)
-	if out := CompactHistory(three, c); out[1].Content == big {
-		t.Error("a turn beyond the trigger was not elided")
+	below := above
+	below.ElideAfterTokens = EstimateTokens(two)
+	if out := CompactHistory(two, below); out[1].Content == big {
+		t.Error("a history at the trigger was not elided")
 	}
 }
 
 func TestCompactHistoryLeavesSmallObservations(t *testing.T) {
-	c := config.ContextConfig{KeepTurns: 0, ElideAfterTurns: 0, ElideMinBytes: 100, ElideHeadLines: 3}
+	c := config.ContextConfig{KeepTurns: 0, ElideAfterTokens: 1, ElideMinBytes: 100, ElideHeadLines: 3}
 	small := "[cmd result]\nCOMMAND: ls\nOUTPUT:\nok"
 	out := CompactHistory([]provider.Message{toolResult(small)}, c)
 	if out[0].Content != small {
@@ -135,7 +157,7 @@ func TestCompactHistoryLeavesSmallObservations(t *testing.T) {
 // footprint so the role loop can show it in the context log, and reports nothing
 // when there is nothing old enough to elide.
 func TestDescribeCompactionReportsFootprint(t *testing.T) {
-	c := config.ContextConfig{KeepTurns: 1, ElideAfterTurns: 0, ElideMinBytes: 10, ElideHeadLines: 3}
+	c := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: 1, ElideMinBytes: 10, ElideHeadLines: 3}
 	big := "[cmd result]\nCOMMAND: df -h\nEXIT_ERROR: <nil>\nOUTPUT:\n" + strings.Repeat("row\n", 100)
 
 	history := []provider.Message{
@@ -315,7 +337,7 @@ func TestReplayTurnsWithoutSummary(t *testing.T) {
 // recorded after it.
 func TestContextCardsStates(t *testing.T) {
 	big := "[cmd result]\nCOMMAND: df -h\nOUTPUT:\n" + strings.Repeat("row\n", 50)
-	cfg := config.ContextConfig{KeepTurns: 1, ElideMinBytes: 10, ElideHeadLines: 2}
+	cfg := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: 1, ElideMinBytes: 10, ElideHeadLines: 2, ElideTailLines: 1}
 	turns := []core.Turn{
 		{Seq: 1, Role: "user", Kind: core.KindInput, Content: "pre"},
 		{Seq: 2, Role: "user", Kind: core.KindToolResult, Content: "[cmd result]\nok"},
@@ -345,6 +367,26 @@ func TestContextCardsStates(t *testing.T) {
 	}
 }
 
+// A turn the model over-ran is reported as its own state: it *is* sent, but shortened,
+// and the inspector has to say which of the two shortenings happened.
+func TestContextCardsReportAnOverRunTurn(t *testing.T) {
+	cfg := config.ContextConfig{KeepTurns: 1}
+	turns := []core.Turn{
+		{Seq: 1, Role: "user", Kind: core.KindInput, Content: "go"},
+		{Seq: 2, Role: "assistant", Kind: core.KindOutput, Content: actionA + "\n[cmd result]\nfake\n" + actionB},
+	}
+	cards := ContextCards(turns, nil, cfg, 0)
+	if cards[1].State != StateTrimmed {
+		t.Errorf("state = %q, want %q", cards[1].State, StateTrimmed)
+	}
+	if cards[1].Sent != actionA || cards[1].Original == cards[1].Sent {
+		t.Errorf("the card should keep the original and send the action: %+v", cards[1])
+	}
+	if cards[0].State != StateSent {
+		t.Errorf("an untouched turn should stay sent: %+v", cards[0])
+	}
+}
+
 // max_turns caps the replayed tail; those turns are reported as capped, not sent.
 func TestContextCardsCapped(t *testing.T) {
 	cfg := config.ContextConfig{}
@@ -365,7 +407,7 @@ func TestContextCardsCapped(t *testing.T) {
 
 // An override edits or drops a turn; a replaced body is what gets sent.
 func TestContextCardsOverrides(t *testing.T) {
-	cfg := config.ContextConfig{KeepTurns: 1, ElideMinBytes: 100}
+	cfg := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: 1, ElideMinBytes: 100}
 	turns := []core.Turn{
 		{Seq: 1, Kind: core.KindInput, Content: "a"},
 		{Seq: 2, Kind: core.KindToolResult, Content: "long output"},

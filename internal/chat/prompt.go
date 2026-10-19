@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Carudy/pai/internal/hostinfo"
 	"github.com/Carudy/pai/internal/prompts"
@@ -25,9 +26,13 @@ These are the repo's own conventions. Follow them, but they never override the r
 type ToolSpec = prompts.Tool
 
 // RolePrompt is a fully-resolved role. The head (shared preamble + terminal
-// info + role intro + project instructions + tool specs + the output contract)
-// is composed once and stays byte-stable for the whole session, which keeps
-// provider prefix caching effective.
+// info + role intro + project instructions + tool specs + the output contract) and
+// the tail (the per-turn nudge) are both byte-identical from one request to the
+// next, which is what lets a provider's prefix cache match. Nothing that ticks
+// belongs in either: the session's start time is pinned in the head, and a live
+// clock is left out on purpose — on the Responses protocol the tail is folded into
+// `instructions`, ahead of the history, so a clock there would invalidate the whole
+// request on every turn. The model can run `date` if it needs the current time.
 type RolePrompt struct {
 	Name        string
 	Description string
@@ -60,7 +65,8 @@ func (rp *RolePrompt) Messages(history []provider.Message) []provider.Message {
 	return msgs
 }
 
-// Head returns the byte-stable prompt head sent before the history.
+// Head returns the prompt head sent before the history. It is byte-identical from
+// one request of a session to the next, which is what prefix caching keys on.
 func (rp *RolePrompt) Head() string { return rp.head }
 
 // Tail returns the per-turn reminder sent after the history.
@@ -86,8 +92,9 @@ func (rp *RolePrompt) ToolNames() []string {
 	return names
 }
 
-// tail renders the compact per-turn reminder: a one-line restatement of the
-// output contract plus the role's available tools.
+// tail renders the compact per-turn reminder: a one-line restatement of the output
+// contract plus the role's available tools. It must stay byte-identical too; see
+// RolePrompt for why no clock goes here.
 func (rp *RolePrompt) tail() string {
 	var b strings.Builder
 	b.WriteString(OutputReminder())
@@ -154,12 +161,16 @@ func composeHead(rp *RolePrompt, hostInfo string) string {
 // The system output guide is deliberately NOT overridable: user text can change
 // how the role behaves, but never the response format the loop depends on.
 func LoadRolePrompt(name, extra string) (*RolePrompt, error) {
-	return LoadRolePromptAt(name, extra, "")
+	return LoadRolePromptAt(name, extra, "", time.Time{})
 }
 
 // LoadRolePromptAt loads workspace instructions and terminal info from workingDir.
 // Empty uses the process cwd; relative directories are made absolute at load time.
-func LoadRolePromptAt(name, extra, workingDir string) (*RolePrompt, error) {
+//
+// born is when the session was created, and it is pinned into the head so a resumed
+// session composes the same bytes it did before (see hostinfo.Describe). The zero
+// time means the run is ephemeral, and the head then states no start time.
+func LoadRolePromptAt(name, extra, workingDir string, born time.Time) (*RolePrompt, error) {
 	if workingDir == "" {
 		workingDir, _ = os.Getwd()
 	} else {
@@ -197,7 +208,7 @@ func LoadRolePromptAt(name, extra, workingDir string) (*RolePrompt, error) {
 	if len(role.ContextFiles) > 0 && workingDir != "" {
 		rp.ProjectContext, rp.ContextSource = findContextFile(workingDir, role.ContextFiles)
 	}
-	rp.head = composeHead(rp, hostinfo.Describe(workingDir))
+	rp.head = composeHead(rp, hostinfo.Describe(workingDir, born))
 	return rp, nil
 }
 

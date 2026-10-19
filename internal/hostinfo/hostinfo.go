@@ -14,9 +14,15 @@ import (
 )
 
 // Describe renders the terminal/environment block: OS detail, platform, shell,
-// user, date, and the workspace. An empty workingDir reports the process cwd
-// without changing it.
-func Describe(workingDir string) string {
+// user, workspace, and when this session began. An empty workingDir reports the
+// process cwd without changing it.
+//
+// born is the session's creation time, or the zero time for an ephemeral run. It is
+// deliberately not "now": the head must stay byte-identical between requests so the
+// provider's prefix cache can match, and a clock that ticks would invalidate that
+// cache on every single turn. The prompt states the session's start and no live
+// clock; the model can run `date` when it needs the current time.
+func Describe(workingDir string, born time.Time) string {
 	shell := os.Getenv("SHELL")
 	if shell != "" {
 		shell = filepath.Base(shell)
@@ -29,16 +35,21 @@ func Describe(workingDir string) string {
 		user = "unknown"
 	}
 
-	now := time.Now()
-	dateTime := fmt.Sprintf("%s %s", now.Format("2006-01-02"), now.Format("15:04:05"))
-
 	if workingDir == "" {
 		workingDir, _ = os.Getwd()
 	}
 
-	return fmt.Sprintf("OS: %s (%s %s)\nShell: %s User: %s\nDatetime: %s\nWorking Dir: %s\n",
-		osDetail(), runtime.GOOS, runtime.GOARCH, shell, user, dateTime, workingDir)
+	block := fmt.Sprintf("OS: %s (%s %s)\nShell: %s User: %s\nWorking Dir: %s\n",
+		osDetail(), runtime.GOOS, runtime.GOARCH, shell, user, workingDir)
+	if !born.IsZero() {
+		block += fmt.Sprintf("Session started: %s\n", born.Format(DateTimeFormat))
+	}
+	return block
 }
+
+// DateTimeFormat is the second-resolution stamp the prompt head uses for the session
+// start.
+const DateTimeFormat = "2006-01-02 15:04:05"
 
 // osDetail prefers a friendly distribution name, falling back to the platform.
 func osDetail() string {

@@ -140,6 +140,12 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 		Sessions:    controller,
 		SessionName: sessionName,
 	}
+	if sess != nil {
+		// Pin the session's birth into the head: it is what the session was created
+		// with, so a resumed run composes the same bytes the previous one sent, and
+		// the provider's prefix cache still matches.
+		rt.SessionBirth = sess.Meta.CreatedAt
+	}
 	if app != nil {
 		rt.Observer = app.Observer()
 		rt.Prompter = app.Prompter()

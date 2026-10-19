@@ -210,14 +210,18 @@ search_limit = 8000
 head_lines   = 80
 tail_lines   = 40
 # Long conversations: replay the last keep_turns user turns in full, and elide
-# older command output down to its header once the conversation exceeds
-# elide_after_turns turns. One turn is a user instruction plus every tool call
-# the model makes to answer it, so a whole turn is always kept. See "What gets
-# sent to the model".
-keep_turns        = 4
-elide_after_turns = 8
-elide_min_bytes   = 1000
-elide_head_lines  = 8
+# older command output down to its head and tail once the history reaches
+# elide_after_tokens tokens (unset = half of summarize_after_tokens, or 100000 when
+# there is no budget). One turn is a
+# user instruction plus every tool call the model makes to answer it, so a whole
+# turn is always kept. Elision is gated on size, not age: a rewrite invalidates the
+# provider's cached prompt prefix from there to the end of the request. See "What
+# gets sent to the model".
+keep_turns       = 4
+elide_min_bytes  = 1000
+elide_head_lines = 8
+elide_tail_lines = 4
+# elide_after_tokens = 0
 # Opt-in second layer: summarize the oldest turns once the prompt exceeds this
 # many tokens (0 = off). Also on demand in-session with /compact.
 summarize_after_tokens = 0
@@ -361,7 +365,8 @@ Each request is three parts:
 The **head** is composed once per session and then never changes, so provider
 prefix caching stays effective:
 
-1. who PAI is, plus your terminal info (OS, shell, user, time, working directory)
+1. who PAI is, plus your terminal info (OS, shell, user, when the session began,
+   working directory)
 2. the role's intro — extended by your `role-extra.toml` entry
 3. the repository's instructions, when the role declares `context_files`
    (`AGENTS.md` / `CLAUDE.md`)
@@ -370,7 +375,10 @@ prefix caching stays effective:
 
 The **per-turn reminder** is re-rendered on every request and deliberately comes
 last, so the format is the final thing the model reads before it answers: a
-one-line restatement of the contract plus the role's available tools.
+one-line restatement of the contract plus the role's available tools. Its text is
+byte-identical from one turn to the next — a clock there would break the cached
+prefix on the Responses protocol, where the tail is folded into `instructions`
+ahead of the history.
 
 The response format is **system-owned**: neither a role's intro, your custom
 prompt, nor a repository's `AGENTS.md` can change it — all three are marked

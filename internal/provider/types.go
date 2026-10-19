@@ -87,12 +87,16 @@ type Reasoning struct {
 	Content string `json:"content"`
 }
 
-// Usage token counts.
+// Usage token counts. CachedPromptTokens is the part of PromptTokens the provider
+// served from its prefix cache, which is how a caller can see whether a stable
+// prompt head is actually paying off. It is 0 when the server reports no cache
+// accounting at all, so treat 0 as "unknown" rather than as a cache miss.
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	PromptTokens       int `json:"prompt_tokens"`
+	CompletionTokens   int `json:"completion_tokens"`
+	TotalTokens        int `json:"total_tokens"`
+	ReasoningTokens    int `json:"reasoning_tokens,omitempty"`
+	CachedPromptTokens int `json:"cached_tokens,omitempty"`
 }
 
 // Total returns the total token count: uses the API-reported TotalTokens if

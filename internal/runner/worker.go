@@ -71,13 +71,14 @@ func (w *worker) run() {
 	var rec core.Recorder
 	var history []provider.Message
 	var cleanup func()
-	var cwd string
+	var meta Meta
 	var err error
 	if b, ok := w.m.backend.(WorkspaceBackend); ok {
-		cfg, p, rec, history, cleanup, cwd, err = b.PrepareWorkspace(w.name, w.workingDir)
+		cfg, p, rec, history, cleanup, meta, err = b.PrepareWorkspace(w.name, w.workingDir)
 	} else {
 		cfg, p, rec, history, cleanup, err = w.m.backend.Prepare(w.name)
 	}
+	cwd := meta.Cwd
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -89,7 +90,7 @@ func (w *worker) run() {
 		if v := w.reasoningOverride(); v != "" {
 			copyCfg.ReasoningEffort = provider.ReasoningEffort(v)
 		}
-		rt := &role.Runtime{WorkingDir: cwd, Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w, Interactive: true, SessionName: w.name}
+		rt := &role.Runtime{WorkingDir: cwd, SessionBirth: meta.CreatedAt, Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w, Interactive: true, SessionName: w.name}
 		w.m.mu.Lock()
 		w.rt = rt
 		// Seed the conversation's grants, so a command the user already trusted for
@@ -346,6 +347,7 @@ func (w *worker) Usage(u core.Usage) {
 	w.totalUsage.Prompt += u.Prompt
 	w.totalUsage.Completion += u.Completion
 	w.totalUsage.Total += u.Total
+	w.totalUsage.Cached += u.Cached
 	w.usageCalls++
 	if w.activeTool == nil {
 		w.phase = "waiting_model"

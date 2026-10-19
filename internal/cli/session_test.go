@@ -34,8 +34,13 @@ func TestDescribeTurn(t *testing.T) {
 			"not json at all",
 		},
 		{
-			"command result",
-			core.Turn{Kind: "tool_result", Content: "[cmd result]\nCOMMAND: echo hi\nEXIT_ERROR: <nil>\nOUTPUT:\nhi"},
+			"command result puts the command in the header",
+			core.Turn{Kind: "tool_result", Content: "[tool execute result] echo hi\n[exit 0]\nhi"},
+			"[tool execute result] echo hi",
+		},
+		{
+			"older command result still carries its own COMMAND line",
+			core.Turn{Kind: "tool_result", Content: "[cmd result]\nCOMMAND: echo hi\nOUTPUT:\nhi"},
 			"[cmd result] echo hi",
 		},
 		{

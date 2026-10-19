@@ -68,13 +68,21 @@ tail_lines   = 40
 # Compaction of long conversations. A turn is one user instruction plus every
 # tool call the model makes to answer it, so keep_turns counts whole turns and a
 # long turn is never cut mid-task. The last keep_turns turns are replayed in full;
-# older command output is elided to its header so stale results are not resent
-# every turn. Nothing is compressed until the conversation exceeds
-# elide_after_turns turns; observations smaller than elide_min_bytes are kept.
+# older command output is elided to its head and tail so stale results are not
+# resent every turn. Observations smaller than elide_min_bytes are kept whole, and
+# elide_head_lines/elide_tail_lines say how much of an elided one survives: the head
+# names the command, the tail carries the error or summary.
 keep_turns        = 4
-elide_after_turns = 8
 elide_min_bytes   = 1000
 elide_head_lines  = 8
+elide_tail_lines  = 4
+
+# Elision is gated on the context size, not on the age of a turn: rewriting a
+# message invalidates the provider's cached prompt prefix from there to the end of
+# the request, so it is only worth doing once the history is genuinely large. Unset
+# derives the trigger: half of summarize_after_tokens, so the free trim happens
+# before the model is asked to summarize, or 100000 tokens when that is unset too.
+# elide_after_tokens = 0
 
 # Second layer, opt-in: once the last prompt exceeded this many tokens, the
 # oldest turns are summarized by the model into a single message (in addition to

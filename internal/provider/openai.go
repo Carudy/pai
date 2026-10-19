@@ -194,14 +194,43 @@ type rawMessage struct {
 }
 
 type rawUsage struct {
-	PromptTokens            int              `json:"prompt_tokens"`
-	CompletionTokens        int              `json:"completion_tokens"`
-	TotalTokens             int              `json:"total_tokens"`
+	PromptTokens        int              `json:"prompt_tokens"`
+	CompletionTokens    int              `json:"completion_tokens"`
+	TotalTokens         int              `json:"total_tokens"`
+	PromptTokensDetails *rawUsageDetails `json:"prompt_tokens_details,omitempty"`
+
 	CompletionTokensDetails *rawUsageDetails `json:"completion_tokens_details,omitempty"`
+
+	// Cache accounting has no single spelling across OpenAI-compatible servers.
+	// These are the shapes seen in the wild, most standard first; unknown fields are
+	// simply absent, which cachedPromptTokens reads as "not reported".
+	CachedTokens         *int `json:"cached_tokens,omitempty"`
+	PromptCacheHitTokens *int `json:"prompt_cache_hit_tokens,omitempty"`
+	CacheReadInputTokens *int `json:"cache_read_input_tokens,omitempty"`
 }
 
 type rawUsageDetails struct {
-	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+	ReasoningTokens int  `json:"reasoning_tokens,omitempty"`
+	CachedTokens    *int `json:"cached_tokens,omitempty"`
+}
+
+// cachedPromptTokens returns how many prompt tokens the server served from its
+// prefix cache, reading whichever spelling this server uses. It returns 0 when the
+// response carries no cache accounting at all, which callers treat as "unknown"
+// rather than as a miss — most OpenAI-compatible servers report nothing.
+func cachedPromptTokens(u *rawUsage) int {
+	if u == nil {
+		return 0
+	}
+	if d := u.PromptTokensDetails; d != nil && d.CachedTokens != nil {
+		return *d.CachedTokens
+	}
+	for _, c := range []*int{u.CachedTokens, u.PromptCacheHitTokens, u.CacheReadInputTokens} {
+		if c != nil {
+			return *c
+		}
+	}
+	return 0
 }
 
 func parseCompletion(raw []byte) (*ChatCompletion, error) {
@@ -216,9 +245,10 @@ func parseCompletion(raw []byte) (*ChatCompletion, error) {
 
 	if r.Usage != nil {
 		u := &Usage{
-			PromptTokens:     r.Usage.PromptTokens,
-			CompletionTokens: r.Usage.CompletionTokens,
-			TotalTokens:      r.Usage.TotalTokens,
+			PromptTokens:       r.Usage.PromptTokens,
+			CompletionTokens:   r.Usage.CompletionTokens,
+			TotalTokens:        r.Usage.TotalTokens,
+			CachedPromptTokens: cachedPromptTokens(r.Usage),
 		}
 		if d := r.Usage.CompletionTokensDetails; d != nil {
 			u.ReasoningTokens = d.ReasoningTokens
@@ -275,9 +305,10 @@ func parseChunk(data string) ChatCompletionChunk {
 
 	if r.Usage != nil {
 		cc.Usage = &Usage{
-			PromptTokens:     r.Usage.PromptTokens,
-			CompletionTokens: r.Usage.CompletionTokens,
-			TotalTokens:      r.Usage.TotalTokens,
+			PromptTokens:       r.Usage.PromptTokens,
+			CompletionTokens:   r.Usage.CompletionTokens,
+			TotalTokens:        r.Usage.TotalTokens,
+			CachedPromptTokens: cachedPromptTokens(r.Usage),
 		}
 		if d := r.Usage.CompletionTokensDetails; d != nil {
 			cc.Usage.ReasoningTokens = d.ReasoningTokens

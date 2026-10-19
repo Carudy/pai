@@ -1446,6 +1446,12 @@ header p {
     font-variant-numeric: tabular-nums;
 }
 
+/* The qualifiers sit under the figure, so the figure itself is not squeezed by them. */
+#context-detail {
+    font-size: 11px;
+    opacity: 0.8;
+}
+
 .compress-btn {
     font-size: 11px;
     padding: 2px 10px;
@@ -1609,6 +1615,7 @@ header p {
 }
 
 #context-body .ctx-badge.state-elided,
+#context-body .ctx-badge.state-trimmed,
 #context-body .ctx-badge.state-edited {
     color: var(--accent);
 }

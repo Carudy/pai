@@ -24,9 +24,11 @@ lives in data (`prompts`), not in Go.
 5. What is *replayed* is not the whole transcript. Per request the loop selects a
    window (`chat.ReplayTurns`: the last summary checkpoint, the `keep_turns` user
    turns it deliberately left verbatim, and `max_turns` of tail after it),
-   applies the user's surgery (`chat.ApplyOverrides`), and elides old tool output
-   (`chat.CompactHistory`). Past a token budget, `chat.ShouldSummarize` asks the
-   model to summarize the oldest turns instead.
+   applies the user's surgery (`chat.ApplyOverrides`), cuts each assistant turn
+   back to the action it was accepted from (`chat.TrimHistory`), and elides old
+   tool output (`chat.CompactHistory`) — composed as `chat.ServedHistory`. Past a
+   token budget, `chat.ShouldSummarize` asks the model to summarize the oldest
+   turns instead.
 6. In server mode `runner` hosts one bounded, concurrent runtime per session and
    `web` streams its events to the browser over SSE; in terminal mode `tui`
    renders the same `core.Observer` events inline. `cli` wires both.
@@ -70,7 +72,7 @@ edges are listed under [Dependency rules](#dependency-rules).
 | `hostinfo` | The host facts embedded in the system prompt (OS, platform, shell, user, date, workspace). Leaf, so composition never shells out. | `Describe` |
 | `prompts` | Role/tool **definitions as data** (`roles/*.toml`, `tools/*.toml`), embedded, plus user overrides from `~/.config/pai/roles/`. The only package that knows the definition file format. | `RoleNames`, `ToolNames`, `ReadRole`, `ReadTool`, `LoadRole`, `LoadTool`, `Role`, `Tool` |
 | `config` | Configuration only: `config.toml` loading, the `provider:model` split, role extras, and the comment-preserving editor. | `UserConfig`, `ContextConfig`, `LoadUserConfig`, `LoadRoleExtra`, `SetScalar`/`UnsetScalar`, `AddTrustedCmds`, `AddTrustedPath` |
-| `chat` | The LLM conversation protocol: composes the prompt head and tail, builds the message list, parses/validates the JSON response, retries, streams, truncates tool output, and projects what a request would send. Parses no definition files and probes no host. | `RolePrompt`, `ParseResponse`, `Ports`, `OutputGuide`, `ReplayTurns`, `ApplyOverrides`, `CompactHistory`, `ContextCards`, `Truncate` |
+| `chat` | The LLM conversation protocol: composes the prompt head and tail, builds the message list, parses/validates the JSON response, retries, streams, truncates tool output, and projects what a request would send. Parses no definition files and probes no host. | `RolePrompt`, `ParseResponse`, `Ports`, `OutputGuide`, `ReplayTurns`, `ApplyOverrides`, `TrimToAction`, `CompactHistory`, `ServedHistory`, `ContextCards`, `Truncate` |
 | `tool` | Tool **execution** and trust checks: local shell, SSH, web and academic search, plus command/path allowlists. Never prompts the user. | `ExecuteCommand`, `ExecuteCommandAt`, `RemoteManager`, `Search`, `PaperSearch`, `IsTrusted`, `IsTrustedPath`, `SplitSegments` |
 | `role` | The **single agent loop** and the tool-handler registry (`tools.go`) plus the file-edit planner (`filetools.md`). Runs a role to completion. | `Runtime`, `Run` |
 | `session` | Session persistence behind one `Store` interface; SQLite only. Keeps the per-turn **override layer** that shapes what a run sends. The cross-process lock uses `golang.org/x/sys`, so that dependency is not SQLite-specific. | `Store`, `Meta`, `Session`, `Override`, `Recorder` |

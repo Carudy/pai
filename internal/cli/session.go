@@ -309,8 +309,9 @@ func describeTurn(t core.Turn, width int) string {
 		return clip("["+string(resp.Action)+"] "+resp.GetPayload(), width)
 
 	case "tool_result":
-		// Observed as "[cmd result]\nCOMMAND: ...\nOUTPUT:\n..." or
-		// "SEARCH QUERY: ...\nRESULTS:\n...". Show the label and the command.
+		// Newer observations put the command on the header line, so the first line is the
+		// whole story; older ones carry a "COMMAND: ..." line of their own, and a search
+		// result has neither.
 		label, rest, _ := strings.Cut(t.Content, "\n")
 		for line := range strings.SplitSeq(rest, "\n") {
 			if cmd, ok := strings.CutPrefix(line, "COMMAND: "); ok {

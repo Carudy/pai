@@ -5,11 +5,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Carudy/pai/internal/hostinfo"
 )
 
 // testHostInfo stands in for the probed host block, so head composition is
 // deterministic in tests.
-const testHostInfo = "OS: test (linux amd64)\nShell: sh User: tester\nDatetime: 2026-01-01 00:00:00\nWorking Dir: /work\n"
+const testHostInfo = "OS: test (linux amd64)\nShell: sh User: tester\nWorking Dir: /work\nSession started: 2026-01-01 00:00:00\n"
 
 func write(t *testing.T, path, body string) {
 	t.Helper()
@@ -173,6 +176,37 @@ func TestOutputContractPlacement(t *testing.T) {
 	}
 	if strings.Contains(OutputReminder(), "\n") {
 		t.Errorf("the reminder should be a single line: %q", OutputReminder())
+	}
+}
+
+// The head is what a provider's prefix cache keys on, so it can carry only facts
+// that hold still: the session's birth, never a clock that ticks. Nothing else in the
+// composed prompt ticks either — see RolePrompt for why the live clock is absent.
+func TestHeadPinsTheBirthTime(t *testing.T) {
+	born := time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
+	first, err := LoadRolePromptAt("devops", "", "", born)
+	if err != nil {
+		t.Fatalf("load devops: %v", err)
+	}
+	second, err := LoadRolePromptAt("devops", "", "", born)
+	if err != nil {
+		t.Fatalf("load devops: %v", err)
+	}
+	if first.Head() != second.Head() {
+		t.Error("two loads of the same session composed different heads")
+	}
+	if !strings.Contains(first.Head(), "Session started: 2026-01-01 09:30:00") {
+		t.Errorf("head is missing the session start:\n%s", first.Head())
+	}
+	// The regression this guards: a live stamp anywhere in the prompt rewrites the
+	// prefix on every request. Compare against the clock as it reads right now, which
+	// is exactly what the old head used to embed.
+	now := time.Now().Format(hostinfo.DateTimeFormat)
+	if strings.Contains(first.Head(), now) {
+		t.Errorf("head carries the current clock (%s):\n%s", now, first.Head())
+	}
+	if strings.Contains(first.Tail(), now) {
+		t.Errorf("tail carries the current clock (%s): %q", now, first.Tail())
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadRolePromptAtWorkspaces(t *testing.T) {
@@ -24,7 +25,7 @@ func TestLoadRolePromptAtWorkspaces(t *testing.T) {
 		}
 		t.Run(instructions, func(t *testing.T) {
 			t.Parallel()
-			rp, err := LoadRolePromptAt("coder", "", sub)
+			rp, err := LoadRolePromptAt("coder", "", sub, time.Time{})
 			if err != nil {
 				t.Fatal(err)
 			}

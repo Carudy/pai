@@ -243,10 +243,18 @@ page.run("usageSnapshot({usage_calls:2, usage:{Prompt:1500,Completion:20,Total:1
 assert.match(page.get('token-total').textContent, /total 2\.5M/, 'large totals use M');
 assert.match(page.get('token-total').textContent, /out 1\.2k/, 'thousands use k');
 assert.equal(page.get('token-round').textContent, 'Round · in 1.5k · out 20', 'the header line reports spend, never context');
+// A provider that accounts for its prefix cache shows the hit share; one that says
+// nothing shows no figure at all, because a silent 0 is unknown, not a miss.
+page.run("usageSnapshot({usage_calls:2, usage:{Prompt:1000,Completion:20,Total:1020,Cached:940}, total_usage:{Prompt:1000,Completion:20,Total:1020,Cached:940}, context_tokens:512000})");
+assert.equal(page.get('token-round').textContent, 'Round · in 1k · cache 94% · out 20', 'a reported cache share lands in the round line');
+assert.match(page.get('token-usage').title, /940 of the prompt \(94%\) came from the provider's prefix cache/, 'the tooltip names the cached tokens');
+page.run("usageSnapshot({usage_calls:2, usage:{Prompt:1000,Completion:20,Total:1020,Cached:0}, total_usage:{Prompt:1000,Completion:20,Total:1020,Cached:0}, context_tokens:512000})");
+assert.equal(page.get('token-round').textContent, 'Round · in 1k · out 20', 'an unreported cache stays out of the line');
 // The context figure belongs to the panel, where it is the projection's estimate
 // measured against the compaction budget.
 page.run("contextEstimate = {tokens: 331100, turns: 3531}; paintTokens()");
-assert.equal(page.get('context-size').textContent, 'Context · ~331.1k / 512k (65%) · estimated · 3531 turns', 'the panel carries the context figure with its budget');
+assert.equal(page.get('context-size').textContent, 'Context · ~331.1k / 512k (65%)', 'the panel carries the context figure with its budget');
+assert.equal(page.get('context-detail').textContent, 'estimated · 3531 turns', 'the qualifiers sit on their own row');
 page.run("usageSnapshot({})");
 page.run("activity({type:'reasoning',data:'first '}); activity({type:'reasoning',data:'second'})");
 assert.ok(!page.get('live-progress').textContent.includes('first second'), 'live reasoning stays out of the activity log');
@@ -397,7 +405,7 @@ const inspector = browser();
 inspector.run("selected='one'");
 inspector.run('renderContext(' + JSON.stringify({
   head: 'HEAD TEXT', tail: 'TAIL TEXT', model: 'deepseek:test', total: 3, offset: 0,
-  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4},
   cards: [
     {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'hello', state: 'sent'},
     {seq: 2, role: 'user', kind: 'tool_result', original: 'LONG BODY', sent: 'LONG', state: 'elided'},
@@ -415,20 +423,20 @@ assert.match(ctxText, /messages 1–3 of 3/, 'the strip names the loaded slice')
 assert.match(ctxText, /start of the conversation/, 'a whole-transcript view says so');
 // A card's size is UTF-8 bytes, the unit the compaction knobs use, so multi-byte
 // text is not under-reported by a code-unit length.
-inspector.run("renderContext({head:'H', tail:'T', model:'m', total:1, offset:0, config:{keep_turns:3,max_turns:20,elide_min_bytes:8000,elide_after_turns:5}, cards:[{seq:1,role:'user',kind:'input',original:'x',sent:'日本語',state:'sent'}]})");
+inspector.run("renderContext({head:'H', tail:'T', model:'m', total:1, offset:0, config:{keep_turns:3,max_turns:20,elide_min_bytes:8000,elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4}, cards:[{seq:1,role:'user',kind:'input',original:'x',sent:'日本語',state:'sent'}]})");
 const ctxWindow = descendants(inspector.get('context-body')).find(n => n.className === 'ctx-window');
 assert.match(descendants(ctxWindow).find(n => n.className === 'ctx-size').textContent, /^9 B$/, 'sizes count UTF-8 bytes');
 const inspectorButtons = () => descendants(inspector.get('context-body')).filter(n => n.tag === 'button');
 const inspectorNotes = () => descendants(inspector.get('context-body')).filter(n => n.className === 'ctx-note').map(n => n.textContent);
 // Card bodies are raw text, never Markdown: this is the payload the model gets, so
 // nothing may interpret or reformat it. A fenced block must survive verbatim.
-inspector.run("renderContext({head:'H', tail:'T', model:'m', total:1, offset:0, config:{keep_turns:3,max_turns:20,elide_min_bytes:8000,elide_after_turns:5}, cards:[{seq:1,role:'user',kind:'input',original:'x',sent:'```js\\nlet a = 1;\\n```',state:'sent'}]})");
+inspector.run("renderContext({head:'H', tail:'T', model:'m', total:1, offset:0, config:{keep_turns:3,max_turns:20,elide_min_bytes:8000,elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4}, cards:[{seq:1,role:'user',kind:'input',original:'x',sent:'```js\\nlet a = 1;\\n```',state:'sent'}]})");
 assert.equal(descendants(inspector.get('context-body')).filter(n => n.className === 'prose').length, 0, 'the inspector never renders Markdown');
 assert.match(inspector.get('context-body').textContent, /```js\nlet a = 1;\n```/, 'code fences are shown verbatim');
 // A windowed view offers the page above it and names its slice.
 inspector.run('renderContext(' + JSON.stringify({
   head: 'H', tail: 'T', model: 'm', total: 90, offset: 60,
-  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4},
   cards: [{seq: 61, role: 'user', kind: 'input', original: 'hi', sent: 'hi', state: 'sent'}],
 }) + ')');
 assert.match(inspector.get('context-body').textContent, /messages 61–61 of 90/, 'a window names its slice');
@@ -438,19 +446,25 @@ assert.deepEqual(inspectorNotes(), [], 'the window strip uses its own class, not
 const loadEarlier = () => inspectorButtons().find(b => b.textContent.startsWith('Load '));
 assert.equal(loadEarlier().textContent, 'Load 60 earlier messages', 'the strip offers the earlier page');
 inspector.run('renderContext(' + JSON.stringify({
-  head: 'HEAD TEXT', tail: 'TAIL TEXT', model: 'deepseek:test', total: 3, offset: 0,
-  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  head: 'HEAD TEXT', tail: 'TAIL TEXT', model: 'deepseek:test', total: 4, offset: 0,
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4},
   cards: [
     {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'hello', state: 'sent'},
     {seq: 2, role: 'user', kind: 'tool_result', original: 'LONG BODY', sent: 'LONG', state: 'elided'},
     {seq: 3, role: 'user', kind: 'input', original: 'old words', sent: '', state: 'summarized_away'},
+    {seq: 4, role: 'assistant', kind: 'output', original: 'ACTION\n[cmd result]\nfake', sent: 'ACTION', state: 'trimmed'},
   ],
 }) + ')');
-assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', 'Edit…', 'Drop'], 'sent and elided cards are editable');
+assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', 'Edit…', 'Drop', 'Edit…', 'Drop'], 'sent, elided and over-run cards are editable');
 assert.deepEqual(inspectorNotes(), ['not editable — before the last summary'], 'a summarized-away card says why it is frozen');
+// A turn the model over-ran is sent as its action, with the invention one click away
+// and its own badge, so it is not confused with aged-out tool output.
+assert.match(inspector.get('context-body').textContent, /over-ran/, 'the over-run badge has its own label');
+assert.ok(descendants(inspector.get('context-body')).some(n => n.className === 'ctx-badge state-trimmed'), 'the over-run card carries its own state');
+assert.match(inspector.get('context-body').textContent, /show what the model wrote past its action/, 'the original is one click away');
 inspector.run('renderContext(' + JSON.stringify({
   head: 'H', tail: 'T', model: 'deepseek:test', total: 3, offset: 0,
-  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4},
   cards: [
     {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'trimmed', state: 'edited'},
     {seq: 2, role: 'user', kind: 'tool_result', original: 'big body', sent: '', state: 'dropped'},
@@ -479,7 +493,7 @@ assert.equal(saveButton.disabled, true, 'a blank replacement cannot be saved');
 // disables every control rather than silently dropping the click.
 inspector.run('sessionBusy=true; renderContext(' + JSON.stringify({
   head: 'H', tail: 'T', model: 'm',
-  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_turns: 5},
+  config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4},
   cards: [{seq: 1, role: 'user', kind: 'input', original: 'hi', sent: 'hi', state: 'sent'}],
 }) + ')');
 assert.ok(inspectorButtons().every(b => b.disabled), 'a running session disables the surgery controls');
@@ -593,6 +607,24 @@ async function verifyHistory() {
   p.run('total++');
   await p.run('loadHistory(true)');
   assert.equal(p.get('conversation').scrollTop, 1500, 'new durable content follows near bottom');
+  // A new card is entered from its heading, not its end: a long answer or tool log
+  // is then read from the start. The double has no layout, so the call is recorded.
+  const proto = p.get('history').firstElementChild.constructor.prototype;
+  let intoView = null;
+  proto.scrollIntoView = function (options) { intoView = {node: this, options}; };
+  p.run('total++');
+  await p.run('loadHistory(true)');
+  assert.equal(intoView && intoView.node, p.get('history').lastElementChild, 'a card appended while following is brought into view');
+  assert.equal(intoView && intoView.options.block, 'start', 'it is anchored at its heading');
+  assert.equal(intoView && intoView.options.behavior, 'smooth', 'and the move is animated');
+  delete proto.scrollIntoView;
+  // The animated follow emits its own scroll events; they must not cancel it, but a
+  // reader scrolling up during the animation must take over.
+  p.run("autoScroll = true; lastScrollTop = 900; $('conversation').scrollTop = 950; onConversationScroll()");
+  assert.equal(p.run('followTail'), true, 'an animated follow ignores its own downward events');
+  p.run("$('conversation').scrollTop = 300; onConversationScroll()");
+  assert.equal(p.run('followTail'), false, 'an upward scroll during the animation hands over to the reader');
+  p.run('followTail = true');
   // A layout shift is not a scroll: the reasoning card appearing shortens the pane,
   // which used to read as "the reader scrolled away" and froze the follow.
   p.run("$('conversation').clientHeight = 240");
@@ -726,7 +758,8 @@ assert.match(usagePage.get('token-usage').title, /Latest request: sent 78k/);
 // The panel's figure is still the projection once a run has reported usage, and it
 // is measured against the configured budget.
 usagePage.run("contextEstimate = {tokens: 78000, turns: 12}; paintTokens()");
-assert.equal(usagePage.get('context-size').textContent, 'Context · ~78k / 128k (61%) · estimated · 12 turns', 'the panel measures context against the compaction budget');
+assert.equal(usagePage.get('context-size').textContent, 'Context · ~78k / 128k (61%)', 'the panel measures context against the compaction budget');
+assert.equal(usagePage.get('context-detail').textContent, 'estimated · 12 turns', 'and names the window underneath');
 assert.match(usagePage.get('context-usage').title, /exceeds 128k tokens/);
 
 async function verifyModels() {
@@ -901,7 +934,7 @@ async function verifyContext() {
       const offset = Number(m[1]), limit = Number(m[2]), start = Math.min(offset, turns.length);
       return {head:'H', tail:'T', model:'m', total: turns.length, offset: start,
         cards: turns.slice(start, Math.min(start+limit, turns.length)),
-        config: {keep_turns:3, max_turns:20, elide_min_bytes:8000, elide_after_turns:5}};
+        config: {keep_turns:3, max_turns:20, elide_min_bytes:8000, elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4}};
     };
     api = apiPage;`);
   await p.run('loadContext()');
@@ -997,14 +1030,15 @@ async function verifyTokenEstimate() {
   await p.run('loadContext(false)');
   // The projection lands in the context panel, not in the spend line: a session
   // that has never run has a context size but no usage to report.
-  assert.equal(p.get('context-size').textContent, 'Context · ~12.4k · estimated · 340 turns', 'the panel reports the projected size as an estimate');
+  assert.equal(p.get('context-size').textContent, 'Context · ~12.4k', 'the panel reports the projected size as an estimate');
+assert.equal(p.get('context-detail').textContent, 'estimated · 340 turns', 'with the window on its own row');
   assert.equal(p.get('token-usage').hidden, true, 'no spend is invented before a run reports any');
   assert.equal(p.get('context-usage').title.includes('four bytes per token'), true, 'the estimate says how it was derived');
 
   // A configured budget is shown against the estimate, and the button is offered
   // for an idle session that has something to compress.
   p.run("snapshot({state:'awaiting',usage_calls:0,context_tokens:128000})");
-  assert.equal(p.get('context-size').textContent, 'Context · ~12.4k / 128k (10%) · estimated · 340 turns', 'the estimate is measured against the compaction budget');
+  assert.equal(p.get('context-size').textContent, 'Context · ~12.4k / 128k (10%)', 'the estimate is measured against the compaction budget');
   assert.equal(p.get('compress-now').disabled, false, 'an idle session with turns offers compression');
 
   // Provider numbers fill the spend line; the panel keeps the projection, which is
@@ -1023,7 +1057,8 @@ async function verifyTokenEstimate() {
   const empty = browser();
   empty.run("selected='one'; api=async path => path.startsWith('context') ? {estimated_tokens: 0, total: 0, cards: []} : {}");
   await empty.run('loadContext(false)');
-  assert.equal(empty.get('context-size').textContent, '', 'an empty session shows no context figure');
+	  assert.equal(empty.get('context-size').textContent, '', 'an empty session shows no context figure');
+  assert.equal(empty.get('context-detail').textContent, '', 'and no qualifier underneath it');
   assert.equal(empty.get('compress-now').disabled, false, 'a no-op is explained on press, not hidden behind a disabled button');
   assert.match(empty.get('compress-now').title, /Nothing to compact: this session has no stored turns/, 'and the reason is already available to read');
   const failed = browser();

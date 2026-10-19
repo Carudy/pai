@@ -80,7 +80,9 @@ running session has seen no event for ~20s — a slow-consumer eviction or a
 buffering proxy then self-heals instead of freezing on the last phase.
 Snapshots include `usage` (latest reported request), `total_usage` (sum of
 reported request usage), and `usage_calls`. Token fields use core's `Prompt`,
-`Completion`, and `Total` names. `context_tokens`, when present, is the
+`Completion`, and `Total` names, plus `Cached` — the prompt tokens the provider
+served from its prefix cache, 0 when it reports no cache accounting at all, so the
+UI omits the figure rather than claiming a miss. `context_tokens`, when present, is the
 configured compaction threshold, letting the UI show the latest prompt size
 against the budget. The UI hides usage until a report arrives and
 renders snapshots rather than adding SSE events, so reconnects cannot double
@@ -120,7 +122,12 @@ measurement, and it belongs where compaction is configured. The conversation
 loads only the most recent turns and appends older ones as
 the reader scrolls to the top (there is no "More history" button); two floating
 buttons ride over the timeline — ↑ jumps to the previous user instruction and ↓
-to the newest message, each shown only when it would do something. Both panels are bounded: the
+to the newest message, each shown only when it would do something. Following the
+tail means entering each new card at its heading rather than its end, so a long
+answer or tool log is read from where it starts (a short card still lands at the
+bottom, because the browser clamps the scroll), and the move is animated — the
+follow's own scroll events are skipped so the animation cannot cancel itself, while
+an upward move hands control back to the reader. Both panels are bounded: the
 activity log keeps the last 60 cards and the in-memory conversation window is
 capped (older turns reload from the store) so a long session does not grow
 without limit. Confirmation choices render as one aligned row of equal-width
@@ -216,12 +223,16 @@ rejected; there is no URL authentication.
 - `GET /api/context?name=...&offset=0&limit=100`: `runner.ContextView` — the
   message list the session would send: the role's system `head`, one `cards`
   entry per stored turn (`original`, `sent`, and a `state` of `sent` | `elided` |
-  `edited` | `dropped` | `summarized_away` | `capped`), the system `tail`, the
-  `model`, and the compaction `config` in effect. `estimated_tokens` is the size
-  this projection would send, from the same four-bytes-per-token estimate the loop
-  seeds its summarization budget with on resume — so a client can show a context
-  size for a session no run has reported usage for yet, and it is computed over
-  every turn regardless of the window. `user_turns` is how many user turns the
+  `trimmed` | `edited` | `dropped` | `summarized_away` | `capped`), the system `tail`, the
+  `model`, and the compaction `config` in effect (`keep_turns`, `max_turns`,
+  `elide_after_tokens` — the effective size trigger, already resolved from
+  `summarize_after_tokens` when the key is unset — `elide_min_bytes`,
+  `elide_head_lines`, `elide_tail_lines`). `estimated_tokens` is the size
+  this projection would send — after the same replay-time edits the loop applies
+  (over-run cut, elision) — from the same four-bytes-per-token estimate that seeds
+  the loop's summarization budget on resume, so a client can show a context
+  size for a session no run has reported usage for yet; it is computed over
+  every turn in the replay regardless of the paged window. `user_turns` is how many user turns the
   replay holds and `compact_turns` how many a compaction would fold into a
   summary; the latter is 0 when every turn still fits inside `keep_turns`, which
   is what lets the UI explain a manual compact that has nothing to do instead of
@@ -348,7 +359,7 @@ would sit on its previous phase for the whole call. The projection is probed whe
 the figure is there before any run has reported usage. An **Inspect** switch in that panel's header
 opens an overlay of the messages a send would use — the system head, one card per
 message showing the original and what is actually sent (with a state badge for
-elided, edited, dropped, summarized-away and capped messages), and the tail, with
+elided, over-run, edited, dropped, summarized-away and capped messages), and the tail, with
 the compaction settings that produced them. The overlay is windowed: it opens
 anchored on the newest page, names the slice it holds, offers the page above, and
 loads it when the reader clicks or scrolls to the top, so a long transcript is

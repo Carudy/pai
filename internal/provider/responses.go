@@ -176,11 +176,16 @@ type rawResponsesUsage struct {
 	InputTokens         int                  `json:"input_tokens"`
 	OutputTokens        int                  `json:"output_tokens"`
 	TotalTokens         int                  `json:"total_tokens"`
+	InputTokensDetails  *cacheTokenCount     `json:"input_tokens_details"`
 	OutputTokensDetails *reasoningTokenCount `json:"output_tokens_details"`
 }
 
 type reasoningTokenCount struct {
 	ReasoningTokens int `json:"reasoning_tokens"`
+}
+
+type cacheTokenCount struct {
+	CachedTokens int `json:"cached_tokens"`
 }
 
 // responsesParts folds the output items into the assistant's text and its
@@ -210,6 +215,9 @@ func responsesToUsage(u *rawResponsesUsage) *Usage {
 		PromptTokens:     u.InputTokens,
 		CompletionTokens: u.OutputTokens,
 		TotalTokens:      u.TotalTokens,
+	}
+	if u.InputTokensDetails != nil {
+		usage.CachedPromptTokens = u.InputTokensDetails.CachedTokens
 	}
 	if u.OutputTokensDetails != nil {
 		usage.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens

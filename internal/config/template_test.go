@@ -174,8 +174,8 @@ func TestMergeTemplate(t *testing.T) {
 	if raw.Context.KeepTurns != 4 {
 		t.Errorf("keep_turns = %d, want the default 4", raw.Context.KeepTurns)
 	}
-	if raw.Context.ElideAfterTurns != 8 {
-		t.Errorf("elide_after_turns = %d, want the default 8", raw.Context.ElideAfterTurns)
+	if raw.Context.ElideTailLines != 4 {
+		t.Errorf("elide_tail_lines = %d, want the default 4", raw.Context.ElideTailLines)
 	}
 
 	// Merging again is a no-op.

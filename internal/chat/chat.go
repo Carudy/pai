@@ -38,7 +38,7 @@ func chat(
 
 	params := provider.CompletionParams{
 		Model:           cfg.Model,
-		Messages:        rp.Messages(CompactHistory(history, cfg.Context)),
+		Messages:        rp.Messages(ServedHistory(history, cfg.Context)),
 		Stream:          stream,
 		ResponseFormat:  &provider.ResponseFormat{Type: "json_object"},
 		ReasoningEffort: cfg.ReasoningEffort,

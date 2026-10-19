@@ -418,15 +418,18 @@ func TestServeBackendSetWorkingDir(t *testing.T) {
 	if !reflect.DeepEqual(got, before) {
 		t.Fatalf("workspace update changed other session data: %+v", got)
 	}
-	cfg, _, _, history, cleanup, dir, err := b.PrepareWorkspace("workspace", "")
+	cfg, _, _, history, cleanup, meta, err := b.PrepareWorkspace("workspace", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cleanup()
-	if dir != newDir || cfg.DefaultRole != "coder" || cfg.DefaultModel != "deepseek:test" || len(history) != 1 || history[0].Content != "keep history" {
-		t.Fatalf("prepared workspace: %q config=%+v history=%+v", dir, cfg, history)
+	if meta.Cwd != newDir || cfg.DefaultRole != "coder" || cfg.DefaultModel != "deepseek:test" || len(history) != 1 || history[0].Content != "keep history" {
+		t.Fatalf("prepared workspace: %q config=%+v history=%+v", meta.Cwd, cfg, history)
 	}
-	prompt, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.RoleExtra, dir)
+	if meta.CreatedAt.IsZero() {
+		t.Fatal("prepared workspace lost the session birth time")
+	}
+	prompt, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.RoleExtra, meta.Cwd, meta.CreatedAt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,8 +509,8 @@ func TestServeBackend(t *testing.T) {
 	if _, err := store.Create(session.Meta{Name: "elsewhere", Role: "devops", Model: "deepseek:test", Cwd: other}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, _, dir, err := b.PrepareWorkspace("elsewhere", ""); err != nil || dir != other {
-		t.Fatalf("saved workspace: %q %v", dir, err)
+	if _, _, _, _, _, meta, err := b.PrepareWorkspace("elsewhere", ""); err != nil || meta.Cwd != other {
+		t.Fatalf("saved workspace: %q %v", meta.Cwd, err)
 	}
 	if _, _, _, _, _, _, err := b.PrepareWorkspace("elsewhere", cwd); err == nil {
 		t.Fatal("workspace mismatch accepted")
@@ -541,8 +544,8 @@ func TestServeBackend(t *testing.T) {
 	if _, err := b.Create("created", other); err == nil {
 		t.Fatal("duplicate creation accepted")
 	}
-	if _, _, _, _, _, dir, err := b.PrepareWorkspace("created", ""); err != nil || dir != other {
-		t.Fatalf("created resume: %q %v", dir, err)
+	if _, _, _, _, _, meta, err := b.PrepareWorkspace("created", ""); err != nil || meta.Cwd != other {
+		t.Fatalf("created resume: %q %v", meta.Cwd, err)
 	}
 	for _, dir := range []string{filepath.Join(other, "missing"), cfgPath} {
 		if _, err := b.Create("invalid-dir", dir); err == nil {
@@ -568,8 +571,8 @@ func TestServeBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, _, dir, err := b.PrepareWorkspace("first-workspace", relative); err != nil || dir != workspace {
-		t.Fatalf("first workspace: %q %v", dir, err)
+	if _, _, _, _, _, meta, err := b.PrepareWorkspace("first-workspace", relative); err != nil || meta.Cwd != workspace {
+		t.Fatalf("first workspace: %q %v", meta.Cwd, err)
 	}
 	stored, err := store.Get("first-workspace")
 	if err != nil || stored.Meta.Cwd != workspace {

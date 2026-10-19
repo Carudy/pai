@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/Carudy/pai/internal/chat"
@@ -26,7 +27,7 @@ type serveBackend struct {
 }
 
 func serveMeta(m session.Meta) runner.Meta {
-	return runner.Meta{Name: m.Name, Role: m.Role, Model: m.Model, Cwd: m.Cwd, UpdatedAt: m.UpdatedAt}
+	return runner.Meta{Name: m.Name, Role: m.Role, Model: m.Model, Cwd: m.Cwd, CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt}
 }
 
 func (b *serveBackend) List() ([]runner.Meta, error) {
@@ -100,7 +101,7 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 	if err != nil {
 		return runner.ContextView{}, fmt.Errorf("load role extra: %w", err)
 	}
-	rp, err := chat.LoadRolePromptAt(role, extra, s.Meta.Cwd)
+	rp, err := chat.LoadRolePromptAt(role, extra, s.Meta.Cwd, s.Meta.CreatedAt)
 	if err != nil {
 		return runner.ContextView{}, fmt.Errorf("load role: %w", err)
 	}
@@ -108,10 +109,11 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 	start := min(offset, len(cards))
 	end := min(start+limit, len(cards))
 	window := cards[start:end]
-	// Size the prompt the loop would compose on resume, so the number a client
-	// shows before the first call is the one the summarization budget starts from.
+	// Size the prompt the loop would compose on resume, after the same replay-time
+	// edits it applies (over-run cut, elision), so the number a client shows is the one
+	// that would actually be sent and the one the summarization budget starts from.
 	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.Context.KeepTurns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
-	servedMsgs := toMessages(served)
+	servedMsgs := chat.ServedHistory(toMessages(served), cfg.Context)
 	// What a compaction would absorb, in the same terms the loop decides with, so
 	// the client can say why a manual compress has nothing to do.
 	span, _ := chat.SplitForSummary(servedMsgs, cfg.Context.KeepTurns)
@@ -126,11 +128,12 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 		UserTurns:       chat.UserTurns(servedMsgs),
 		Cards:           make([]runner.ContextCard, len(window)),
 		Config: runner.ContextSettings{
-			KeepTurns:       cfg.Context.KeepTurns,
-			ElideAfterTurns: cfg.Context.ElideAfterTurns,
-			ElideMinBytes:   cfg.Context.ElideMinBytes,
-			ElideHeadLines:  cfg.Context.ElideHeadLines,
-			MaxTurns:        cfg.SessionMaxTurns,
+			KeepTurns:        cfg.Context.KeepTurns,
+			ElideAfterTokens: cfg.Context.ElideLimit(),
+			ElideMinBytes:    cfg.Context.ElideMinBytes,
+			ElideHeadLines:   cfg.Context.ElideHeadLines,
+			ElideTailLines:   cfg.Context.ElideTailLines,
+			MaxTurns:         cfg.SessionMaxTurns,
 		},
 	}
 	for i, c := range window {
@@ -474,9 +477,9 @@ func (b *serveBackend) CreateWithRole(name, cwd, role string) (runner.Meta, erro
 	return serveMeta(s.Meta), nil
 }
 
-func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), string, error) {
-	fail := func(err error) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), string, error) {
-		return nil, nil, nil, nil, nil, "", err
+func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), runner.Meta, error) {
+	fail := func(err error) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), runner.Meta, error) {
+		return nil, nil, nil, nil, nil, runner.Meta{}, err
 	}
 	if !session.ValidName(name) {
 		return fail(errors.New("invalid session name"))
@@ -526,7 +529,7 @@ func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, p
 		return fail(fmt.Errorf("load role extra: %w", err))
 	}
 	cfg.RoleExtra = extra
-	if _, err := chat.LoadRolePromptAt(cfg.DefaultRole, extra, cwd); err != nil {
+	if _, err := chat.LoadRolePromptAt(cfg.DefaultRole, extra, cwd, time.Time{}); err != nil {
 		return fail(fmt.Errorf("load role: %w", err))
 	}
 	pc := cfg.ProvidersConfigs[cfg.Provider]
@@ -548,7 +551,7 @@ func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, p
 		}
 	}
 	served := chat.ApplyOverrides(chat.ReplayTurns(s.Turns, cfg.Context.KeepTurns, cfg.SessionMaxTurns), toChatOverrides(s.Overrides))
-	return cfg, client, &serveRecorder{backend: b, name: name}, toMessages(served), func() {}, cwd, nil
+	return cfg, client, &serveRecorder{backend: b, name: name}, toMessages(served), func() {}, serveMeta(s.Meta), nil
 }
 
 type serveRecorder struct {

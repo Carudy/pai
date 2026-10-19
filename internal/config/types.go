@@ -40,20 +40,47 @@ type ContextConfig struct {
 	// Compaction of older history. The last KeepTurns user turns are replayed
 	// verbatim (a turn is one user instruction plus every tool call the model makes
 	// to answer it, so a long turn is never cut mid-task); tool observations older
-	// than that are elided to their header. No elision happens until the
-	// conversation exceeds ElideAfterTurns user turns, and observations smaller than
-	// ElideMinBytes are left alone. ElideHeadLines is how much of an elided
-	// observation survives.
-	KeepTurns       int
-	ElideAfterTurns int
-	ElideMinBytes   int
-	ElideHeadLines  int
+	// than that are elided to a head and a tail once the history reaches
+	// ElideAfterTokens, and observations smaller than ElideMinBytes are left alone.
+	// ElideHeadLines and ElideTailLines say how much of an elided observation
+	// survives: the head names the command, the tail carries the error or summary.
+	// Zero ElideAfterTokens derives the trigger; see ElideLimit.
+	KeepTurns        int
+	ElideAfterTokens int
+	ElideMinBytes    int
+	ElideHeadLines   int
+	ElideTailLines   int
 
 	// SummarizeAfterTokens turns on the second compression layer: when the last
 	// prompt exceeded this many tokens, the oldest turns are summarized by the
 	// model into one message and only the last KeepTurns turns are kept. Zero
 	// (the default) disables it — it costs an extra model call, so it is opt-in.
 	SummarizeAfterTokens int
+}
+
+// DefaultElideAfterTokens is the elision trigger used when neither
+// elide_after_tokens nor summarize_after_tokens is set: without a declared budget,
+// this is the size at which stale tool output is worth trimming, so a session that
+// never summarizes still cannot grow without bound.
+const DefaultElideAfterTokens = 100_000
+
+// ElideLimit reports the size, in estimated tokens of the history itself, at which
+// old observations are elided. ElideAfterTokens wins when set; otherwise half the
+// summarization budget is used, so the free trim happens before the model is asked
+// to summarize; otherwise DefaultElideAfterTokens.
+//
+// The measure is the history rather than the composed prompt: elision can only act
+// on the turns, and estimating them here keeps CompactHistory a pure function of the
+// history and the config, with no clock and no session state to thread through.
+func (c ContextConfig) ElideLimit() int {
+	switch {
+	case c.ElideAfterTokens > 0:
+		return c.ElideAfterTokens
+	case c.SummarizeAfterTokens > 0:
+		return c.SummarizeAfterTokens / 2
+	default:
+		return DefaultElideAfterTokens
+	}
 }
 
 // tomlConfig mirrors the structure of ~/.config/pai/config.toml.
@@ -78,9 +105,10 @@ type tomlConfig struct {
 		HeadLines            int `toml:"head_lines"`
 		TailLines            int `toml:"tail_lines"`
 		KeepTurns            int `toml:"keep_turns"`
-		ElideAfterTurns      int `toml:"elide_after_turns"`
+		ElideAfterTokens     int `toml:"elide_after_tokens"`
 		ElideMinBytes        int `toml:"elide_min_bytes"`
 		ElideHeadLines       int `toml:"elide_head_lines"`
+		ElideTailLines       int `toml:"elide_tail_lines"`
 		SummarizeAfterTokens int `toml:"summarize_after_tokens"`
 	} `toml:"context"`
 	Tool struct {
@@ -245,15 +273,16 @@ func defaultConfig() *UserConfig {
 		Streaming:         true,
 		ProvidersConfigs:  make(map[string]ProviderConfig),
 		Context: ContextConfig{
-			ExecLimit:       8000,
-			SearchLimit:     8000,
-			PaperLimit:      16384,
-			HeadLines:       80,
-			TailLines:       40,
-			KeepTurns:       4,
-			ElideAfterTurns: 8,
-			ElideMinBytes:   1000,
-			ElideHeadLines:  8,
+			ExecLimit:        8000,
+			SearchLimit:      8000,
+			PaperLimit:       16384,
+			HeadLines:        80,
+			TailLines:        40,
+			KeepTurns:        4,
+			ElideAfterTokens: 0,
+			ElideMinBytes:    1000,
+			ElideHeadLines:   8,
+			ElideTailLines:   4,
 		},
 		SessionRecapTurns:   3,
 		SessionRewindBackup: true,
@@ -327,14 +356,17 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	if ctx.KeepTurns > 0 {
 		cfg.Context.KeepTurns = ctx.KeepTurns
 	}
-	if ctx.ElideAfterTurns > 0 {
-		cfg.Context.ElideAfterTurns = ctx.ElideAfterTurns
+	if ctx.ElideAfterTokens > 0 {
+		cfg.Context.ElideAfterTokens = ctx.ElideAfterTokens
 	}
 	if ctx.ElideMinBytes > 0 {
 		cfg.Context.ElideMinBytes = ctx.ElideMinBytes
 	}
 	if ctx.ElideHeadLines > 0 {
 		cfg.Context.ElideHeadLines = ctx.ElideHeadLines
+	}
+	if ctx.ElideTailLines > 0 {
+		cfg.Context.ElideTailLines = ctx.ElideTailLines
 	}
 	if ctx.SummarizeAfterTokens > 0 {
 		cfg.Context.SummarizeAfterTokens = ctx.SummarizeAfterTokens

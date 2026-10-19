@@ -48,6 +48,38 @@ func TestCreateClientProtocols(t *testing.T) {
 // Chat completions (locks the shared HTTP plumbing)
 // ---------------------------------------------------------------------------
 
+// Cache accounting has no single spelling, so the reader copes with the shapes servers
+// send in the wild, and treats silence as unknown rather than as a miss.
+func TestCachedPromptTokensSpellings(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"prompt_tokens_details (OpenAI standard)", `{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":80}}`, 80},
+		{"top-level cached_tokens (gateways)", `{"prompt_tokens":100,"cached_tokens":64}`, 64},
+		{"deepseek prompt_cache_hit_tokens", `{"prompt_tokens":100,"prompt_cache_hit_tokens":96,"prompt_cache_miss_tokens":4}`, 96},
+		{"anthropic-style cache_read_input_tokens", `{"prompt_tokens":100,"cache_read_input_tokens":32}`, 32},
+		{"the standard spelling wins when both appear", `{"prompt_tokens":100,"cached_tokens":1,"prompt_tokens_details":{"cached_tokens":50}}`, 50},
+		{"unreported", `{"prompt_tokens":100}`, 0},
+		{"explicit zero stays zero", `{"prompt_tokens":100,"prompt_tokens_details":{"cached_tokens":0}}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var u rawUsage
+			if err := json.Unmarshal([]byte(tc.body), &u); err != nil {
+				t.Fatal(err)
+			}
+			if got := cachedPromptTokens(&u); got != tc.want {
+				t.Errorf("cachedPromptTokens = %d, want %d", got, tc.want)
+			}
+		})
+	}
+	if got := cachedPromptTokens(nil); got != 0 {
+		t.Errorf("cachedPromptTokens(nil) = %d, want 0", got)
+	}
+}
+
 func TestChatCompletion(t *testing.T) {
 	var gotBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +161,7 @@ func TestResponsesCompletion(t *testing.T) {
 		io.WriteString(w, `{"id":"r1","status":"completed","output":[
 			{"type":"reasoning","summary":[{"type":"summary_text","text":"because"}]},
 			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}
-		],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"output_tokens_details":{"reasoning_tokens":4}}}`)
+		],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":6},"output_tokens_details":{"reasoning_tokens":4}}}`)
 	}))
 	defer srv.Close()
 
@@ -157,7 +189,7 @@ func TestResponsesCompletion(t *testing.T) {
 	if cc.Choices[0].Reasoning == nil || cc.Choices[0].Reasoning.Content != "because" {
 		t.Fatalf("reasoning = %+v", cc.Choices[0].Reasoning)
 	}
-	if cc.Usage == nil || cc.Usage.PromptTokens != 10 || cc.Usage.CompletionTokens != 5 || cc.Usage.TotalTokens != 15 || cc.Usage.ReasoningTokens != 4 {
+	if cc.Usage == nil || cc.Usage.PromptTokens != 10 || cc.Usage.CompletionTokens != 5 || cc.Usage.TotalTokens != 15 || cc.Usage.ReasoningTokens != 4 || cc.Usage.CachedPromptTokens != 6 {
 		t.Fatalf("usage = %+v", cc.Usage)
 	}
 

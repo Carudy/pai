@@ -343,6 +343,10 @@ type workingDirBackend struct {
 	cleanups int
 }
 
+// bornAt is the session birth the fake backend reports; the runtime pins it into
+// the prompt head so a fresh runtime resends the same prefix.
+var bornAt = time.Date(2026, 1, 1, 9, 30, 0, 0, time.UTC)
+
 func (b *workingDirBackend) SetWorkingDir(name, cwd string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -361,17 +365,17 @@ func (b *workingDirBackend) History(name string, offset, limit int) (runner.Hist
 	return h, err
 }
 
-func (b *workingDirBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), string, error) {
+func (b *workingDirBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), runner.Meta, error) {
 	b.mu.Lock()
 	dir := b.dir
 	b.starts++
 	b.mu.Unlock()
 	dir, err := runner.ResolveWorkingDir(dir)
 	if err != nil {
-		return nil, nil, nil, nil, nil, "", err
+		return nil, nil, nil, nil, nil, runner.Meta{}, err
 	}
 	cfg, p, rec, history, _, err := b.backend.Prepare(name)
-	return cfg, p, rec, history, func() { b.mu.Lock(); b.cleanups++; b.mu.Unlock() }, dir, err
+	return cfg, p, rec, history, func() { b.mu.Lock(); b.cleanups++; b.mu.Unlock() }, runner.Meta{Cwd: dir, CreatedAt: bornAt}, err
 }
 
 func TestWorkingDirAPI(t *testing.T) {
@@ -1038,7 +1042,7 @@ func TestPageLayoutNesting(t *testing.T) {
 		"apply-model": "model-form", "reasoning-preview": "conversation-wrapper", "prev-input": "conversation-wrapper",
 		"to-bottom": "conversation-wrapper", "session-role": "role-fieldset",
 		"session-title-row": "header", "token-usage": "session-config", "state": "status-row",
-		"toggle-config": "session-config", "context-usage": "header", "compress-now": "context-usage",
+		"toggle-config": "session-config", "context-usage": "header", "context-detail": "context-usage", "compress-now": "context-usage",
 	} {
 		if parents[child] != parent {
 			t.Errorf("%s parent = %q, want %q", child, parents[child], parent)
