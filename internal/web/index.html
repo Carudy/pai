@@ -29,6 +29,7 @@
             <aside id="sidebar" aria-label="Session sidebar">
                 <div class="brand">
                     <center><h1>✦ PAI</h1></center>
+                    <p id="identity" class="identity" hidden></p>
                 </div>
                 <hr class="response-divider">
                 <form id="new-session">
@@ -48,10 +49,24 @@
                     <button id="create-session" class="primary" type="submit">Create</button>
                 </form>
                 <hr class="response-divider">
-                <p id="sessions-status" role="status">Loading sessions…</p>
-                <h2 id="sessions-heading">Sessions</h2>
-                <nav id="sessions" aria-label="Sessions"></nav>
-                <button id="more-sessions" hidden>More sessions</button>
+                <div class="panel-head">
+                    <h2 id="sessions-heading">Sessions</h2>
+                    <button
+                        id="toggle-sessions-list"
+                        type="button"
+                        aria-expanded="true"
+                        aria-controls="sessions-body"
+                        aria-label="Collapse session list"
+                        title="Collapse or expand the session list"
+                    >
+                        ▾</button
+                    >
+                </div>
+                <div id="sessions-body">
+                    <p id="sessions-status" role="status">Loading sessions…</p>
+                    <nav id="sessions" aria-label="Sessions"></nav>
+                    <button id="more-sessions" hidden>More sessions</button>
+                </div>
             </aside>
             <main>
                 <header>

@@ -51,6 +51,21 @@ func Describe(workingDir string, born time.Time) string {
 // start.
 const DateTimeFormat = "2006-01-02 15:04:05"
 
+// Identity renders "user@host" for a frontend to show which machine is serving
+// it. It is display metadata, so a missing value degrades to "unknown" rather
+// than failing.
+func Identity() string {
+	user := os.Getenv("USER")
+	if user == "" {
+		user = "unknown"
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	return user + "@" + host
+}
+
 // osDetail prefers a friendly distribution name, falling back to the platform.
 func osDetail() string {
 	switch runtime.GOOS {

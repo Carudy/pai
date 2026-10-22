@@ -257,6 +257,20 @@ main > header h2,
     font-weight: 800;
 }
 
+/* Which machine this tab is driving. Set after the first /api/info response, so it
+   stays hidden until there is something to say. */
+.brand .identity {
+    margin: 4px 0 0;
+    font-size: 12px;
+    text-align: center;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
+.brand .identity[hidden] {
+    display: none;
+}
+
 .brand span,
 header p {
     font-size: 12px;
@@ -331,7 +345,43 @@ header p {
 
 #sessions-heading {
     font-size: 15px;
-    margin-bottom: -12px;
+    margin: 0;
+}
+
+/* The list is collapsible so the sidebar can host more sections later without
+   crowding the conversation; the choice is remembered per browser. */
+.panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: -10px;
+}
+
+#toggle-sessions-list {
+    padding: 0 6px;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    line-height: 1;
+    font-size: 13px;
+    transition: transform 0.15s;
+}
+
+#toggle-sessions-list[aria-expanded='false'] {
+    transform: rotate(-90deg);
+}
+
+#sessions-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    min-height: 0;
+}
+
+#sessions-body[hidden] {
+    display: none;
 }
 
 #sessions-status {

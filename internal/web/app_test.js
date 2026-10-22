@@ -555,6 +555,22 @@ assert.equal(collapse.get('toggle-config').attributes['aria-expanded'], 'true');
 collapse.run("localStorage.setItem('pai.config-collapsed','1'); applyConfigCollapsed(storedConfigCollapsed())");
 assert.equal(collapse.get('config-body').hidden, true, 'a remembered collapse is restored on boot');
 
+// The session list collapses the same way, so the sidebar can grow more sections
+// later without crowding the conversation.
+const sidebar = browser();
+assert.equal(sidebar.get('sessions-body').hidden, false, 'the session list starts open');
+assert.equal(sidebar.get('identity').hidden, true, 'the identity line starts hidden');
+sidebar.run('applySessionsCollapsed(!sessionsCollapsed())');
+assert.equal(sidebar.get('sessions-body').hidden, true, 'collapsing hides the list');
+assert.equal(sidebar.get('toggle-sessions-list').attributes['aria-expanded'], 'false', 'and the toggle reports it');
+assert.equal(sidebar.get('toggle-sessions-list').attributes['aria-label'], 'Expand session list');
+assert.equal(sidebar.run("localStorage.getItem('pai.sessions-collapsed')"), '1', 'the choice is remembered');
+sidebar.run('applySessionsCollapsed(!sessionsCollapsed())');
+assert.equal(sidebar.get('sessions-body').hidden, false, 'and the toggle reopens it');
+assert.equal(sidebar.get('toggle-sessions-list').attributes['aria-expanded'], 'true');
+sidebar.run("localStorage.setItem('pai.sessions-collapsed','1'); applySessionsCollapsed(storedSessionsCollapsed())");
+assert.equal(sidebar.get('sessions-body').hidden, true, 'a remembered collapse is restored on boot');
+
 if (process.env.PAI_WEB_JSDOM) {
   const {JSDOM} = require(process.env.PAI_WEB_JSDOM);
   const dom = new JSDOM(fs.readFileSync(__dirname + '/index.html', 'utf8'), {runScripts:'outside-only', url:'https://pai.example'});
@@ -1229,4 +1245,15 @@ async function verifyAuthGate() {
   assert.equal(p.run('toasted.length'), 1, 'a non-auth failure is toasted');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+async function verifyIdentity() {
+  const p = browser();
+  p.run("api = async () => ({identity:'dev@pai-host'}); info()");
+  await p.run('info()');
+  assert.equal(p.get('identity').textContent, 'dev@pai-host', 'the sidebar names the serving host');
+  assert.equal(p.get('identity').hidden, false);
+  p.run("api = async () => ({identity:''}); info()");
+  await p.run('info()');
+  assert.equal(p.get('identity').hidden, true, 'an empty identity keeps the line hidden');
+}
+
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

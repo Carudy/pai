@@ -27,6 +27,8 @@ type Options struct {
     Token string
     PublicOrigin string
     AllowOrigins []string
+    ServerCwd string
+    Identity string
 }
 func New(m *runner.Manager, options Options) http.Handler
 ```
@@ -34,6 +36,10 @@ func New(m *runner.Manager, options Options) http.Handler
 `m` must be non-nil. New does not start a listener, change cwd, access config,
 create a manager, or close it. The composition root owns server shutdown and
 manager shutdown. Only standard library dependencies are added by this adapter.
+`ServerCwd` is the default working directory new sessions offer; `Identity` is
+the `user@host` the sidebar displays (`GET /api/info`), supplied by the
+composition root because only `hostinfo` probes the host. Both are display
+metadata: a client must not treat them as authorization.
 
 **CLI requirements:** reject an empty token for any non-loopback bind (including
 wildcard binds). An empty token intentionally disables authentication and is
@@ -174,6 +180,8 @@ rejected; there is no URL authentication.
   falls back to the remembered session (with a notice) when it no longer exists.
   Anything else under the prefix, or more than one segment deep, is 404; nothing
   is read from disk by that name, and only `GET` is allowed.
+- `GET /api/info`: `{ "identity": "user@host" }`, the server's identity for the
+  sidebar. It is display metadata, never authorization, and empty hides the line.
 - `GET /api/models`: `{ "models": ["provider:model"], "default_model": "provider:model" }`.
   Discovery uses the configured default and saved session models, not a config
   model list or remote discovery. Only model names are returned, never credentials.

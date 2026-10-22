@@ -96,7 +96,7 @@ edges are listed under [Dependency rules](#dependency-rules).
 
   ```
   cmd/pai -> cli
-  cli     -> chat config conn core paths prompts provider role runner session tui web
+  cli     -> chat config conn core hostinfo paths prompts provider role runner session tui web
   conn    -> chat core runner
   web     -> config core provider runner
   runner  -> config core provider role

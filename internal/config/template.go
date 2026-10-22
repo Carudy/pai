@@ -115,6 +115,17 @@ elide_tail_lines  = 4
 # Seconds after which a single command is killed. 0 (the default) means no
 # timeout: Ctrl+C stops a running command, so long builds are not cut off.
 # cmd_timeout_seconds = 0
+
+[conn]
+# Default target for "pai conn", the terminal client for a running "pai serve".
+# Flags win, then PAI_SERVE_URL / PAI_SERVE_TOKEN / PAI_SERVE_ORIGIN, then these.
+# An empty url means http://127.0.0.1:9384.
+# url = "http://127.0.0.1:9384"
+# Prefer PAI_SERVE_TOKEN over storing a credential here; if set, it is masked in
+# "pai config list" and preserved by "pai config reset".
+# token = ""
+# Only needed when the server runs behind a reverse proxy with --public-origin.
+# origin = "https://pai.example.com"
 `
 
 // Template returns the starter config.toml contents.
@@ -193,9 +204,10 @@ func MergeTemplate(path string) (int, error) {
 // ---------------------------------------------------------------------------
 
 // ResetTemplate replaces path with the starter template, then restores the
-// values a reset must never destroy: provider credentials, the search key, and
-// the hand-edited trusted lists (trusted_cmds, trusted_paths) that cannot be set
-// from the CLI. Everything else returns to its default.
+// values a reset must never destroy: provider credentials, the search key, the
+// pai conn token, and the hand-edited trusted lists (trusted_cmds,
+// trusted_paths) that cannot be set from the CLI. Everything else returns to its
+// default.
 func ResetTemplate(path string) error {
 	raw := preserved(path)
 
@@ -226,6 +238,13 @@ func ResetTemplate(path string) error {
 	}
 	if raw.Tool.TavilyAPIKey != "" {
 		if err := SetScalar(path, "tool", "tavily_api_key", strconv.Quote(raw.Tool.TavilyAPIKey)); err != nil {
+			return err
+		}
+	}
+	// A conn token is a credential like any other: resetting settings must not
+	// silently strand the next attach. Its url does reset, like every other setting.
+	if raw.Conn.Token != "" {
+		if err := SetScalar(path, "conn", "token", strconv.Quote(raw.Conn.Token)); err != nil {
 			return err
 		}
 	}

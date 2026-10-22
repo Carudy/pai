@@ -11,16 +11,23 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/conn"
 	"github.com/Carudy/pai/internal/tui"
 )
 
 func connHelp() string {
 	return `FLAGS
-  --url <url>         pai serve URL (default $PAI_SERVE_URL or ` + conn.DefaultURL + `)
-  --token <token>     access token (default $PAI_SERVE_TOKEN)
-  --origin <url>      origin sent on mutations (default: the --url origin)
+  --url <url>         pai serve URL (default $PAI_SERVE_URL, conn.url, then
+                      ` + conn.DefaultURL + `)
+  --token <token>     access token (default $PAI_SERVE_TOKEN, then conn.token)
+  --origin <url>      origin sent on mutations (default $PAI_SERVE_ORIGIN,
+                      conn.origin, then the --url origin)
   --session, -s <n>   session to attach to (or pass it as the argument)
+
+Defaults may live in the [conn] section of config.toml:
+  pai config set conn.url http://127.0.0.1:9384
+  pai config set conn.token <token>     # PAI_SERVE_TOKEN is safer than a file
 
 Attaches to a session served by "pai serve" and streams its events to this
 terminal, rendered like a local run. Type an instruction to send it. When a
@@ -29,6 +36,34 @@ confirmation appears, answer y (once), s (session), a (always) or n (deny).
 
 This client never opens the session store, so it works while "pai serve" holds
 the store's exclusive lock.`
+}
+
+// connTarget resolves the connection defaults from flags, environment, and
+// config.toml, in that order. An empty URL keeps conn's localhost default.
+func connTarget(rawURL, token, origin string) (string, string, string, error) {
+	if rawURL == "" {
+		rawURL = os.Getenv("PAI_SERVE_URL")
+	}
+	if token == "" {
+		token = os.Getenv("PAI_SERVE_TOKEN")
+	}
+	if origin == "" {
+		origin = os.Getenv("PAI_SERVE_ORIGIN")
+	}
+	cfg, err := config.LoadUserConfig()
+	if err != nil {
+		return "", "", "", err
+	}
+	if rawURL == "" {
+		rawURL = cfg.Conn.URL
+	}
+	if token == "" {
+		token = cfg.Conn.Token
+	}
+	if origin == "" {
+		origin = cfg.Conn.Origin
+	}
+	return rawURL, token, origin, nil
 }
 
 // lockedWriter serializes the SSE renderer and the local input loop, which write
@@ -65,19 +100,21 @@ func runConn(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 		fmt.Fprintf(stdout, "conn: a session name is required\n\n%s\n", connHelp())
 		return 2
 	}
-	if *token == "" {
-		*token = os.Getenv("PAI_SERVE_TOKEN")
+	// Precedence: flags, then environment, then config.toml, then the built-in
+	// localhost default. Config is the store for these defaults, so a broken one is
+	// reported here like it is by every other command rather than silently ignored.
+	baseURL, accessToken, mutationOrigin, err := connTarget(*rawURL, *token, *origin)
+	if err != nil {
+		log.Errorf("conn: %v\n", err)
+		return 1
 	}
-	if *rawURL == "" {
-		*rawURL = os.Getenv("PAI_SERVE_URL")
-	}
-	client := conn.New(*rawURL, *token)
-	if *origin != "" {
-		client.Origin = *origin
+	client := conn.New(baseURL, accessToken)
+	if mutationOrigin != "" {
+		client.Origin = mutationOrigin
 	}
 
 	pingCtx, stopPing := context.WithTimeout(ctx, 5*time.Second)
-	err := client.Ping(pingCtx)
+	err = client.Ping(pingCtx)
 	stopPing()
 	if err != nil {
 		log.Errorf("conn: %v\n", err)

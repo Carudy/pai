@@ -41,6 +41,10 @@ type Options struct {
 	// the UI prefills its working-directory field with it. It is a convenience
 	// hint, not a sandbox.
 	ServerCwd string
+	// Identity is the server's "user@host", shown in the sidebar so a browser tab
+	// says which machine it is driving. The composition root supplies it (hostinfo
+	// owns host probing); empty hides the line.
+	Identity string
 }
 
 //go:embed index.html style.css app.js vendor/*.js
@@ -98,6 +102,7 @@ type handler struct {
 	publicOrigin string
 	allowed      []string
 	serverCwd    string
+	identity     string
 	mu           sync.Mutex
 	sessions     map[[32]byte]time.Time
 }
@@ -105,7 +110,7 @@ type handler struct {
 // New returns a self-contained handler. It neither owns nor closes m. Configure
 // listener security and server header/idle timeouts at the composition root.
 func New(m *runner.Manager, options Options) http.Handler {
-	return &handler{manager: m, token: options.Token, publicOrigin: options.PublicOrigin, allowed: append([]string(nil), options.AllowOrigins...), serverCwd: options.ServerCwd, sessions: make(map[[32]byte]time.Time)}
+	return &handler{manager: m, token: options.Token, publicOrigin: options.PublicOrigin, allowed: append([]string(nil), options.AllowOrigins...), serverCwd: options.ServerCwd, identity: options.Identity, sessions: make(map[[32]byte]time.Time)}
 }
 
 // acceptsGzip reports whether the client advertised gzip. Only static assets are
@@ -231,6 +236,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.URL.Path {
+	case "/api/info":
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		// Bootstrap metadata for the page: where the UI connects, not what it may do.
+		respond(w, 200, map[string]string{"identity": h.identity})
 	case "/api/models":
 		if !method(w, r, http.MethodGet) {
 			return

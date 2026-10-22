@@ -30,6 +30,7 @@ let savedRole = '', roleDirty = false;
 let savedCwd = '', cwdDirty = false, cwdApplying = false;
 const THEME_KEY = 'pai.theme';
 const CONFIG_KEY = 'pai.config-collapsed';
+const SESSIONS_COLLAPSED_KEY = 'pai.sessions-collapsed';
 const REASONING_POS_KEY = 'pai.reasoning-position';
 // ── Model controls ──────────────────────────────────────────
 function normalizeModel(value) { return value.trim().replace(/\s*:\s*/, ':'); }
@@ -418,12 +419,32 @@ function applyConfigCollapsed(collapsed) {
   try { localStorage.setItem(CONFIG_KEY, collapsed ? '1' : '0'); } catch (_) {}
 }
 function storedConfigCollapsed() { try { return localStorage.getItem(CONFIG_KEY) === '1'; } catch (_) { return false; } }
+// The session list collapses on demand, for the same reason and with the same
+// browser-local memory: the sidebar may grow more sections later.
+function sessionsCollapsed() { return !!$('sessions-body').hidden; }
+function applySessionsCollapsed(collapsed) {
+  $('sessions-body').hidden = collapsed;
+  const toggle = $('toggle-sessions-list');
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-label', collapsed ? 'Expand session list' : 'Collapse session list');
+  try { localStorage.setItem(SESSIONS_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (_) {}
+}
+function storedSessionsCollapsed() { try { return localStorage.getItem(SESSIONS_COLLAPSED_KEY) === '1'; } catch (_) { return false; } }
 async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
   const response = await fetch('/api/' + path, options);
   const data = await response.json();
   if (!response.ok) { if (response.status === 401) loginNeeded(); const e = new Error(data.error || response.statusText); e.status = response.status; throw e; }
   return data;
+}
+// Bootstrap metadata: which user@host is serving this page. It is cosmetic, so a
+// failure leaves the line hidden rather than blocking the workspace.
+async function info() {
+  const data = await api('info');
+  const identity = typeof data.identity === 'string' ? data.identity.trim() : '';
+  const label = $('identity');
+  label.textContent = identity;
+  label.hidden = !identity;
 }
 function query(endpoint, offset, limit = 100) { return endpoint + '?name=' + encodeURIComponent(selected) + '&offset=' + offset + '&limit=' + limit; }
 async function sessions(reset = false) {
@@ -1778,7 +1799,7 @@ function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
 }
 // ── Event wiring ────────────────────────────────────────────
-$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; showApp(); const list = await sessions(true); await Promise.all([roles(), models(), loadReasoning()]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
+$('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; showApp(); const list = await sessions(true); await Promise.all([roles(), models(), loadReasoning(), info().catch(() => {})]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
 $('model-form').onsubmit = applyModel;
 $('reasoning-form').onsubmit = applyReasoning;
 $('reasoning-select').onchange = () => { reasoningDirty = true; reasoningControls(); };
@@ -1798,6 +1819,7 @@ $('apply-plan').onclick = () => action('send', AUTO_REPLY);
 $('trust-all').onchange = () => setTrustAll($('trust-all').checked);
 $('trust-sudo').onchange = () => setCommandTrust('sudo', $('trust-sudo').checked);
 $('more-sessions').onclick = () => sessions().catch(error);
+$('toggle-sessions-list').onclick = () => applySessionsCollapsed(!sessionsCollapsed());
 $('theme-toggle').onclick = toggleTheme;
 $('show-context').onchange = () => setContextOpen($('show-context').checked);
 $('context-close').onclick = () => setContextOpen(false);
@@ -1829,6 +1851,7 @@ $('toggle-activity').onclick = () => {
 controls();
 applyTheme(initialTheme());
 applyConfigCollapsed(storedConfigCollapsed());
+applySessionsCollapsed(storedSessionsCollapsed());
 initPendingDrag();
 initReasoningDrag();
 updateJumpButtons();
@@ -1836,3 +1859,4 @@ sessions(true).then(list => { showApp(); restoreSession(list); }).catch(bootFail
 roles().catch(bootFailed);
 models().catch(bootFailed);
 loadReasoning();
+info().catch(() => {});

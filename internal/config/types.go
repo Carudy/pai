@@ -22,6 +22,20 @@ type ProviderConfig struct {
 	Headers map[string]string `toml:"headers"`
 }
 
+// ConnConfig is the default target for `pai conn`, the terminal client for a
+// running `pai serve`. Precedence is flags, then environment variables, then
+// these values, then the built-in localhost default.
+type ConnConfig struct {
+	// URL is the server address. Empty means http://127.0.0.1:9384.
+	URL string
+	// Token is the access token for a secured server. Prefer PAI_SERVE_TOKEN so
+	// the credential is not stored in a file; a value here is masked in listings.
+	Token string
+	// Origin overrides the origin sent on mutations. Only needed when the server
+	// was started with --public-origin (a reverse proxy).
+	Origin string
+}
+
 // ContextConfig controls how the conversation is kept within the model's context
 // window: shortening a single tool observation, and eliding old observations from
 // the replayed history. All values come from the [context] section of config.toml
@@ -144,6 +158,11 @@ type tomlConfig struct {
 		// its current turns into a rolling backup session.
 		RewindBackup *bool `toml:"rewind_backup"`
 	} `toml:"session"`
+	Conn struct {
+		URL    string `toml:"url"`
+		Token  string `toml:"token"`
+		Origin string `toml:"origin"`
+	} `toml:"conn"`
 }
 
 // UserConfig is PAI's configuration: everything here comes from config.toml,
@@ -190,6 +209,9 @@ type UserConfig struct {
 	// Truncation and compaction for output fed back to the model.
 	Context ContextConfig
 
+	// Conn is the default target for `pai conn`.
+	Conn ConnConfig
+
 	// SessionPersist makes every run persist to an auto-named session, even
 	// without -s/--attach/--continue. SessionMaxTurns caps how many resumed
 	// turns are replayed (0 = all). SessionRecapTurns is how many recent
@@ -223,6 +245,7 @@ func (cfg *UserConfig) Redacted() *UserConfig {
 		}
 	}
 	dup.TavilyAPIKey = MaskSecret(cfg.TavilyAPIKey)
+	dup.Conn.Token = MaskSecret(cfg.Conn.Token)
 	return &dup
 }
 
@@ -329,6 +352,11 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	}
 	if raw.Session.RewindBackup != nil {
 		cfg.SessionRewindBackup = *raw.Session.RewindBackup
+	}
+	cfg.Conn = ConnConfig{
+		URL:    strings.TrimSpace(raw.Conn.URL),
+		Token:  strings.TrimSpace(raw.Conn.Token),
+		Origin: strings.TrimSpace(raw.Conn.Origin),
 	}
 	if raw.App.TruncateExecLimit > 0 {
 		cfg.Context.ExecLimit = raw.App.TruncateExecLimit

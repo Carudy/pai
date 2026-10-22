@@ -15,7 +15,8 @@ See the [module map](../organization.md) for dependency rules.
   implements the runner backend; `serveauth.go` handles origins and tokens;
   `serveactivity.go` writes the activity log.
 - `conn.go` is the terminal client for a running server; it wires `conn.Client`
-  to `tui.NewLineObserver` and never opens the store.
+  to `tui.NewLineObserver` and never opens the store. Its target resolves from
+  flags, then `PAI_SERVE_*`, then the `[conn]` section of `config.toml`.
 - Served sessions use their persisted workspace; new sessions default to the
   starting cwd. Each runtime gets its own working directory, without `os.Chdir`.
 

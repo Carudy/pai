@@ -177,8 +177,8 @@ newer pai introduced, so they appear without changing any behaviour. It is
 idempotent, so running it after an upgrade is safe.
 
 `init` and `reset` never touch what you cannot easily recreate: provider API
-keys, the search key, and the hand-edited trusted lists (`trusted_cmds`,
-`trusted_paths`).
+keys, the search key, the `pai conn` token, and the hand-edited trusted lists
+(`trusted_cmds`, `trusted_paths`).
 
 ```toml
 [providers]
@@ -250,6 +250,15 @@ cmd_timeout_seconds = 0
 # Run remote commands through a login shell so the remote PATH/env loads, e.g.
 # "bash" -> bash -lc '<cmd>'. Empty (default) = plain ssh. See Remote Host Management.
 # remote_shell = "bash"
+
+[conn]
+# Defaults for "pai conn", the terminal client for a running "pai serve".
+# Flags and PAI_SERVE_URL / PAI_SERVE_TOKEN / PAI_SERVE_ORIGIN win over these.
+url = "http://127.0.0.1:9384"   # empty also means this
+# Prefer the environment variable; a token stored here is masked by
+# `pai config list` and kept by `pai config reset`.
+token = ""
+# origin = "https://pai.example.com"  # only for a server with --public-origin
 
 [session]
 persist     = false  # true = save every run to an auto-named session
@@ -443,8 +452,10 @@ authentication, and concurrency options.
 
 ### Using the UI
 
-- The sidebar lists saved sessions. Create a named session, select one, and use
-  **Send**, **Steer**, or **Cancel**. Send queues a follow-up, Steer delivers at
+- The sidebar lists saved sessions; the `user@host` under the title names the
+  machine serving the page, and the **Sessions** heading collapses the list (a
+  per-browser preference, like the theme). Create a named session, select one,
+  and use **Send**, **Steer**, or **Cancel**. Send queues a follow-up, Steer delivers at
   a safe step boundary, and Cancel interrupts current work without discarding
   queued tasks. Cancellation cannot undo completed side effects.
 - A model question appears as an ordinary reply — answer it with your next
@@ -486,6 +497,9 @@ It never opens the store, which is why it can run alongside the server.
 pai conn demo                              # default http://127.0.0.1:9384
 pai conn --url http://host:9384 -s demo    # or set PAI_SERVE_URL / PAI_SERVE_TOKEN
 ```
+
+Defaults can live in `config.toml` instead, under `[conn]` (`url`, `token`,
+`origin`); flags and the `PAI_SERVE_*` environment variables take precedence.
 
 Mutations carry the URL's own origin, which is what the server's CSRF gate expects
 from a same-origin browser; when the server requires a token, pass it with

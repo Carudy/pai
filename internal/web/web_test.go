@@ -204,6 +204,25 @@ func TestSendPreparationFailureSnapshot(t *testing.T) {
 
 // The context inspector endpoint returns the view the backend supplies, and the
 // POST form records surgery on one turn (or clears it, with reset).
+func TestInfoAPI(t *testing.T) {
+	m := runner.New(context.Background(), backend{}, 1)
+	defer m.Close()
+	h := New(m, Options{Identity: "dev@pai-host"})
+	w := request(h, http.MethodGet, "/api/info", "", nil, "")
+	var body struct {
+		Identity string `json:"identity"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != http.StatusOK || body.Identity != "dev@pai-host" {
+		t.Fatalf("info: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(h, http.MethodPost, "/api/info", `{}`, nil, "http://pai.test"); w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST = %d, want 405", w.Code)
+	}
+	if w := request(New(m, Options{Token: "secret"}), http.MethodGet, "/api/info", "", nil, ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("unauthenticated = %d, want 401", w.Code)
+	}
+}
+
 func TestContextAPI(t *testing.T) {
 	applied := map[int]string{}
 	m := runner.New(context.Background(), backend{applied: applied}, 2)

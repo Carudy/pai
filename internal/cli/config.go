@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"sort"
 	"strconv"
@@ -45,6 +46,9 @@ var configKeys = map[string]configKey{
 	"remote_shell":          {section: "tool", key: "remote_shell", kind: "string"},
 	"cmd_timeout_seconds":   {section: "tool", key: "cmd_timeout_seconds", kind: "int"},
 	"confirm_read":          {section: "tool", key: "confirm_read", kind: "bool"},
+	"conn.url":              {section: "conn", key: "url", kind: "url"},
+	"conn.origin":           {section: "conn", key: "origin", kind: "url"},
+	"conn.token":            {section: "conn", key: "token", kind: "string", secret: true},
 	// Deprecated aliases: [context] exec_limit/search_limit replaced these [app] keys.
 	"truncate_exec_limit":            {section: "app", key: "truncate_exec_limit", kind: "int"},
 	"truncate_search_limit":          {section: "app", key: "truncate_search_limit", kind: "int"},
@@ -368,6 +372,15 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return strconv.Itoa(int(cfg.CmdTimeout / time.Second))
 	case "confirm_read":
 		return strconv.FormatBool(cfg.ConfirmRead)
+	case "conn.url":
+		return cfg.Conn.URL
+	case "conn.origin":
+		return cfg.Conn.Origin
+	case "conn.token":
+		if reveal {
+			return cfg.Conn.Token
+		}
+		return config.SecretHint(cfg.Conn.Token)
 	}
 	return ""
 }
@@ -406,6 +419,12 @@ func formatConfigValue(kind, raw string) (string, error) {
 		return strconv.Quote(raw), nil
 	case "string":
 		return strconv.Quote(raw), nil
+	case "url":
+		u, err := url.Parse(strings.TrimSpace(raw))
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return "", fmt.Errorf("expected an http(s) URL, got %q", raw)
+		}
+		return strconv.Quote(u.String()), nil
 	case "bool":
 		b, err := strconv.ParseBool(raw)
 		if err != nil {
