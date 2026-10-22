@@ -277,6 +277,10 @@ as aliases, but `[context]` is canonical.
 ```bash
 export DEEPSEEK_API_KEY="your-key"
 export TAVILY_API_KEY="your-key"    # for web search
+
+# pai conn: the server it attaches to, and its token (these win over [conn]).
+export PAI_SERVE_URL="http://127.0.0.1:9384"
+export PAI_SERVE_TOKEN="your-serve-token"
 ```
 
 ### Model Format

@@ -13,6 +13,10 @@ See the [module map](../organization.md) for its near-leaf position.
   reads the selected role's extra intro text. `PresetModels` are the cleaned
   `provider:model` suggestions frontends offer (never an allowlist); when
   `default_model` is unset, the first preset becomes the default.
+- `[conn]` holds the defaults for `pai conn` (`url`, `token`, `origin`). The
+  token is a credential: `Redacted` masks it and `ResetTemplate` keeps it, while
+  the URL and origin reset with the rest. Flag/environment precedence is resolved
+  in `cli`, not here.
 - `SetScalar` / `UnsetScalar` perform comment-preserving scalar edits.
 - `Template`, `WriteTemplate`, `MergeTemplate`, and `ResetTemplate` support
   configuration initialization and maintenance.

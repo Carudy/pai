@@ -359,16 +359,30 @@ header p {
 }
 
 #toggle-sessions-list {
-    padding: 0 6px;
+    padding: 4px 10px;
     border: 0;
     background: none;
     color: var(--muted);
     line-height: 1;
-    font-size: 13px;
+    /* A collapse control is a target, not a caption: match the heading's box and
+       give the glyph enough weight to read at a glance. */
+    font-size: 20px;
+    transition: color 0.15s;
+}
+
+#toggle-sessions-list:hover {
+    color: var(--ink);
+    background: none;
+}
+
+/* Rotate the glyph, not the padded button, so the hit area never overlaps the
+   heading when the list is closed. */
+#toggle-sessions-list .chevron {
+    display: inline-block;
     transition: transform 0.15s;
 }
 
-#toggle-sessions-list[aria-expanded='false'] {
+#toggle-sessions-list[aria-expanded='false'] .chevron {
     transform: rotate(-90deg);
 }
 

@@ -355,6 +355,13 @@ the next request — and right after a manual compress it still counts the span 
 was just summarized. The provider's own numbers, and the last request's prompt
 size in the tooltip, are shown as spend in the header instead.
 
+The sidebar names the machine being driven (`user@host`, from `GET /api/info`)
+under the title, so two open tabs against different servers are distinguishable.
+The session list folds away behind the **Sessions** chevron, remembered in
+`localStorage` (`pai.sessions-collapsed`) like the settings grid and theme; the
+identity line is display metadata and the collapse is a per-browser preference,
+so neither becomes session state.
+
 **Compress now** forces the compaction that `summarize_after_tokens` would
 trigger later: it sends the CLI's `/compact` as an instruction (a command is
 dispatched wherever an instruction is read), behind a confirmation, because it
