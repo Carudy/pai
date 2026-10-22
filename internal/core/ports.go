@@ -52,6 +52,9 @@ type Turn struct {
 	// from the tail, so a Seq never shifts. Callers that annotate or edit a turn
 	// (context overrides) key on it. Zero means "not persisted yet".
 	Seq int
+	// Essential marks a turn the user needs preserved: replay never elides it and a
+	// summary must keep its content. It is per-turn, revocable, and persisted.
+	Essential bool `json:"essential,omitempty"`
 }
 
 // Recorder persists conversation turns. A nil Recorder means "ephemeral".

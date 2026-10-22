@@ -189,7 +189,7 @@ func toChatOverrides(o map[int]session.Override) map[int]chat.Override {
 func toMessages(turns []core.Turn) []provider.Message {
 	msgs := make([]provider.Message, 0, len(turns))
 	for _, t := range turns {
-		msgs = append(msgs, provider.Message{Role: t.Role, Content: t.Content, Kind: t.Kind})
+		msgs = append(msgs, provider.Message{Role: t.Role, Content: t.Content, Kind: t.Kind, Essential: t.Essential})
 	}
 	return msgs
 }

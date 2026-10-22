@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS turns (
   kind    TEXT NOT NULL,
   content TEXT NOT NULL,
   at      INTEGER NOT NULL,
+  essential INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (name, seq)
 );
 CREATE TABLE IF NOT EXISTS turn_overrides (
@@ -77,6 +78,9 @@ CREATE TABLE IF NOT EXISTS turn_overrides (
 		if err := s.ensureColumn("sessions", col[0], col[1]); err != nil {
 			return err
 		}
+	}
+	if err := s.ensureColumn("turns", "essential", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
 	}
 	return nil
 }
@@ -148,7 +152,7 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 	}
 	m.CreatedAt, m.UpdatedAt = time.Unix(createdAt, 0), time.Unix(updatedAt, 0)
 
-	rows, err := s.db.Query(`SELECT seq, role, kind, content, at FROM turns WHERE name = ? ORDER BY seq`, name)
+	rows, err := s.db.Query(`SELECT seq, role, kind, content, at, essential FROM turns WHERE name = ? ORDER BY seq`, name)
 	if err != nil {
 		return nil, err
 	}
@@ -157,13 +161,15 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 	sess := &Session{Meta: m}
 	for rows.Next() {
 		var (
-			t  core.Turn
-			at int64
+			t         core.Turn
+			at        int64
+			essential int
 		)
-		if err := rows.Scan(&t.Seq, &t.Role, &t.Kind, &t.Content, &at); err != nil {
+		if err := rows.Scan(&t.Seq, &t.Role, &t.Kind, &t.Content, &at, &essential); err != nil {
 			return nil, err
 		}
 		t.At = time.Unix(at, 0)
+		t.Essential = essential != 0
 		sess.Turns = append(sess.Turns, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -272,8 +278,8 @@ func (s *sqliteStore) Append(name string, turns ...core.Turn) error {
 			at = now
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO turns(name, seq, role, kind, content, at) VALUES(?, ?, ?, ?, ?, ?)`,
-			name, seq, t.Role, t.Kind, t.Content, at.Unix()); err != nil {
+			`INSERT INTO turns(name, seq, role, kind, content, at, essential) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+			name, seq, t.Role, t.Kind, t.Content, at.Unix(), boolInt(t.Essential)); err != nil {
 			return err
 		}
 	}
@@ -358,6 +364,32 @@ func (s *sqliteStore) DeleteOverride(name string, seq int) error {
 		return fmt.Errorf("%w: override on %s turn %d", ErrNotFound, name, seq)
 	}
 	return nil
+}
+
+// SetEssential marks or unmarks one stored turn, returning ErrNotFound when the
+// session or the turn does not exist. It is independent of the turn's override:
+// a turn can be both edited/dropped and marked essential, and either is
+// revocable without touching the other.
+func (s *sqliteStore) SetEssential(name string, seq int, on bool) error {
+	if err := validate(name); err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`UPDATE turns SET essential = ? WHERE name = ? AND seq = ?`, boolInt(on), name, seq)
+	if err != nil {
+		return fmt.Errorf("set essential: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: turn %d in %s", ErrNotFound, seq, name)
+	}
+	return nil
+}
+
+// boolInt stores a Go bool in SQLite's INTEGER column.
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // turnExists reports whether the named session holds that turn, distinguishing

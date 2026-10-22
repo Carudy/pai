@@ -107,6 +107,11 @@ Weight it that way:
 - If the work changed direction, or a goal was dropped or replaced, say so plainly.
   Never present a finished or abandoned goal as the current one.
 
+Some messages are prefixed "ESSENTIAL — preserve this content in full". The user
+marked them as important: carry their facts, decisions, identifiers and wording
+into your answer, and do not drop or blur them. When space is tight, keep an
+essential detail over a non-essential one.
+
 Answer with these labels, in this order:
 CURRENT: the task in flight at the end of the span, and its state.
 OPEN: what is unfinished, unverified, or waiting on the user.
@@ -159,6 +164,9 @@ func RenderTranscript(msgs []provider.Message) string {
 	var b strings.Builder
 	for _, m := range msgs {
 		b.WriteString(messageLabel(m))
+		if m.Essential {
+			b.WriteString(" [ESSENTIAL — preserve this content in full]")
+		}
 		b.WriteString(": ")
 		b.WriteString(m.Content)
 		b.WriteString("\n")

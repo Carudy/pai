@@ -30,6 +30,9 @@ type Message struct {
 	// compaction tell a stale tool observation from the user's own words. The json
 	// tag keeps it off the wire — providers only ever see role and content.
 	Kind string `json:"-"`
+	// Essential mirrors core.Turn.Essential for context edits: elision skips these
+	// messages and the transcript marks them for the summarizer. Off the wire.
+	Essential bool `json:"-"`
 }
 
 // ResponseFormat specifies the expected response format.

@@ -850,6 +850,61 @@ header p {
     opacity: 0.85;
 }
 
+/* Essential toggle: a quiet pill at a turn's top-right, lit when marked. */
+.essential-toggle {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    padding: 2px 8px;
+    font-size: 11px;
+    line-height: 1.5;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--muted);
+    opacity: 0.5;
+    transition: opacity 0.15s ease;
+}
+
+.turn:hover .essential-toggle,
+.essential-toggle:hover,
+.essential-toggle:focus-visible {
+    opacity: 1;
+}
+
+.essential-toggle.on {
+    color: var(--accent);
+    border-color: var(--accent);
+    opacity: 1;
+}
+
+.essential-toggle:disabled {
+    opacity: 0.25;
+    cursor: default;
+}
+
+.ctx-essential.on {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+#ctx-prev,
+#ctx-bottom,
+#ctx-prev-essential,
+#ctx-next-essential {
+    padding: 2px 8px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--muted);
+}
+
+/* An essential card is navigable: mark it in the margin. */
+.ctx-card.ctx-essential-card {
+    border-left: 3px solid var(--accent);
+}
+
 .badge {
     border-radius: 6px;
     background: var(--soft);

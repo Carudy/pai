@@ -114,6 +114,19 @@ func (b backend) DeleteOverride(name string, seq int) error {
 	}
 	return nil
 }
+func (b backend) SetEssential(name string, seq int, on bool) error {
+	if name == "missing" {
+		return runner.ErrNotFound
+	}
+	if b.applied != nil {
+		action := "unessential"
+		if on {
+			action = "essential"
+		}
+		b.applied[seq] = action + ":"
+	}
+	return nil
+}
 
 var _ runner.ContextBackend = backend{}
 var _ runner.ContextSetter = backend{}
@@ -220,6 +233,18 @@ func TestContextAPI(t *testing.T) {
 	}
 	if _, ok := applied[1]; ok {
 		t.Errorf("reset did not clear: %+v", applied)
+	}
+	if code := post(`{"name":"one","seq":1,"action":"essential"}`); code != http.StatusOK {
+		t.Fatalf("essential = %d", code)
+	}
+	if applied[1] != "essential:" {
+		t.Errorf("essential not recorded: %+v", applied)
+	}
+	if code := post(`{"name":"one","seq":1,"action":"unessential"}`); code != http.StatusOK {
+		t.Fatalf("unessential = %d", code)
+	}
+	if applied[1] != "unessential:" {
+		t.Errorf("unessential not recorded: %+v", applied)
 	}
 	if code := post(`{"name":"one","seq":1,"action":"bogus"}`); code != http.StatusBadRequest {
 		t.Errorf("bad action = %d, want 400", code)

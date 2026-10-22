@@ -65,12 +65,13 @@ type ContextView struct {
 // ContextCard is one stored turn's place in that list. Sent is empty when the
 // turn is not sent at all; State says why (see chat's State* constants).
 type ContextCard struct {
-	Seq      int    `json:"seq"`
-	Role     string `json:"role"`
-	Kind     string `json:"kind"`
-	Original string `json:"original"`
-	Sent     string `json:"sent"`
-	State    string `json:"state"`
+	Seq       int    `json:"seq"`
+	Role      string `json:"role"`
+	Kind      string `json:"kind"`
+	Original  string `json:"original"`
+	Sent      string `json:"sent"`
+	State     string `json:"state"`
+	Essential bool   `json:"essential,omitempty"`
 }
 
 // ContextSettings is the compaction configuration applied to a session, so a
@@ -144,6 +145,7 @@ type ContextBackend interface {
 type ContextSetter interface {
 	SetOverride(name string, seq int, action, content string) error
 	DeleteOverride(name string, seq int) error
+	SetEssential(name string, seq int, on bool) error
 }
 
 // RewindBackend is optional; truncating a session's persisted history must not

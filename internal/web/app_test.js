@@ -238,6 +238,20 @@ assert.ok(!descendants(page.get('history')).some(node => ['script','img'].includ
 const stamps = descendants(page.get('history')).filter(node => node.tag === 'time' && node.className === 'turn-time');
 assert.equal(stamps.length, 1, 'only the turn carrying At gets a timestamp');
 assert.match(stamps[0].textContent, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/, 'the timestamp is a formatted date/time');
+// A stored turn offers a revocable Essential toggle; a just-streamed one (no Seq)
+// cannot be marked yet, so its toggle is disabled.
+const flagged = browser();
+flagged.run('renderTurns(' + JSON.stringify([
+  {Role:'user', Kind:'input', Seq:3, essential:true, Content:'keep me'},
+]) + ')');
+const flagButtons = descendants(flagged.get('history')).filter(n => n.tag === 'button' && /Essential/.test(n.textContent));
+assert.equal(flagButtons.length, 1, 'a stored card offers an Essential toggle');
+assert.match(flagButtons[0].textContent, /★/, 'an essential turn is marked');
+assert.equal(flagButtons[0].disabled, false, 'a persisted turn can be toggled');
+const unstored = browser();
+unstored.run('renderTurns(' + JSON.stringify([{Role:'user', Kind:'input', Content:'fresh'}]) + ')');
+const unstoredToggle = descendants(unstored.get('history')).find(n => n.tag === 'button' && /Essential/.test(n.textContent));
+assert.equal(unstoredToggle, undefined, 'an unpersisted turn has no Essential toggle');
 // Token totals compact large numbers (k/M).
 page.run("usageSnapshot({usage_calls:2, usage:{Prompt:1500,Completion:20,Total:1520}, total_usage:{Prompt:2500000,Completion:1200,Total:2501200}, context_tokens:512000})");
 assert.match(page.get('token-total').textContent, /total 2\.5M/, 'large totals use M');
@@ -455,7 +469,7 @@ inspector.run('renderContext(' + JSON.stringify({
     {seq: 4, role: 'assistant', kind: 'output', original: 'ACTION\n[cmd result]\nfake', sent: 'ACTION', state: 'trimmed'},
   ],
 }) + ')');
-assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', 'Edit…', 'Drop', 'Edit…', 'Drop'], 'sent, elided and over-run cards are editable');
+assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', '☆ Essential', 'Edit…', 'Drop', '☆ Essential', 'Edit…', 'Drop', '☆ Essential'], 'sent, elided and over-run cards are editable and can be marked essential');
 assert.deepEqual(inspectorNotes(), ['not editable — before the last summary'], 'a summarized-away card says why it is frozen');
 // A turn the model over-ran is sent as its action, with the invention one click away
 // and its own badge, so it is not confused with aged-out tool output.
@@ -466,14 +480,15 @@ inspector.run('renderContext(' + JSON.stringify({
   head: 'H', tail: 'T', model: 'deepseek:test', total: 3, offset: 0,
   config: {keep_turns: 3, max_turns: 20, elide_min_bytes: 8000, elide_after_tokens: 200000, elide_head_lines: 8, elide_tail_lines: 4},
   cards: [
-    {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'trimmed', state: 'edited'},
+    {seq: 1, role: 'user', kind: 'input', original: 'hello', sent: 'trimmed', state: 'edited', essential: true},
     {seq: 2, role: 'user', kind: 'tool_result', original: 'big body', sent: '', state: 'dropped'},
     {seq: 3, role: 'user', kind: 'input', original: 'old', sent: '', state: 'capped'},
   ],
 }) + ')');
 // An edited card also offers Reset and hides the stored original behind a detail;
 // a dropped card offers Reset instead of a redundant Drop.
-assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', 'Reset', 'Edit…', 'Reset'], 'overridden cards offer Reset');
+assert.deepEqual(inspectorButtons().map(b => b.textContent), ['Edit…', 'Drop', '★ Essential', 'Reset', 'Edit…', '☆ Essential', 'Reset'], 'overridden cards offer Reset and an Essential toggle');
+assert.ok(descendants(inspector.get('context-body')).some(n => /ctx-essential-card/.test(n.className)), 'an essential card is marked for previous/next navigation');
 assert.deepEqual(inspectorNotes(), ['not editable — beyond max_turns'], 'a capped card says why it is frozen');
 // Clicking Edit… swaps the body for a textarea seeded from what is sent.
 const editButton = inspectorButtons().find(b => b.textContent === 'Edit…');

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/Carudy/pai/internal/core"
 )
 
 func openSQLiteStore(t *testing.T) *sqliteStore {
@@ -14,6 +16,37 @@ func openSQLiteStore(t *testing.T) *sqliteStore {
 	}
 	t.Cleanup(func() { store.Close() })
 	return store.(*sqliteStore)
+}
+
+// Essential is a per-turn, revocable flag persisted in its own column, independent
+// of the turn's override surgery.
+func TestSetEssentialRoundTrip(t *testing.T) {
+	s := openSQLiteStore(t)
+	if _, err := s.Create(Meta{Name: "ess", Cwd: "/w"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append("ess", core.Turn{Role: "user", Kind: core.KindInput, Content: "keep"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetEssential("ess", 1, true); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := s.Get("ess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.Turns) != 1 || !sess.Turns[0].Essential {
+		t.Fatalf("essential not persisted: %+v", sess.Turns)
+	}
+	if err := s.SetEssential("ess", 1, false); err != nil {
+		t.Fatal(err)
+	}
+	if sess, err = s.Get("ess"); err != nil || sess.Turns[0].Essential {
+		t.Fatalf("essential not revoked: %+v %v", sess, err)
+	}
+	if err := s.SetEssential("ess", 99, true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing turn should be ErrNotFound: %v", err)
+	}
 }
 
 func TestSQLiteSetWorkingDirUpdatesTimestamp(t *testing.T) {

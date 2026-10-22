@@ -31,6 +31,9 @@ type Store interface {
 	// DeleteOverride clears the surgery on one turn, or ErrNotFound when there is
 	// none to clear.
 	DeleteOverride(name string, seq int) error
+	// SetEssential marks or unmarks one stored turn as essential, or ErrNotFound
+	// when the session or the turn does not exist.
+	SetEssential(name string, seq int, on bool) error
 	// Truncate keeps the first `keep` turns and drops the rest, or ErrNotFound.
 	// It backs rewinding to an earlier point in a conversation.
 	Truncate(name string, keep int) error

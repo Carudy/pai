@@ -197,6 +197,8 @@ type ContextCard struct {
 	Original string
 	Sent     string
 	State    string // see State* below
+	// Essential reports the user's "keep this" flag on the stored turn.
+	Essential bool
 }
 
 // Context-card states. Everything except sent/elided/trimmed/edited is *not* sent.
@@ -273,7 +275,7 @@ func ContextCards(turns []core.Turn, overrides map[int]Override, cfg config.Cont
 
 	cards := make([]ContextCard, len(turns))
 	for i, t := range turns {
-		c := ContextCard{Seq: t.Seq, Role: t.Role, Kind: t.Kind, Original: t.Content}
+		c := ContextCard{Seq: t.Seq, Role: t.Role, Kind: t.Kind, Original: t.Content, Essential: t.Essential}
 		o, hasOverride := overrides[t.Seq]
 		switch {
 		case !inReplay[t.Seq]:
@@ -307,7 +309,7 @@ func ContextCards(turns []core.Turn, overrides map[int]Override, cfg config.Cont
 func messagesFromTurns(turns []core.Turn) []provider.Message {
 	msgs := make([]provider.Message, 0, len(turns))
 	for _, t := range turns {
-		msgs = append(msgs, provider.Message{Role: t.Role, Content: t.Content, Kind: t.Kind})
+		msgs = append(msgs, provider.Message{Role: t.Role, Content: t.Content, Kind: t.Kind, Essential: t.Essential})
 	}
 	return msgs
 }
@@ -467,6 +469,11 @@ func compact(history []provider.Message, c config.ContextConfig) ([]provider.Mes
 	copy(out, history)
 	for i := 0; i < cutoff; i++ {
 		m := &out[i]
+		// An essential turn is never elided: the user asked for it to survive, and a
+		// summary keeps it too (see RenderTranscript).
+		if m.Essential {
+			continue
+		}
 		if m.Kind != core.KindToolResult || len(m.Content) <= c.ElideMinBytes {
 			continue
 		}

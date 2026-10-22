@@ -121,6 +121,25 @@ func (m *Manager) DeleteOverride(name string, seq int) error {
 	return nil
 }
 
+// SetEssential marks or unmarks one stored turn as essential, retiring the idle
+// runtime so the next instruction re-prepares without ever eliding it.
+func (m *Manager) SetEssential(name string, seq int, on bool) error {
+	b, ok := m.backend.(ContextSetter)
+	if !ok {
+		return errors.New("backend does not support context overrides")
+	}
+	finish, err := m.reserveIdle(name)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	if err := b.SetEssential(name, seq, on); err != nil {
+		return err
+	}
+	m.clearFailureLocked(name)
+	return nil
+}
+
 // Send queues an instruction, never an answer to a model question. At capacity
 // an idle worker is evicted and joined before its slot is reused.
 func (m *Manager) Send(name, text string) error {

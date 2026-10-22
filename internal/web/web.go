@@ -446,10 +446,14 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				err = h.manager.SetOverride(body.Name, body.Seq, core.OverrideReplace, body.Content)
 			case core.OverrideDrop:
 				err = h.manager.SetOverride(body.Name, body.Seq, core.OverrideDrop, "")
+			case "essential":
+				err = h.manager.SetEssential(body.Name, body.Seq, true)
+			case "unessential":
+				err = h.manager.SetEssential(body.Name, body.Seq, false)
 			case "reset":
 				err = h.manager.DeleteOverride(body.Name, body.Seq)
 			default:
-				fail(w, 400, "action must be replace, drop, or reset")
+				fail(w, 400, "action must be replace, drop, essential, unessential, or reset")
 				return
 			}
 			if err != nil {

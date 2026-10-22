@@ -733,11 +733,42 @@ function renderTurns(turns) {
       button.onclick = () => rewind(historyOffset + i, turn.Content);
       article.append(button);
     }
+    // Essential is a per-turn, revocable flag: an essential turn is never elided and
+    // the summarizer keeps its content. Only a stored turn has a Seq to key on, so a
+    // just-streamed card gets the control once it appears in history.
+    if (turn.Seq) {
+      const essential = text('button', turn.essential ? '★ Essential' : '☆ Essential', 'essential-toggle' + (turn.essential ? ' on' : ''));
+      essential.type = 'button';
+      essential.style.right = (turn.Role === 'user' && turn.Kind === 'input') ? '94px' : '10px';
+      essential.title = turn.essential ? 'Essential — never elided; the summary keeps it. Click to revoke.'
+        : 'Mark essential: never elided; the summary keeps its content';
+      essential.onclick = () => setEssential(turn.Seq, !turn.essential);
+      article.append(essential);
+    }
     if (parsed) response(article, parsed); else article.append(prose(turn.Content));
     stampTime(article, turn.At);
     $('history').append(article); cards.push(article); toolCard = parsed && parsed.action === 'tool' ? article : null;
   });
   return cards;
+}
+// Marking a turn essential changes the projection, so the runtime retires and SSE
+// closes: refresh both views (the conversation's stars and the inspector) and
+// reconnect under a new generation, like a context override.
+async function setEssential(seq, on) {
+  if (!selected || sessionBusy || contextApplying) return;
+  const name = selected;
+  let version = generation;
+  contextApplying = true;
+  let ok = true;
+  try { await api('context', {name, seq, action: on ? 'essential' : 'unessential', content: ''}); }
+  catch (e) { ok = false; if (name === selected && version === generation) error(e); }
+  contextApplying = false;
+  if (!ok || name !== selected || version !== generation) return;
+  disconnect(); version = ++generation;
+  toast(on ? 'Marked essential.' : 'Essential revoked.');
+  try { await refreshHistory(); await loadContext(); } catch (e) { error(e); }
+  if (version !== generation) return;
+  await loadSnapshot(); if (version === generation) connect();
 }
 // A running command reports its output as many small chunks. Repainting the
 // conversation for each one would rebuild up to 200 cards and fetch history again,
@@ -1086,7 +1117,9 @@ function contextEditable(card) {
 }
 let contextApplying = false;
 function contextCard(card) {
-  const node = text('article', '', card.kind === 'input' ? 'ctx-card ctx-turn' : 'ctx-card');
+  const node = text('article', '', 'ctx-card' +
+    (card.kind === 'input' ? ' ctx-turn' : '') +
+    (card.essential ? ' ctx-essential-card' : ''));
   const head = text('div', '', 'ctx-head');
   const sent = card.state === 'sent' || card.state === 'edited';
   head.append(
@@ -1144,6 +1177,12 @@ function fillContextActions(actions, body, card) {
   if (card.state !== 'dropped') {
     actions.append(button('Drop', 'ctx-danger', 'Omit this turn from what is sent', () => applyContextOverride(card.seq, 'drop', '')));
   }
+  // Essential is independent of the surgery above: a turn can be edited/dropped and
+  // still marked, and marking never rewrites the stored text.
+  actions.append(button(card.essential ? '★ Essential' : '☆ Essential', card.essential ? 'ctx-essential on' : 'ctx-essential',
+    card.essential ? 'Essential — never elided; the summary keeps it. Click to revoke.'
+      : 'Mark essential: never elided; the summary keeps its content',
+    () => setEssential(card.seq, !card.essential)));
   if (card.state === 'edited' || card.state === 'dropped') {
     actions.append(button('Reset', '', 'Restore the stored text', () => applyContextOverride(card.seq, 'reset', '')));
   }
@@ -1258,6 +1297,7 @@ function renderContext(view) {
   // Open at the newest end, which is what "what would the next send look like"
   // usually means; older pages are one scroll away.
   body.scrollTop = body.scrollHeight;
+  updateContextJumpButtons();
 }
 async function loadContext(full = true) {
   const body = $('context-body');
@@ -1328,12 +1368,73 @@ async function loadEarlierContext() {
   } finally {
     contextLoading = false;
   }
+  updateContextJumpButtons();
 }
 // Scrolling to the top of the panel loads the next older page, so walking back
 // through a long transcript needs no clicks.
 function onContextScroll() {
+  updateContextJumpButtons();
   if (!contextOpen() || contextLoading || contextOffset <= 0) return;
   if ($('context-body').scrollTop < 80) loadEarlierContext().catch(error);
+}
+// The inspector's own jump controls, mirroring the chat pane's: up to the previous
+// instruction card, down to the newest message.
+function updateContextJumpButtons() {
+  const body = $('context-body');
+  const queryable = body && typeof body.querySelectorAll === 'function';
+  const prev = $('ctx-prev'), bottom = $('ctx-bottom');
+  if (body && prev && bottom && queryable) {
+    prev.hidden = body.querySelectorAll('.ctx-turn').length === 0;
+    bottom.hidden = body.scrollHeight - body.clientHeight - body.scrollTop <= 80;
+  }
+  const prevEss = $('ctx-prev-essential'), nextEss = $('ctx-next-essential');
+  if (body && prevEss && nextEss && queryable) {
+    const count = body.querySelectorAll('.ctx-essential-card').length;
+    prevEss.hidden = count === 0;
+    nextEss.hidden = count === 0;
+  }
+}
+function contextEssentialCards() {
+  const body = $('context-body');
+  if (!body || typeof body.querySelectorAll !== 'function') return [];
+  return [...body.querySelectorAll('.ctx-essential-card')];
+}
+// Position of a card within the inspector's scroll content. Use the rendered box
+// when available (cards live inside the window wrapper, not the scroller itself),
+// and fall back to offsetTop for minimal DOMs.
+function contextCardTop(body, card) {
+  if (typeof card.getBoundingClientRect === 'function' && typeof body.getBoundingClientRect === 'function') {
+    return card.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+  }
+  return card.offsetTop || 0;
+}
+// Walk the loaded window to the previous (dir < 0) or next essential card. Pages are
+// loaded lazily, so this only ranges over cards currently in the inspector.
+function jumpContextEssential(dir) {
+  const body = $('context-body');
+  const cards = contextEssentialCards();
+  if (!body || !cards.length) return;
+  const top = body.scrollTop;
+  const target = dir < 0
+    ? [...cards].reverse().find(card => contextCardTop(body, card) < top - 4)
+    : cards.find(card => contextCardTop(body, card) > top + 4);
+  if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({block: 'start'});
+  updateContextJumpButtons();
+}
+function jumpContextPrev() {
+  const body = $('context-body');
+  if (!body || typeof body.querySelectorAll !== 'function') return;
+  const turns = [...body.querySelectorAll('.ctx-turn')];
+  const above = turns.filter(card => (card.offsetTop || 0) < body.scrollTop - 4);
+  const target = above.length ? above[above.length - 1] : turns[0];
+  if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({block: 'start'});
+  updateContextJumpButtons();
+}
+function jumpContextBottom() {
+  const body = $('context-body');
+  if (!body) return;
+  body.scrollTop = body.scrollHeight;
+  updateContextJumpButtons();
 }
 // ── Session actions ─────────────────────────────────────────
 async function select(name, cwd, replaceURL = false) {
@@ -1706,6 +1807,10 @@ $('context-body').onscroll = onContextScroll;
 globalThis.onpopstate = () => { onPopState().catch(error); };
 $('prev-input').onclick = jumpToPrevInput;
 $('to-bottom').onclick = jumpToBottom;
+if ($('ctx-prev')) $('ctx-prev').onclick = jumpContextPrev;
+if ($('ctx-bottom')) $('ctx-bottom').onclick = jumpContextBottom;
+if ($('ctx-prev-essential')) $('ctx-prev-essential').onclick = () => jumpContextEssential(-1);
+if ($('ctx-next-essential')) $('ctx-next-essential').onclick = () => jumpContextEssential(1);
 $('conversation').onscroll = onConversationScroll;
 $('message').oninput = controls;
 $('message').onkeydown = composerKey;

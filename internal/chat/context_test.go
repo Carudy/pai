@@ -220,6 +220,32 @@ func TestDescribeCompactionReportsFootprint(t *testing.T) {
 	}
 }
 
+// An essential turn is never elided, and the summarizer transcript marks it so its
+// content survives the second compression layer too.
+func TestCompactionKeepsEssentialTurns(t *testing.T) {
+	c := config.ContextConfig{KeepTurns: 1, ElideAfterTokens: 1, ElideMinBytes: 10, ElideHeadLines: 3}
+	big := "[cmd result]\nCOMMAND: df -h\nOUTPUT:\n" + strings.Repeat("row\n", 100)
+
+	history := []provider.Message{
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"},
+		{Role: provider.RoleUser, Kind: core.KindToolResult, Content: big, Essential: true},
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "now fix it"},
+	}
+	out := CompactHistory(history, c)
+	if out[1].Content != big {
+		t.Error("an essential tool observation was elided")
+	}
+
+	plain := append([]provider.Message(nil), history...)
+	plain[1].Essential = false
+	if CompactHistory(plain, c)[1].Content == big {
+		t.Error("a non-essential observation of the same size should be elided")
+	}
+	if !strings.Contains(RenderTranscript(history), "[ESSENTIAL") {
+		t.Error("the summarizer transcript does not mark the essential message")
+	}
+}
+
 // A manual compaction with nothing older than the verbatim window says which case
 // it is, rather than exiting early in silence.
 func TestDescribeNoCompaction(t *testing.T) {

@@ -143,7 +143,7 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 		},
 	}
 	for i, c := range window {
-		view.Cards[i] = runner.ContextCard{Seq: c.Seq, Role: c.Role, Kind: c.Kind, Original: c.Original, Sent: c.Sent, State: c.State}
+		view.Cards[i] = runner.ContextCard{Seq: c.Seq, Role: c.Role, Kind: c.Kind, Original: c.Original, Sent: c.Sent, State: c.State, Essential: c.Essential}
 	}
 	return view, nil
 }
@@ -175,6 +175,20 @@ func (b *serveBackend) DeleteOverride(name string, seq int) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return overrideError(b.store.DeleteOverride(name, seq))
+}
+
+// SetEssential marks or clears the user's "keep this turn" flag on one stored
+// turn. Like an override it changes only what a run sends, never the stored text.
+func (b *serveBackend) SetEssential(name string, seq int, on bool) error {
+	if !session.ValidName(name) {
+		return errors.New("invalid session name")
+	}
+	if seq < 1 {
+		return errors.New("turn sequence must be positive")
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return overrideError(b.store.SetEssential(name, seq, on))
 }
 
 // overrideError translates the store's missing-session/turn signal into the
