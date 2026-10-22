@@ -26,6 +26,11 @@ See the [module map](../organization.md) for the storage adapter boundary.
   its byte-based token estimate against the provider's real tokenizer. The pair is
   accounting, not activity: `SetUsage` leaves `updated_at` alone so the session list
   does not reorder on every turn.
+- `Store.SetEssential` marks or unmarks one stored turn. It is a property of the
+  turn (`turns.essential`, added by an additive migration), not an override:
+  replay reads it to skip elision and the summarizer is told to preserve that
+  content, and the flag is revocable. `Get` returns it on the turn, so the
+  inspector and the chat cards can show and toggle it.
 - `NewRecorder` implements `core.Recorder`; `controller.go` adapts session
   operations to the loop's storage port.
 

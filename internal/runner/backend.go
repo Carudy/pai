@@ -139,9 +139,10 @@ type ContextBackend interface {
 
 // ContextSetter is optional; it persists the user's surgery on one turn's place
 // in the context-to-send. action is core.OverrideReplace or core.OverrideDrop;
-// DeleteOverride clears it. Like the other setters it must not require a live
-// runtime, but the manager retires any idle one so the next instruction
-// re-prepares with the new projection.
+// DeleteOverride clears it. SetEssential is not an override: it flags the stored
+// turn so replay never elides it and a summary must preserve its content. Like
+// the other setters they must not require a live runtime, but the manager retires
+// any idle one so the next instruction re-prepares with the new projection.
 type ContextSetter interface {
 	SetOverride(name string, seq int, action, content string) error
 	DeleteOverride(name string, seq int) error

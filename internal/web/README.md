@@ -227,11 +227,13 @@ rejected; there is no URL authentication.
   default for new sessions, which the UI prefills into its working-directory
   field.
 - `GET /api/history?name=...&offset=0&limit=100`: `runner.History` (native core
-  turn keys `Role`, `Kind`, `Content`, `At`; metadata uses runner's JSON tags).
+  turn keys `Role`, `Kind`, `Content`, `At`, `Seq`, plus `essential` when set;
+  metadata uses runner's JSON tags).
 - `GET /api/context?name=...&offset=0&limit=100`: `runner.ContextView` — the
   message list the session would send: the role's system `head`, one `cards`
-  entry per stored turn (`original`, `sent`, and a `state` of `sent` | `elided` |
-  `trimmed` | `edited` | `dropped` | `summarized_away` | `capped`), the system `tail`, the
+  entry per stored turn (`original`, `sent`, a `state` of `sent` | `elided` |
+  `trimmed` | `edited` | `dropped` | `summarized_away` | `capped`, and
+  `essential` when the turn is marked), the system `tail`, the
   `model`, and the compaction `config` in effect (`keep_turns`, `max_turns`,
   `elide_after_tokens` — the effective size trigger, already resolved from
   `summarize_after_tokens` when the key is unset — `elide_min_bytes`,
@@ -260,12 +262,14 @@ rejected; there is no URL authentication.
   invalid pagination. The projection applies the user's overrides, so an edited or
   dropped turn reports what would actually be sent.
 - `POST /api/context`: `{ "name": "...", "seq": N, "action":
-  "replace"|"drop"|"reset", "content": "..." }`; 200 `{ "ok": true }`. Records
-  the user's surgery on one turn — `replace` swaps its text (capped at 32 KiB,
-  else 413), `drop` omits it, `reset` clears the override and restores the stored
-  text. It changes only what the next send uses, never the stored turn, and
-  requires an idle session (else 409). An unknown action or a non-positive `seq`
-  is 400; a missing session or turn is 404.
+  "replace"|"drop"|"essential"|"unessential"|"reset", "content": "..." }`;
+  200 `{ "ok": true }`. Records the user's surgery on one turn — `replace`
+  swaps its text (capped at 32 KiB, else 413), `drop` omits it, `essential` and
+  `unessential` set (or revoke) the turn's opt-out from elision and summary
+  loss, and `reset` clears the override and restores the stored text. It changes
+  only what the next send uses, never the stored turn, and requires an idle
+  session (else 409). An unknown action or a non-positive `seq` is 400; a
+  missing session or turn is 404.
 - `GET /api/snapshot?name=...`: `runner.Snapshot`; live state, or a retained
   stopped/error snapshot after a failure (including initialization failures that
   happened before SSE subscribed). The manager retains at most 32 failed-session
@@ -391,9 +395,13 @@ would use. Messages are grouped by user turn — the unit compaction and
 `max_turns` count — and the floating jump
 arrows are hidden while the overlay is open. Cards that are in the replay window
 offer per-message **Edit…** (an inline textarea seeded from the sent text),
-**Drop**, and — when overridden — **Reset**; an edited card hides its stored
-original behind a detail, and a card outside the window (summarized-away or
-capped) shows why it cannot be edited rather than a no-op control. The controls
+**Drop**, a revocable **Essential** toggle, and — when overridden — **Reset**; an
+edited card hides its stored original behind a detail, and a card outside the
+window (summarized-away or capped) shows why it cannot be edited rather than a
+no-op control. An essential card is drawn with an accent bar, and **★↑** / **★↓**
+jump between essential cards (the ordinary arrows step card by card). The same
+marker appears on a chat card as a `☆/★ Essential` pill once the turn has a
+stored `seq`; marking is idle-only, like the rest of the surgery. The controls
 are disabled while the session runs. It is reconstructed from the store rather
 than captured live, so it shows what compaction and the overrides actually did
 rather than a guess; applying surgery retires the idle runtime, so the next send

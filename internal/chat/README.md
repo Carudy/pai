@@ -94,7 +94,11 @@ reasoning, no JSON mode. Trigger it on demand in-session with `/compact`.
 
 In both layers user input, assistant replies and answers are never dropped, and
 the full transcript stays in the session store — compression only changes what
-is *replayed* to the model. (The over-run cut is the one exception to "assistant
+is *replayed* to the model. An **essential** turn opts out of elision, and the
+summarizer is told to preserve its content in full (the transcript handed to it
+marks the turn `[ESSENTIAL — preserve this content in full]`). The marker is
+per-turn, revocable, and persisted, so mark the instruction or result a later
+turn will depend on. (The over-run cut is the one exception to "assistant
 replies are never dropped": what is dropped is the part of a reply the loop never
 read, not the action it took.)
 

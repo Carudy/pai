@@ -488,6 +488,10 @@ authentication, and concurrency options.
   only sets the default when an API client omits the choice.
 - History loads lazily as you scroll up. Slash commands are not supported in the
   browser; use the sidebar and header controls instead.
+- Any turn can be marked **☆ Essential** — a pill on a chat card, or the
+  **Essential** control in the inspector. An essential turn is never elided and
+  the summarizer is told to keep its content in full; the mark is revocable, and
+  `★↑` / `★↓` in the inspector jump between marked cards.
 
 ### Attaching from the terminal
 

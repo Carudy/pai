@@ -4,9 +4,11 @@ PAI is a ports-and-adapters app. The agent loop depends on **interfaces**
 (`core`), and the presentation/storage sides implement them. `cli` is the only
 package that knows about all of them.
 
-The shape to keep in mind: there is **one loop** (`role`) and **two frontends**
-(`tui` for the terminal, `web` + `runner` for the browser), and what a role *is*
-lives in data (`prompts`), not in Go.
+The shape to keep in mind: there is **one loop** (`role`) and two direct
+frontends (`tui` for the terminal, `web` + `runner` for the browser), plus
+`conn`, which attaches a terminal to an already-served session through the same
+API instead of a third loop; and what a role *is* lives in data (`prompts`), not
+in Go.
 
 ## How a turn flows
 
@@ -138,8 +140,9 @@ edges are listed under [Dependency rules](#dependency-rules).
   is why the inspector can show original *and* sent text side by side.
 - **Ports stay semantic.** Styling never crosses `core.Observer` — events carry
   meaning, and an adapter decides how they look.
-- **A transport is not a host.** `conn` is a second frontend beside `web`:
-  it renders the same `core.Observer` events, and it deliberately never opens the
+- **A transport is not a host.** `conn` is a third presentation path beside
+  `tui` and `web`: it renders the same `core.Observer` events, and it
+deliberately never opens the
   session store, which is what lets it run while `pai serve` holds the store's
   exclusive lock. Any new frontend should follow that split — speak the API or
   implement the ports, but do not reach around them into storage.
