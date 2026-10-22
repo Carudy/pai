@@ -177,7 +177,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 403, "cross-site request rejected")
 		return
 	}
-	if r.Method != http.MethodGet && !h.sameOrigin(r) {
+	// A non-browser client (pai conn) authenticates with a bearer token. It has no
+	// browser Origin, and the same-origin gate exists for the cookie's CSRF surface,
+	// which a bearer credential does not share.
+	bearerAuthorized := h.validBearer(r)
+	if r.Method != http.MethodGet && !bearerAuthorized && !h.sameOrigin(r) {
 		fail(w, 403, "same-origin request required")
 		return
 	}
@@ -222,7 +226,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, map[string]bool{"ok": true})
 		return
 	}
-	if !h.authenticated(r) {
+	if !bearerAuthorized && !h.authenticated(r) {
 		fail(w, 401, "login required")
 		return
 	}
@@ -699,6 +703,26 @@ func (h *handler) cookieSecure(r *http.Request) bool {
 	// No usable Origin: unreachable for a mutation, which always carries one, so
 	// this only guards a direct call. Fall back to the canonical origin's scheme.
 	return strings.HasPrefix(h.publicOrigin, "https://")
+}
+
+// validBearer reports whether the request carries the server's token as a bearer
+// credential. A non-browser client (pai conn) uses it instead of the login cookie,
+// so it never has to hold or forge an Origin header.
+func (h *handler) validBearer(r *http.Request) bool {
+	if h.token == "" {
+		return false
+	}
+	const prefix = "Bearer "
+	value := r.Header.Get("Authorization")
+	if len(value) <= len(prefix) || !strings.EqualFold(value[:len(prefix)], prefix) {
+		return false
+	}
+	got := strings.TrimSpace(value[len(prefix):])
+	if got == "" {
+		return false
+	}
+	a, b := sha256.Sum256([]byte(got)), sha256.Sum256([]byte(h.token))
+	return subtle.ConstantTimeCompare(a[:], b[:]) == 1
 }
 
 func (h *handler) authenticated(r *http.Request) bool {

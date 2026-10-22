@@ -31,6 +31,13 @@ func commands() []command {
 			run:     runServe,
 		},
 		{
+			name:    "conn",
+			summary: "Attach to a session served by \"pai serve\"",
+			usage:   "pai conn [flags] <session>",
+			help:    connHelp,
+			run:     runConn,
+		},
+		{
 			name:    "chat",
 			summary: "Talk to a role (the default action when no command is given)",
 			usage:   "pai chat [flags] [input]",

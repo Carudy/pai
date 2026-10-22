@@ -128,6 +128,32 @@ func (b backend) SetEssential(name string, seq int, on bool) error {
 	return nil
 }
 
+// A non-browser client authenticates with a bearer token and is not held to the
+// browser's same-origin gate; without the token, the same mutation is refused.
+func TestBearerAuthAllowsNonBrowserMutations(t *testing.T) {
+	m := runner.New(context.Background(), backend{}, 1)
+	t.Cleanup(m.Close)
+	const token = "0123456789abcdef0123456789abcdef"
+	h := New(m, Options{Token: token})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(`{"name":"one","text":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token) // no Origin: a CLI is not a browser
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("bearer send = %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/send", strings.NewReader(`{"name":"one","text":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("unauthenticated mutation = %d, want 403", rec.Code)
+	}
+}
+
 var _ runner.ContextBackend = backend{}
 var _ runner.ContextSetter = backend{}
 

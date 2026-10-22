@@ -40,6 +40,7 @@ flowchart TB
   entry["cmd/pai — flags and signals"]
   comp["cli — composition root: parses, wires, runs"]
   term["tui — terminal frontend"]
+  conn["conn — attach to a running serve"]
   serve["web — HTTP/SSE and browser UI"]
   runtimes["runner — per-session runtimes"]
   loop["role — the single agent loop"]
@@ -48,9 +49,13 @@ flowchart TB
 
   entry --> comp
   comp --> term
+  comp --> conn
   comp --> serve
   comp --> helpers
   term --> loop
+  conn --> runtimes
+  conn --> helpers
+  conn --> base
   serve --> runtimes
   runtimes --> loop
   loop --> helpers
@@ -79,6 +84,7 @@ edges are listed under [Dependency rules](#dependency-rules).
 | `tui` | Terminal adapters implementing `core` ports. Knows about styling; `core` does not. Imports `tool` only for the shared command splitter. | `LineObserver`, `Prompter`, `Logger` |
 | `runner` | Transport-independent, bounded concurrent runtime hosting: input routing, prompts, event subscriptions, per-session settings that outlive a runtime. Storage arrives through a backend port. | `Manager`, `Backend`, `Snapshot`, `ContextView`, `ContextBackend`, `ContextSetter` |
 | `web` | HTTP/SSE adapter and the embedded, dependency-free browser UI, with cookie authentication and origin validation. | `New`, `Options` |
+| `conn` | The terminal's client for a running `pai serve`: HTTP/SSE transport, local commands, and event-to-`Observer` mapping. Never opens the store, so it coexists with the server's lock. | `Client`, `Options`, `Run`, `Event` |
 | `cli` | Composition root: subcommand dispatch, flag parsing, wiring, signal handling; serves per-session persisted workspaces without changing process cwd. Only package that imports `tui`/`session`. | `Run`, `CliFlags` |
 
 ## Dependency rules
@@ -90,7 +96,8 @@ edges are listed under [Dependency rules](#dependency-rules).
 
   ```
   cmd/pai -> cli
-  cli     -> chat config core paths prompts provider role runner session tui web
+  cli     -> chat config conn core paths prompts provider role runner session tui web
+  conn    -> chat core runner
   web     -> config core provider runner
   runner  -> config core provider role
   role    -> chat config core prompts provider tool
@@ -131,6 +138,11 @@ edges are listed under [Dependency rules](#dependency-rules).
   is why the inspector can show original *and* sent text side by side.
 - **Ports stay semantic.** Styling never crosses `core.Observer` — events carry
   meaning, and an adapter decides how they look.
+- **A transport is not a host.** `conn` is a second frontend beside `web`:
+  it renders the same `core.Observer` events, and it deliberately never opens the
+  session store, which is what lets it run while `pai serve` holds the store's
+  exclusive lock. Any new frontend should follow that split — speak the API or
+  implement the ports, but do not reach around them into storage.
 - **Capability boundaries are enforced.** A role's `tools` list is checked against
   the handler registry at startup (`checkToolCoverage`), so a role can never
   declare a tool that cannot run.

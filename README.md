@@ -76,6 +76,7 @@ Each command has a short alias, and every command has its own `--help`:
 | `pai config` | `cfg` | Inspect and edit `config.toml` |
 | `pai role` | `roles` | List and inspect available roles |
 | `pai serve` | — | Serve the browser UI and HTTP API (see [Browser / server mode](#-browser--server-mode)) |
+| `pai conn` | — | Attach a terminal to a running `pai serve` session |
 | `pai help [cmd]` | — | Show help |
 
 Subcommands and their flags accept short forms, e.g. `pai session ls`,
@@ -472,6 +473,42 @@ authentication, and concurrency options.
   only sets the default when an API client omits the choice.
 - History loads lazily as you scroll up. Slash commands are not supported in the
   browser; use the sidebar and header controls instead.
+
+### Attaching from the terminal
+
+While `pai serve` is running, its session store is locked by the server, so a
+second `pai chat` cannot open it. `pai conn` is the terminal counterpart of the
+browser tab: it attaches over HTTP/SSE, renders the session's events in the same
+terminal style as a local run, and accepts instructions, steering, and approvals.
+It never opens the store, which is why it can run alongside the server.
+
+```bash
+pai conn demo                              # default http://127.0.0.1:9384
+pai conn --url http://host:9384 -s demo    # or set PAI_SERVE_URL / PAI_SERVE_TOKEN
+```
+
+Mutations carry the URL's own origin, which is what the server's CSRF gate expects
+from a same-origin browser; when the server requires a token, pass it with
+`--token`/`PAI_SERVE_TOKEN`. If the server was started with a different
+`--public-origin` (a reverse proxy), pass that with `--origin`.
+
+Attaching to an idle session prints its stored transcript; attaching to a live
+one streams events from that point, so an in-flight step is not printed twice.
+A rejected token fails at once rather than retrying silently. Local commands:
+
+| Command | Effect |
+|---|---|
+| `/sessions` | List the server's sessions, marking the attached one |
+| `/inspect [N]` | Print the last N turns of the context that would be sent |
+| `/trust [on\|off]` | Show or set auto-approval for this session |
+| `/model [p:m]`, `/role [name]`, `/dir [path]` | Show options or switch, applied on the next send |
+| `/steer <text>`, `/cancel` | Redirect the running task, or stop the current step |
+| `/quit` | Detach (`Ctrl+C` cancels the remote step first) |
+
+Any other `/command` is forwarded to the session, so in-session commands still
+work; prefix `//` to send a literal instruction that starts with a slash.
+Multiple terminals may attach to one session — both see the same events, and a
+confirmation is answered by whichever client replies first.
 
 ### Remote access
 
