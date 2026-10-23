@@ -349,7 +349,14 @@ func loop(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.Rol
 			return nil
 		}
 
-		// done/terminate, or an interrupt: wait for the next instruction.
+		// done/terminate, or an interrupt: wait for the next instruction. Adopt the
+		// step's final history first: it ends with the model's own reply, and a
+		// follow-up that refers to it ("apply 1-5" to a numbered list) is
+		// unanswerable without it. The store has the turn, but this in-process
+		// conversation only keeps what is assigned here.
+		if newHistory != nil {
+			cc.history = newHistory
+		}
 		input, ok := rt.nextInstruction(cc)
 		if !ok {
 			return nil

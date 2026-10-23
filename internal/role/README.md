@@ -12,6 +12,13 @@ See the [module map](../organization.md) for the loop's dependencies and ports.
   It scopes local tools and project instructions; empty preserves process cwd.
   Separate runtimes can use separate workspaces without changing process cwd.
 - `Runtime.Interrupt` cancels the current step rather than the entire runtime.
+- The loop owns the in-process conversation: after any step it adopts that step's
+  returned history, including the one that ends a turn (`done`/`terminate`).
+  Without that, the next instruction in the same live runtime would reach the
+  model without its own final reply — and a follow-up like "apply 1-5" to a
+  numbered list would be unanswerable, even though the turn is in the store.
+  Resuming rebuilds history from the store, so the bug only appeared in a run
+  that stayed alive between instructions.
 - `tools.go` owns tool dispatch and capability coverage, including `papersearch`
   object validation, provider errors as observations, and complete-record output
   budgeting. The `coder` and `latex` roles enable keyless academic discovery;
