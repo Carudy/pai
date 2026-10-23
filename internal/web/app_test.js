@@ -1158,6 +1158,43 @@ async function verifySendFailure() {
   assert.match(p.get('state').textContent, /directory does not exist/, 'SSE reconnect retains the stopped failure snapshot');
 }
 
+async function verifySendReconcile() {
+  const p = browser();
+  p.run(`selected='one'; $('login').hidden=true; $('message').value='hello'; globalThis.refreshed=0;
+    api=async()=>{ throw new Error('network down'); };
+    loadSnapshot=async()=>{ refreshed++; }; scheduleHistory=()=>{}; sessions=async()=>{}; controls=()=>{};`);
+  await p.run("action('send')");
+  assert.equal(p.run('refreshed'), 1, 'a failed send re-reads the snapshot instead of guessing');
+}
+
+// The stream backs off while the server stays unreachable, and an open connection
+// resets it so the next reconnect is prompt.
+async function verifyStreamBackoff() {
+  const p = browser();
+  p.run("selected='one'; $('login').hidden=true; api=async()=>({}); connect();");
+  assert.equal(p.connections.length, 1, 'connect opens one stream');
+  p.run('retryDelay = 2500; stream.onerror()');
+  assert.equal(p.run('retryDelay'), 5000, 'the retry delay doubles');
+  await p.flush();
+  assert.equal(p.connections.length, 2, 'the stream reconnects after the delay');
+  p.connections[1].onopen();
+  assert.equal(p.run('retryDelay'), 2500, 'a successful open resets the backoff');
+}
+
+// A fetch that never answers must fail the control, not freeze it forever.
+async function verifyAPITimeout() {
+  const p = browser();
+  p.run(`
+    globalThis.fetch = () => new Promise((_, reject) => { globalThis.rejectFetch = reject; });
+    globalThis.AbortController = class { constructor(){ this.signal = {}; } abort(){ globalThis.rejectFetch(Object.assign(new Error('aborted'), {name:'AbortError'})); } };
+  `);
+  const pending = p.run("api('snapshot')");
+  await p.flush();
+  let failed;
+  await pending.catch(e => { failed = e; });
+  assert.match(failed.message, /did not answer within 20s/);
+}
+
 async function verifyComposer() {
   const p = browser();
   p.run("selected=''; controls()");
@@ -1256,4 +1293,4 @@ async function verifyIdentity() {
   assert.equal(p.get('identity').hidden, true, 'an empty identity keeps the line hidden');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });

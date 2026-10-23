@@ -83,7 +83,13 @@ promised; reconnect yields a snapshot and the UI reloads durable history. Becaus
 heartbeats are comments (invisible to `EventSource`), the browser cannot tell a
 stalled subscription from a quiet run, so the UI re-fetches the snapshot when a
 running session has seen no event for ~20s — a slow-consumer eviction or a
-buffering proxy then self-heals instead of freezing on the last phase.
+buffering proxy then self-heals instead of freezing on the last phase. Reconnects
+back off from 2.5 s to 30 s while the server stays unreachable, and a successful
+open resets the delay. Mutations (`send`, `reply`, `steer`, …) are never retried
+automatically: the request may have been applied before the connection failed,
+and a retry would duplicate it. Each fetch has a 20-second abort deadline; on
+failure the client re-reads the snapshot and history so the UI shows whether the
+instruction landed, rather than leaving a control waiting forever.
 Snapshots include `usage` (latest reported request), `total_usage` (sum of
 reported request usage), and `usage_calls`. Token fields use core's `Prompt`,
 `Completion`, and `Total` names, plus `Cached` — the prompt tokens the provider
@@ -386,7 +392,16 @@ the figure is there before any run has reported usage. An **Inspect** switch in 
 opens an overlay of the messages a send would use — the system head, one card per
 message showing the original and what is actually sent (with a state badge for
 elided, over-run, edited, dropped, summarized-away and capped messages), and the tail, with
-the compaction settings that produced them. The overlay is windowed: it opens
+the compaction settings that produced them. It is the **same projection** a new or
+resumed run uses: the replay window (summary checkpoint, `keep_turns`, `max_turns`),
+the override layer, the over-run cut and elision, with the session's calibrated
+token scale. `sent` plus the head and tail is therefore the logical message list,
+not an approximation. What it cannot show is state the store does not have: an
+instruction still queued, or a turn a live runtime has not recorded. Two live-only
+divergences are deliberate and small — steering text carries a `[user steering]`
+prefix on the wire that the stored card shows without it, and a format-retry
+correction is part of the live conversation but is not persisted. Token figures are
+estimates (calibrated from reported usage), never the provider's own count. The overlay is windowed: it opens
 anchored on the newest page, names the slice it holds, offers the page above, and
 loads it when the reader clicks or scrolls to the top, so a long transcript is
 never fetched whole and the reader's place is held across a prepend. Cards are

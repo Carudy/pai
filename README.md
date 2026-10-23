@@ -476,7 +476,9 @@ authentication, and concurrency options.
   **Always**).
 - Multiple tabs may observe the same session, but there is only one runtime per
   session. Closing a tab does **not** cancel tasks; reconnect to recover history
-  and pending approvals.
+  and pending approvals. A dropped event stream reconnects by itself (backing off
+  to 30 s) and reloads the transcript; a control whose request fails re-reads the
+  server's state rather than resending, so an instruction is never duplicated.
 - The header has **Role**, **Model**, and **Working dir** controls (each with
   **Apply**). Settings changes require an *idle* session (no running work,
   queued instructions, or pending approvals), are saved to the session, and take
@@ -494,6 +496,11 @@ authentication, and concurrency options.
   the dropped turns into a single rolling `<name>.rewind-backup` session first, so
   nothing is lost) or **Rewind** (truncate directly); `[session] rewind_backup`
   only sets the default when an API client omits the choice.
+- The **Context** panel opens an inspector showing the exact message list the
+  next send would use — the system head, one card per turn with what is actually
+  sent (or why it is omitted), and the tail. See
+  [`internal/web/README.md`](internal/web/README.md) for the projection rules and
+  the few live-only exceptions (queued instructions, the steering marker).
 - History loads lazily as you scroll up. Slash commands are not supported in the
   browser; use the sidebar and header controls instead.
 - Any turn can be marked **☆ Essential** — a pill on a chat card, or the

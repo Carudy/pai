@@ -6,6 +6,14 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let selected = '', generation = 0, stream = null, retry = null, lastEventAt = 0, refreshTimer = null, sessionBusy = false;
+// Reconnect delay for the event stream: back off while the server is unreachable
+// (or a session has no live worker) instead of hammering it every few seconds.
+let retryDelay = 2500;
+const RETRY_DELAY_MAX = 30000;
+// A fetch that never answers would freeze a control with no way out. The timeout
+// only stops waiting; a mutation may already have been applied, so callers
+// reconcile from the snapshot instead of retrying blindly.
+const API_TIMEOUT = 20000;
 let sessionOffset = 0, historyOffset = 0, historyTotal = 0, historyRequest = 0, refreshing = false, refreshAgain = false;
 // Whether the reader is following the tail. A real scroll event sets it, and only
 // scrollBottom re-arms it; it is never measured at paint time, because a layout
@@ -432,8 +440,16 @@ function applySessionsCollapsed(collapsed) {
 function storedSessionsCollapsed() { try { return localStorage.getItem(SESSIONS_COLLAPSED_KEY) === '1'; } catch (_) { return false; } }
 async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
-  const response = await fetch('/api/' + path, options);
-  const data = await response.json();
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer = null, response, data;
+  if (controller) { options.signal = controller.signal; timer = setTimeout(() => controller.abort(), API_TIMEOUT); }
+  try {
+    response = await fetch('/api/' + path, options);
+    data = await response.json();
+  } catch (e) {
+    if (e && e.name === 'AbortError') { const err = new Error('the server did not answer within ' + (API_TIMEOUT / 1000) + 's'); err.status = 0; throw err; }
+    throw e;
+  } finally { if (timer !== null) clearTimeout(timer); }
   if (!response.ok) { if (response.status === 401) loginNeeded(); const e = new Error(data.error || response.statusText); e.status = response.status; throw e; }
   return data;
 }
@@ -1049,16 +1065,22 @@ async function loadSnapshot() {
   try { const s = await api(query('snapshot', 0)); if (version === generation) snapshot(s); }
   catch (e) { if (version !== generation) return; if (e.status === 404) { stopRunProgress(); usageSnapshot({}); $('state').textContent = 'Stored session · no live runtime'; clearPending(); liveModel = ''; modelBlocked = false; sessionBusy = false; modelControls(); controls(); await loadHistory(true); } else error(e); }
 }
-function disconnect() { stopRunProgress(); clearReasoning(); if (stream) stream.close(); stream = null; clearTimeout(retry); clearTimeout(refreshTimer); }
+function disconnect() { stopRunProgress(); clearReasoning(); if (stream) stream.close(); stream = null; clearTimeout(retry); retry = null; retryDelay = 2500; clearTimeout(refreshTimer); }
 function connect() {
   if (!selected || !$('login').hidden || stream) return;
+  clearTimeout(retry); retry = null;
   const version = generation;
   stream = new EventSource('/api/events?name=' + encodeURIComponent(selected));
   const connection = stream;
   lastEventAt = Date.now();
+  stream.onopen = () => {
+    if (version !== generation || stream !== connection) return;
+    retryDelay = 2500;
+  };
   stream.onmessage = e => {
     if (version !== generation || stream !== connection) return;
     lastEventAt = Date.now();
+    retryDelay = 2500;
     const event = JSON.parse(e.data);
 
     if (!['reasoning','notice','snapshot'].includes(event.type)) flushReasoning();
@@ -1073,14 +1095,17 @@ function connect() {
     if (version !== generation || stream !== connection) return;
     stopRunProgress();
     stream.close(); stream = null;
-    // A missing/evicted runtime is normal. Polling also discovers later sends.
+    // A missing/evicted runtime is normal. Polling also discovers later sends;
+    // the delay grows while the server stays unreachable and resets on an open.
+    const wait = retryDelay;
+    retryDelay = Math.min(retryDelay * 2, RETRY_DELAY_MAX);
     retry = setTimeout(async () => {
       if (version !== generation) return;
       // Recover even if the snapshot fetch fails; a rejected callback would
       // otherwise skip connect() and leave the UI frozen on a stale phase.
       try { await loadSnapshot(); scheduleHistory(); } catch (_) {}
       if (version === generation) connect();
-    }, 2500);
+    }, wait);
   };
 }
 // ── Context inspector ───────────────────────────────────────
@@ -1602,7 +1627,13 @@ async function action(kind, override) {
     controls();
     if (selected === name) { await loadSnapshot(); if (!stream) connect(); scheduleHistory(); }
     await sessions(true);
-  } catch (e) { error(e); }
+  } catch (e) {
+    error(e);
+    // The instruction may have reached the server before the failure, or only the
+    // reply was lost. Re-read the authoritative state instead of guessing (and
+    // never resend a mutation automatically: that would duplicate it).
+    if (selected === name) { await loadSnapshot().catch(() => {}); scheduleHistory(); }
+  }
 }
 // Delete a stored session after confirmation. Deleting the open session also
 // returns the workspace to its unselected state.
