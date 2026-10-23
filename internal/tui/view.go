@@ -24,7 +24,7 @@ func (m *appModel) View() string {
 			}
 			out += "\n" + RenderStr("Warn", "  "+what+strings.Join(m.pending.untrusted, ", "))
 		}
-		return out + "\n" + RenderStr("Hint", "  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort")
+		return fitLines(out+"\n"+RenderStr("Hint", "  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort"), m.width)
 	}
 
 	if m.pending != nil && m.pending.kind == promptConfirm {
@@ -34,7 +34,7 @@ func (m *appModel) View() string {
 		// distinct, deliberate step rather than more scrolling output.
 		prompt := RenderStr("Confirm", "  ⚠︎  "+m.pending.title)
 		hint := RenderStr("Hint", "  [y/enter] run · [n/esc] skip · [ctrl+c] abort")
-		return label + "\n" + prompt + "\n" + hint
+		return fitLines(label+"\n"+prompt+"\n"+hint, m.width)
 	}
 
 	status := RenderStr("Hint", "⏳ working — enter queue · ctrl+g steer · ctrl+c stop & send")
@@ -63,7 +63,38 @@ func (m *appModel) View() string {
 	if m.interactive {
 		out += "\n" + m.input.View()
 	}
-	return out
+	return fitLines(out, m.width)
+}
+
+// fitLines wraps every rendered line to the terminal width. bubbletea's inline
+// renderer counts the newlines it wrote and moves the cursor up by that many on
+// the next frame; a line the terminal wraps into extra rows makes that count too
+// small, so the next frame starts a row too low and leaves fragments of the
+// previous one behind — in practice the tail of the status hint, glued to the end
+// of an output line. Wrapping here keeps logical lines and screen rows equal.
+// Word-wrap is ANSI-aware and breaks a word only when it cannot fit, so a status
+// bar wraps at its separators and a long command or session name still fits.
+func fitLines(view string, width int) string {
+	if width <= 0 {
+		return view
+	}
+	lines := strings.Split(view, "\n")
+	for i, line := range lines {
+		if ansi.StringWidth(line) <= width {
+			continue
+		}
+		wrapped := strings.Split(ansi.Wrap(line, width, ""), "\n")
+		for j, part := range wrapped {
+			if ansi.StringWidth(part) > width {
+				// Wrap can leave the break's space at the end of a row, and a
+				// single unbreakable run can still overflow: hard-wrap guarantees the
+				// row fits without dropping text.
+				wrapped[j] = ansi.Hardwrap(strings.TrimRight(part, " "), width, true)
+			}
+		}
+		lines[i] = strings.Join(wrapped, "\n")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // tailView renders the in-progress line — streaming reasoning or command output
@@ -74,15 +105,23 @@ func (m *appModel) tailView() string {
 	if m.tail == "" {
 		return ""
 	}
-	s := m.tail
+	// The tail is a single streaming row, so it is truncated rather than wrapped:
+	// its newest end is what the reader is following. The indent counts against the
+	// width too — a row two cells over still wraps in the terminal and would
+	// desynchronise the live region.
+	const indent = "  "
 	width := m.width
-	if width <= 4 {
+	if width <= len(indent)+1 {
 		width = 80
 	}
-	if w := ansi.StringWidth(s); w > width {
-		s = ansi.TruncateLeft(s, w-width, "…")
+	limit := width - len(indent)
+	s := m.tail
+	if w := ansi.StringWidth(s); w > limit {
+		// TruncateLeft keeps the tail marker, so it must drop one more cell than
+		// the overflow to land within the limit.
+		s = ansi.TruncateLeft(s, w-limit+1, "…")
 	}
-	return "  " + s
+	return indent + s
 }
 
 // tickCmd schedules the next liveness refresh.

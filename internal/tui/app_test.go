@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Carudy/pai/internal/core"
 )
@@ -304,6 +306,7 @@ func TestTailSitsAboveChrome(t *testing.T) {
 func TestTailTruncatedToWidth(t *testing.T) {
 	m := newAppModel()
 	m.width = 20
+	m.interactive = true
 	mm, _ := m.Update(tailMsg{text: "START" + strings.Repeat("x", 100) + "END"})
 	m = mm.(*appModel)
 
@@ -313,6 +316,96 @@ func TestTailTruncatedToWidth(t *testing.T) {
 	}
 	if strings.Contains(view, "START") {
 		t.Errorf("oldest end should have been trimmed:\n%s", view)
+	}
+	// The indent is part of the row: a tail two cells wider than the terminal
+	// still wraps, which is what desynchronised the live region.
+	assertLinesFit(t, m.View(), m.width)
+}
+
+// Every rendered line must fit the terminal width. The inline renderer moves the
+// cursor up by the newline count, so a wrapped view line makes the next frame land
+// a row low and leaves fragments (the hint's tail, typically) in scrollback.
+func TestViewLinesFitTerminalWidth(t *testing.T) {
+	for _, width := range []int{20, 40, 80} {
+		t.Run(fmt.Sprintf("width %d", width), func(t *testing.T) {
+			build := map[string]func() *appModel{
+				"idle": func() *appModel {
+					m := newAppModel()
+					m.interactive = true
+					return m
+				},
+				"long session": func() *appModel {
+					m := newAppModel()
+					m.interactive = true
+					m.session = strings.Repeat("session-", 12)
+					return m
+				},
+				"streaming tail plus queue": func() *appModel {
+					m := newAppModel()
+					m.interactive = true
+					m.session = "work"
+					m.toolLabel = "long-command"
+					m.tail = "partial " + strings.Repeat("output ", 40)
+					m.queue = []string{"one", "two"}
+					m.steerQ = []string{"steer"}
+					return m
+				},
+				"question": func() *appModel {
+					m := newAppModel()
+					m.interactive = true
+					m.pending = &promptReq{kind: promptAsk, title: "Which " + strings.Repeat("file ", 20) + "?"}
+					return m
+				},
+				"command confirmation": func() *appModel {
+					m := newAppModel()
+					m.interactive = true
+					m.pending = &promptReq{kind: promptConfirmCommand, title: "Execute: " + strings.Repeat("rm -rf build/ ", 10), untrusted: []string{strings.Repeat("long-command-name", 4)}}
+					return m
+				},
+				"non-interactive streaming": func() *appModel {
+					m := newAppModel()
+					m.tail = strings.Repeat("line ", 50)
+					return m
+				},
+			}
+			for name, make := range build {
+				t.Run(name, func(t *testing.T) {
+					m := make()
+					m.width = width
+					assertLinesFit(t, m.View(), width)
+				})
+			}
+		})
+	}
+}
+
+// fitLines wraps without losing the text or its styling.
+func TestFitLinesPreservesContentAndStyle(t *testing.T) {
+	styled := RenderStr("Warn", strings.Repeat("x", 50))
+	got := fitLines("short\n"+styled, 20)
+	lines := strings.Split(got, "\n")
+	if lines[0] != "short" {
+		t.Errorf("short line changed: %q", lines[0])
+	}
+	for i, line := range lines {
+		if w := ansi.StringWidth(line); w > 20 {
+			t.Errorf("line %d is %d cells, want <= 20: %q", i, w, line)
+		}
+	}
+	if !strings.Contains(got, "\x1b[") {
+		t.Error("styling was dropped while wrapping")
+	}
+	if n := strings.Count(strings.Join(lines[1:], ""), "x"); n != 50 {
+		t.Errorf("wrapped text has %d x, want 50", n)
+	}
+}
+
+func assertLinesFit(t *testing.T, view string, width int) {
+	t.Helper()
+	for i, line := range strings.Split(view, "\n") {
+		if w := ansi.StringWidth(line); w > width {
+			t.Errorf("line %d is %d cells, want <= %d: %q", i, w, width, line)
+		}
 	}
 }
 

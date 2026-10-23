@@ -13,6 +13,19 @@ See the [module map](../organization.md) for presentation boundaries.
 - `style.go` and `highlight.go` own styling and highlighting; observer and
   prompt files translate semantic events into terminal presentation.
 
+## Live region invariants
+
+The interactive UI is an inline (non-alt-screen) bubbletea view: committed output
+is printed above it into ordinary scrollback, and the live region is repainted in
+place. Its rendered **line count must equal its screen rows**. bubbletea moves the
+cursor up by the number of newlines it last wrote, so a line the terminal wraps
+into extra rows makes the next frame start too low; fragments of the previous
+frame (typically the tail of the status hint) then stay behind in scrollback.
+`View` therefore wraps every line to the terminal width (`fitLines`, ANSI-aware)
+before returning, and the streaming tail is truncated to a single row so it keeps
+its newest end. Any new view state — a prompt, a banner, a wider status bar — must
+respect that boundary rather than assume the terminal will wrap harmlessly.
+
 ## Boundaries
 
 Only `cli` imports this adapter and chooses the terminal mode.
