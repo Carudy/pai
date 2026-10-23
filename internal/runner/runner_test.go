@@ -748,6 +748,66 @@ func TestConfirmationRemembersGrantedNames(t *testing.T) {
 	}
 }
 
+// Custom-tool grants are keyed by definition name like command grants, and a
+// project tool's grant stays in memory.
+func TestSetToolTrustScopesByName(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{}, 1)
+	defer m.Close()
+	if err := m.SetToolTrust("one", "demo", true); err != nil {
+		t.Fatalf("known session rejected: %v", err)
+	}
+	if got := m.ToolTrust("one"); len(got) != 1 || got[0] != "demo" {
+		t.Fatalf("ToolTrust = %v, want [demo]", got)
+	}
+	if err := m.SetToolTrust("one", "demo", false); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if got := m.ToolTrust("one"); len(got) != 0 {
+		t.Fatalf("revoked tool still granted: %v", got)
+	}
+	for _, bad := range []string{"", "   ", "/usr/bin/demo", strings.Repeat("x", 65)} {
+		if err := m.SetToolTrust("one", bad, true); err == nil {
+			t.Errorf("SetToolTrust(%q) = nil, want an error", bad)
+		}
+	}
+	if err := m.SetToolTrust("ghost", "demo", true); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown session = %v, want ErrNotFound", err)
+	}
+}
+
+// A project tool asks even when the session's trust-all switch is on; the switch
+// only covers grants that may be persisted. The recorded grant is in memory.
+func TestProjectToolPromptsUnderTrustAll(t *testing.T) {
+	m := New(context.Background(), &fakeBackend{}, 1)
+	defer m.Close()
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatal(err)
+	}
+	waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.State == "awaiting" })
+	m.mu.Lock()
+	w := m.entries["one"]
+	m.mu.Unlock()
+	if err := m.SetTrustAll("one", true); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan core.TrustChoice, 1)
+	go func() { choice, _ := w.ConfirmTool("Run tool proj?", []string{"proj"}, false, false); done <- choice }()
+	s := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
+	if s.Pending.TrustTarget != "tool" || s.Pending.Persist {
+		t.Fatalf("pending = %+v, want a session-only tool grant", s.Pending)
+	}
+	if err := m.Reply("one", s.Pending.ID, "", core.TrustSession); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-done; got != core.TrustSession {
+		t.Fatalf("choice = %v, want TrustSession", got)
+	}
+	if got := m.ToolTrust("one"); len(got) != 1 || got[0] != "proj" {
+		t.Fatalf("ToolTrust = %v, want [proj]", got)
+	}
+}
+
 func TestSetTrustAllValidatesName(t *testing.T) {
 	m := New(context.Background(), &fakeBackend{}, 1)
 	defer m.Close()
@@ -909,7 +969,7 @@ func TestApprovalReconnectToolCopy(t *testing.T) {
 		case "awaiting":
 			w.Awaiting()
 		case "ask":
-			go func() { _, err := w.prompt("ask", "question?", nil, ""); done <- err }()
+			go func() { _, err := w.prompt("ask", "question?", nil, "", false); done <- err }()
 			question := waitSnapshot(t, m, "one", func(s Snapshot) bool { return s.Pending != nil })
 			if question.Pending.Tool != nil {
 				t.Fatal("question inherited tool")

@@ -7,6 +7,14 @@ See the [module map](../organization.md) for the execution/approval split.
 
 - `ExecuteCommand` runs a local shell command; `ExecuteCommandAt` sets a
   per-command workspace and streams output through an optional writer.
+- `ExecuteArgv` runs an exact argv with no shell. It is shared by custom CLI
+  tools and future command probes, and carries cwd, timeout, environment
+  overrides, process-group cancellation, streaming, and the same result shape.
+- `ExecuteHTTP` performs one definition-owned request with no redirects, a
+  bounded header wait and total deadline, cancellation from the step context,
+  and a `MaxBytes` cap reported through `Truncated`. `FormatHTTPBody` pretty
+  prints JSON, leaves other formats alone, and applies the cap again after
+  formatting. A deadline is a `TimedOut` result, not a transport error.
 - `ExecResult` reports command output and status; platform process-group helpers
   support cancellation of local work.
 - `SplitSegments` parses a command chain with the real shell parser

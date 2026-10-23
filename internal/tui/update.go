@@ -153,7 +153,7 @@ func (m *appModel) confirmKey(k tea.KeyMsg) tea.Model {
 		m.answer(promptResult{ok: true, choice: core.TrustOnce})
 	case command && (key == "s" || key == "S"):
 		m.answer(promptResult{ok: true, choice: core.TrustSession})
-	case command && (key == "a" || key == "A"):
+	case command && (key == "a" || key == "A") && (m.pending == nil || !m.pending.noPersist):
 		m.answer(promptResult{ok: true, choice: core.TrustPersist})
 	case key == "n" || key == "N" || key == "esc":
 		m.answer(promptResult{ok: false, choice: core.TrustDeny})

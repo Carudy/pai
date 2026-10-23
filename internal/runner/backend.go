@@ -186,9 +186,13 @@ type Prompt struct {
 	Title     string         `json:"title"`
 	Tool      *core.ToolCall `json:"tool,omitempty"`
 	Untrusted []string       `json:"untrusted,omitempty"`
-	// TrustTarget says what Untrusted names are: "command" for command names or
-	// "path" for a directory, so a client can word the approval correctly.
+	// TrustTarget says what Untrusted names are: "command" for command names,
+	// "path" for a directory, or "tool" for custom tool names, so a client can
+	// word the approval correctly.
 	TrustTarget string `json:"trust_target,omitempty"`
+	// Persist reports whether an "always" grant may be stored. Project tools set
+	// it false: they are session-only.
+	Persist bool `json:"persist"`
 }
 
 func clonePrompt(p *Prompt) *Prompt {
@@ -224,16 +228,18 @@ type Snapshot struct {
 	// TrustedCmds is the per-session grant of command names approved for this
 	// conversation. The manager holds it, so it survives the runtime being retired;
 	// a client renders it as the state of its own trust switches.
-	TrustedCmds []string       `json:"trusted_cmds,omitempty"`
-	Name        string         `json:"name"`
-	Model       string         `json:"model"`
-	State       string         `json:"state"` // starting, busy, awaiting, stopped
-	Phase       string         `json:"phase"`
-	ActiveTool  *core.ToolCall `json:"active_tool,omitempty"`
-	Queued      int            `json:"queued"`
-	Pending     *Prompt        `json:"pending,omitempty"`
-	Error       string         `json:"error,omitempty"`
-	Reasoning   string         `json:"reasoning,omitempty"`
+	TrustedCmds []string `json:"trusted_cmds,omitempty"`
+	// TrustedTools is the custom-tool counterpart, keyed by tool name.
+	TrustedTools []string       `json:"trusted_tools,omitempty"`
+	Name         string         `json:"name"`
+	Model        string         `json:"model"`
+	State        string         `json:"state"` // starting, busy, awaiting, stopped
+	Phase        string         `json:"phase"`
+	ActiveTool   *core.ToolCall `json:"active_tool,omitempty"`
+	Queued       int            `json:"queued"`
+	Pending      *Prompt        `json:"pending,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	Reasoning    string         `json:"reasoning,omitempty"`
 	// TrustAll reports that every confirmation for this session is auto-approved
 	// without a prompt. It is a per-session, in-memory toggle the user sets
 	// explicitly; it is never persisted to config.

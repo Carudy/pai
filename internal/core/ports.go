@@ -100,12 +100,18 @@ type Usage struct {
 
 // ToolCall describes a tool about to run.
 type ToolCall struct {
-	Name    string // "execute" | "remote" | "websearch" | "read" | "edit"
-	Target  string // shell name, SSH host, or file path (empty for websearch)
-	Dir     string // for execute, the working directory the command runs in (empty when unset)
-	Detail  string // the command, query, or change summary
+	Name    string // "execute" | "remote" | "websearch" | "read" | "edit" | custom
+	Target  string // shell name, SSH host, executable, or file path (empty for websearch)
+	Dir     string // for execute/custom CLI, the working directory (empty when unset)
+	Detail  string // the command, query, rendered argv, or change summary
 	Reason  string // why the model chose it
 	Trusted bool   // ran without confirmation
+	// Source names where a custom tool definition came from (layer and path). Empty
+	// for built-ins; an approval card shows it when present.
+	Source string
+	// Body is an optional request-body preview for an HTTP tool, rendered before
+	// the confirmation so the user reviews what will be sent. Empty otherwise.
+	Body string
 
 	// Diff is an optional preview of what a file-modifying tool (edit) is about
 	// to change, rendered before the confirmation so the user reviews it. Empty
@@ -193,6 +199,16 @@ type CommandConfirmer interface {
 // CommandConfirmer it is optional, and prompters without it get a plain Confirm.
 type PathConfirmer interface {
 	ConfirmPath(title, dir string) (TrustChoice, error)
+}
+
+// ToolConfirmer is the custom-tool counterpart: a confirmation that offers to
+// trust the tool name for this run or future runs. The grant unit is the tool
+// name, never the underlying executable or endpoint. persistent is false for a
+// project tool (session-only); trustAll is false when the session trust-all
+// switch must not auto-approve this definition. It is optional; prompters
+// without it get a plain Confirm.
+type ToolConfirmer interface {
+	ConfirmTool(title string, untrusted []string, persistent, trustAll bool) (TrustChoice, error)
 }
 
 // Steerer is an optional Prompter capability: a non-blocking poll for a message

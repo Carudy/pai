@@ -1,0 +1,11 @@
+name  = "github_rate_limit"
+brief = "read the anonymous GitHub API rate limit"
+kind  = "http"
+description = "GET https://api.github.com/rate_limit and pretty-print the JSON. No token is needed; the anonymous limit is low. Needs network access."
+
+[http]
+method = "GET"
+url    = "https://api.github.com/rate_limit"
+headers = { Accept = "application/vnd.github+json" }
+max_bytes = 4096
+format = "json"

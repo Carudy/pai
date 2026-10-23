@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/BurntSushi/toml"
+	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/prompts"
 	"github.com/Carudy/pai/internal/tui"
 )
@@ -83,6 +85,24 @@ func roleShow(name string, stdout io.Writer, log *tui.Logger) int {
 	fmt.Fprintf(stdout, "source:      %s\n", source)
 	fmt.Fprintf(stdout, "description: %s\n", def.Description)
 	fmt.Fprintf(stdout, "tools:       %s\n", strings.Join(def.Tools, ", "))
+	_, extraTools, err := config.LoadRoleExtraEntry(name)
+	cfg, _ := config.LoadUserConfig()
+	cwd, _ := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(stdout, "resolved:    (%v)\n", err)
+	} else if set, err := prompts.ResolveTools(prompts.ResolveOptions{
+		RoleTools:       def.Tools,
+		RoleExtraTools:  extraTools,
+		Workspace:       cwd,
+		TrustedProjects: cfg.TrustedProjects,
+	}); err != nil {
+		fmt.Fprintf(stdout, "resolved:    (%v)\n", err)
+	} else {
+		fmt.Fprintln(stdout, "resolved:")
+		for _, t := range set.Tools {
+			fmt.Fprintf(stdout, "  %s — %s (%s)\n", t.Name, t.Kind, t.Source)
+		}
+	}
 	fmt.Fprintf(stdout, "\n%s\n", strings.TrimSpace(def.Intro))
 	return 0
 }

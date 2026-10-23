@@ -194,6 +194,17 @@ func (p *appPrompter) ConfirmPath(title, dir string) (core.TrustChoice, error) {
 	return res.choice, nil
 }
 
+// ConfirmTool implements core.ToolConfirmer: a custom-tool confirmation that can
+// also trust the tool name. It reuses the command modal with tool wording.
+func (p *appPrompter) ConfirmTool(title string, untrusted []string, persistent, _ bool) (core.TrustChoice, error) {
+	req := promptReq{kind: promptConfirmCommand, title: title, untrusted: untrusted, tool: true, noPersist: !persistent, reply: make(chan promptResult, 1)}
+	res, err := p.ask(req)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	return res.choice, nil
+}
+
 func (p *appPrompter) ask(req promptReq) (promptResult, error) {
 	p.app.program.Send(promptMsg{req})
 	select {
@@ -225,6 +236,8 @@ type promptReq struct {
 	title     string
 	untrusted []string
 	path      bool // untrusted names a directory, not command names
+	tool      bool // untrusted names custom tools, not command names
+	noPersist bool // project tool: session trust only, no "always"
 	reply     chan promptResult
 }
 

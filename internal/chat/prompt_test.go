@@ -221,6 +221,41 @@ func TestLoadRolePromptWithoutContextFiles(t *testing.T) {
 	}
 }
 
+// A project layer exists only inside a configured trusted root: the same
+// workspace with an empty list contributes no tools, so a cloned repository
+// cannot inject definitions.
+func TestLoadRolePromptProjectToolsRequireTrust(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	workspace := t.TempDir()
+	toolsDir := filepath.Join(workspace, ".pai", "tools")
+	write(t, filepath.Join(toolsDir, "proj.toml"), `name = "proj"
+brief = "project tool"
+kind = "cli"
+[cli]
+command = "echo"
+args = ["hi"]
+`)
+
+	untrusted, err := LoadRolePromptForSession("coder", "", nil, nil, workspace, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if untrusted.Resolved.Has("proj") {
+		t.Fatal("an untrusted workspace contributed project tools")
+	}
+
+	trusted, err := LoadRolePromptForSession("coder", "", nil, []string{workspace}, workspace, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !trusted.Resolved.Has("proj") {
+		t.Fatal("a trusted workspace is missing its project tool")
+	}
+	if !strings.Contains(trusted.Head(), "## Tool: proj") {
+		t.Errorf("project tool is missing from the head:\n%s", trusted.Head())
+	}
+}
+
 // The extra intro text is append-only: empty leaves the intro untouched, and
 // non-empty text is appended under a marker rather than replacing the intro.
 func TestApplyIntroAppendsOnly(t *testing.T) {

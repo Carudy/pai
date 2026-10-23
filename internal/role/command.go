@@ -91,7 +91,7 @@ func init() {
 		{
 			name:    "trusted",
 			usage:   "/trusted",
-			summary: "Show commands and paths trusted this run or from config",
+			summary: "Show commands, tools, and paths trusted this run or from config",
 			run:     runTrusted,
 		},
 		{
@@ -233,8 +233,9 @@ func runTrusted(c *cmdCtx, _ []string) (cmdOutcome, string) {
 		}
 		return strings.Join(items, ", ")
 	}
-	c.output(fmt.Sprintf("trusted for this run only:\n  commands: %s\n  paths:    %s\ntrusted from config (all runs):\n  commands: %s\n  paths:    %s",
-		list(c.rt.TrustedCmds), list(c.rt.TrustedPaths), list(c.cfg.TrustedCmds), list(c.cfg.TrustedPaths)))
+	c.output(fmt.Sprintf("trusted for this run only:\n  commands: %s\n  tools:    %s\n  paths:    %s\ntrusted from config (all runs):\n  commands: %s\n  tools:    %s\n  paths:    %s",
+		list(c.rt.TrustedCmds), list(c.rt.TrustedTools), list(c.rt.TrustedPaths),
+		list(c.cfg.TrustedCmds), list(c.cfg.TrustedTools), list(c.cfg.TrustedPaths)))
 	return cmdHandled, ""
 }
 
@@ -262,13 +263,13 @@ func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
 		return cmdHandled, ""
 	}
 
-	// Reload the role's own extra text, not the previous role's.
-	extra, err := config.LoadRoleExtra(name)
+	// Reload the role's own extra text and tools, not the previous role's.
+	extra, extraTools, err := config.LoadRoleExtraEntry(name)
 	if err != nil {
 		c.notice("%v", err)
 		return cmdHandled, ""
 	}
-	rp, err := chat.LoadRolePromptAt(name, extra, c.rt.WorkingDir, c.rt.SessionBirth)
+	rp, err := chat.LoadRolePromptForSession(name, extra, extraTools, c.cfg.TrustedProjects, c.rt.WorkingDir, c.rt.SessionBirth)
 	if err != nil {
 		c.notice("%v", err)
 		return cmdHandled, ""
@@ -279,6 +280,7 @@ func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
 	}
 
 	c.cfg.RoleExtra = extra
+	c.cfg.RoleExtraTools = extraTools
 	c.cfg.DefaultRole = name
 	c.rp = rp
 	c.output(fmt.Sprintf("role switched to %s (the system prompt changed, so this turn is not prefix-cached)", name))

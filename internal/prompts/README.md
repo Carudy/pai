@@ -14,6 +14,15 @@ See the [module map](../organization.md) for how the loop consumes them.
 - `LoadRole` / `LoadTool` resolve **and parse** a definition into `Role` / `Tool`.
   Parsing lives here so this package owns the TOML format: consumers work with
   typed values and never import a TOML decoder.
+- `ResolveTools` builds an `EffectiveSet` of `ResolvedTool` values from a role's
+  declared tools, `role-extra.toml` tools, the user tool directory, and (only in
+  a trusted workspace) `.pai/tools`. It carries layer, source, definition hash,
+  execution kind, and the approval unit.
+- `UserToolsDir` is `~/.config/pai/tools`; `ResolveToolIn` resolves one name for
+  inspection and `pai tool` dry runs, and `ProjectToolNames` lists the project
+  layer visible for a workspace.
+- `ResolvedTool.ValidatePayload` / `RenderArgs` validate a JSON object and
+  substitute typed values into a CLI argv without a shell.
 - `roles/*.toml` define intros, capabilities, and project-context files;
   `tools/*.toml` describe tool behavior and payload shapes.
 - The built-in `latex` role handles scientific editing, bibliography evidence,
@@ -35,6 +44,58 @@ Suggested consumer validation from the repository root:
 
 ```sh
 go test ./internal/chat ./internal/role
+```
+
+## Custom tools
+
+A user tool is a TOML file in `~/.config/pai/tools/<name>.toml`. The filename is
+its identity; a `name` field may be present but must match. Built-in names are
+reserved, collisions are a load error, and a role still has to list the tool
+before the model can call it.
+
+```toml
+name  = "run_eval"
+brief = "run one evaluation dataset"
+kind  = "cli"
+description = "Run scripts/run_eval.py in the eval checkout."
+
+[params]
+dataset = { type = "string",  required = true }
+folds   = { type = "integer", default = 5, min = 2, max = 10 }
+
+[cli]
+command = "uv"
+args    = ["run", "scripts/run_eval.py", "--dataset", "{dataset}", "--folds", "{folds}"]
+dir     = "."
+```
+
+- `kind = "cli"` runs an argv directly: no shell, no word splitting. A value
+  containing spaces, `;`, or `$(...)` remains one argument.
+- Parameters are declared under `[params]`; the prompt schema is generated from
+  them. Every placeholder in `args` must name a required parameter or one with a
+  default.
+- `kind = "http"` pins a method and a literal host; path/query placeholders are
+  escaped by position, a POST body is an encoded object from `body_params` plus
+  `body_extra`, and `auth` names an environment variable. `prompts` renders the
+  request but performs no network I/O; `tool.ExecuteHTTP` sends it with a
+  header deadline, a total deadline, a byte cap, and no redirects.
+- A workspace under one of `[tool] trusted_projects` adds its
+  `.pai/tools/*.toml` definitions to the effective set of every role used there.
+  The workspace and roots are symlink-resolved before the containment check, and
+  a symlinked tools directory or definition is rejected. A project name that
+  collides with a built-in or user tool is a load error.
+- Trust is by tool name (`[tool] trusted_tools`), not by the executable or
+  endpoint. User tools may persist a grant; a project tool's grant is
+  session-only (`Grant.Persistent` and `Grant.TrustAll` are false for
+  `LayerProject`), so it is never written to `trusted_tools` and the session
+  trust-all switch does not auto-approve it. `pai tool ls`, `pai tool show`, and
+  `pai tool check` inspect and dry run definitions without executing them.
+
+Add a tool to a built-in role in `role-extra.toml`:
+
+```toml
+[devops]
+tools = ["run_eval"]
 ```
 
 ## Extending a role

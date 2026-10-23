@@ -1,0 +1,10 @@
+name  = "repo_status"
+brief = "show this workspace's short git status"
+kind  = "cli"
+description = "Run git status --short --branch in the session workspace. Read-only, no parameters: a minimal smoke test for a project tool."
+
+[cli]
+command = "git"
+args    = ["status", "--short", "--branch"]
+dir     = "."
+timeout_seconds = 30

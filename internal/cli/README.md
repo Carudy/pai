@@ -8,7 +8,7 @@ See the [module map](../organization.md) for dependency rules.
 - `Run` dispatches commands and wires configuration, providers, the role loop,
   terminal adapters, persistence, and cancellation.
 - `CliFlags` / `GetFlags` describe and parse agent-run flags.
-- `command.go` owns subcommand dispatch; `config.go`, `role.go`, and
+- `command.go` owns subcommand dispatch; `config.go`, `role.go`, `tool.go`, and
   `session.go` implement the corresponding command families.
 - The `serve*.go` files compose the session backend, `runner.Manager`, and
   `web.New`: `serve.go` owns flags, the entry point, and shutdown; `servebackend.go`
@@ -25,6 +25,8 @@ See the [module map](../organization.md) for dependency rules.
 Only this package imports the `tui` and `session` adapters to wire the application.
 Keep protocol and tool behavior in their owning packages; generate role/tool
 names from `prompts` rather than maintaining separate lists here.
+`tool.go` is a thin inspector: resolution, validation, and argv rendering stay in
+`prompts`, and nothing is executed by `pai tool check`.
 
 Suggested validation from the repository root:
 

@@ -9,15 +9,25 @@ See the [module map](../organization.md) for its near-leaf position.
 - `types.go` defines TOML shapes, built-in defaults, and context budgets.
   Defaults include streaming enabled, role `devops`, model
   `deepseek:deepseek-v4-flash`, and three recap exchanges.
-- `SetModel` resolves the `provider:model` selection; `LoadRoleExtra`
-  reads the selected role's extra intro text. `PresetModels` are the cleaned
-  `provider:model` suggestions frontends offer (never an allowlist); when
-  `default_model` is unset, the first preset becomes the default.
+- `SetModel` resolves the `provider:model` selection; `LoadRoleExtra` reads the
+  selected role's extra intro text, and `LoadRoleExtraEntry` also returns tools
+  the user added under that role. `PresetModels` are the cleaned `provider:model`
+  suggestions frontends offer (never an allowlist); when `default_model` is
+  unset, the first preset becomes the default.
+- `[tool] trusted_cmds`, `trusted_tools`, `trusted_projects`, and
+  `trusted_paths` are the hand-edited grants. `AddTrustedCmds`,
+  `AddTrustedTools`, and `AddTrustedPath` append without creating duplicates;
+  `ResetTemplate` preserves all four. Project tools never reach
+  `trusted_tools`; `trusted_projects` only names the workspaces whose
+  `.pai/tools/` definitions may load, and the gate itself is applied by
+  `prompts`.
 - `[conn]` holds the defaults for `pai conn` (`url`, `token`, `origin`). The
   token is a credential: `Redacted` masks it and `ResetTemplate` keeps it, while
   the URL and origin reset with the rest. Flag/environment precedence is resolved
   in `cli`, not here.
 - `SetScalar` / `UnsetScalar` perform comment-preserving scalar edits.
+- `LoadRoleExtraEntry` is the role-extra seam for custom tools; the tool
+  definitions themselves are parsed by `prompts`.
 - `Template`, `WriteTemplate`, `MergeTemplate`, and `ResetTemplate` support
   configuration initialization and maintenance.
 - `UserConfig.Redacted` masks credentials for diagnostic output.

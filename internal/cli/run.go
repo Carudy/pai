@@ -86,12 +86,13 @@ func runChat(ctx context.Context, args []string, stdout io.Writer, log *tui.Logg
 
 	// Load the role-extra text for the final role: resolving a session may have
 	// switched it away from the config default (a session keeps its role).
-	extra, err := config.LoadRoleExtra(cfg.DefaultRole)
+	extra, extraTools, err := config.LoadRoleExtraEntry(cfg.DefaultRole)
 	if err != nil {
 		log.Errorf("Error loading role extra: %v\n", err)
 		return 1
 	}
 	cfg.RoleExtra = extra
+	cfg.RoleExtraTools = extraTools
 	var history []provider.Message
 	if store != nil {
 		defer store.Close()

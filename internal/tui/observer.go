@@ -110,13 +110,22 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 	default:
 		o.pair("TagAgent", "[TOOL 💬]", "Help", c.Reason)
 		o.pair("TagExec", fmt.Sprintf("[TOOL %s]", c.Name), "Info", c.Detail)
+		if c.Body != "" {
+			fmt.Fprintf(o.W, "%s\n", RenderStr("Help", "  body: "+c.Body))
+		}
+		if c.Source != "" {
+			fmt.Fprintf(o.W, "%s\n", RenderStr("Help", "  source: "+c.Source))
+		}
 	}
 	if c.Trusted {
-		// A trusted command and a trusted path are different grants; say which, so
-		// the auto-approval is not mistaken for the other.
-		if c.Name == "edit" || c.Name == "write" {
+		// A trusted command, path, and tool are different grants; say which, so the
+		// auto-approval is not mistaken for another.
+		switch {
+		case c.Name == "edit" || c.Name == "write":
 			fmt.Fprintf(o.W, "%s\n", RenderStr("Trusted", "  ⚡ auto-approved (trusted path)"))
-		} else {
+		case c.Source != "":
+			fmt.Fprintf(o.W, "%s\n", RenderStr("Trusted", "  ⚡ auto-approved (trusted tool)"))
+		default:
 			fmt.Fprintf(o.W, "%s\n", RenderStr("Trusted", "  ⚡ executing trusted command"))
 		}
 	}

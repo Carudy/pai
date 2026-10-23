@@ -13,6 +13,7 @@ import (
 	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
+	"github.com/Carudy/pai/internal/prompts"
 	"github.com/Carudy/pai/internal/tool"
 )
 
@@ -163,11 +164,35 @@ var toolHandlers = map[string]toolHandler{
 	"write":       runWrite,
 }
 
-// checkToolCoverage fails fast when a role declares a tool with no handler.
+// checkToolCoverage fails fast when a role declares a tool that cannot run.
+// Built-ins need a Go handler; custom CLI tools need a CLI spec; HTTP tools are
+// declared but not executable until Tool P3. A manually constructed prompt with
+// no Resolved set falls back to the built-in handler check.
 func checkToolCoverage(rp *chat.RolePrompt) error {
-	for _, t := range rp.Tools {
-		if _, ok := toolHandlers[t.Name]; !ok {
-			return fmt.Errorf("role %q declares tool %q, which has no handler", rp.Name, t.Name)
+	if len(rp.Resolved.Tools) == 0 && len(rp.Tools) > 0 {
+		for _, t := range rp.Tools {
+			if _, ok := toolHandlers[t.Name]; !ok {
+				return fmt.Errorf("role %q declares tool %q, which has no handler", rp.Name, t.Name)
+			}
+		}
+		return nil
+	}
+	for _, t := range rp.Resolved.Tools {
+		switch t.Kind {
+		case prompts.ToolBuiltin:
+			if _, ok := toolHandlers[t.Name]; !ok {
+				return fmt.Errorf("role %q declares tool %q, which has no handler", rp.Name, t.Name)
+			}
+		case prompts.ToolCLI:
+			if t.CLI == nil {
+				return fmt.Errorf("role %q declares CLI tool %q without a [cli] table", rp.Name, t.Name)
+			}
+		case prompts.ToolHTTP:
+			if t.HTTP == nil {
+				return fmt.Errorf("role %q declares HTTP tool %q without an [http] table", rp.Name, t.Name)
+			}
+		default:
+			return fmt.Errorf("role %q declares tool %q with unsupported kind %q", rp.Name, t.Name, t.Kind)
 		}
 	}
 	return nil

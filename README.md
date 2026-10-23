@@ -75,6 +75,7 @@ Each command has a short alias, and every command has its own `--help`:
 | `pai session` | `sess` | List, show, rename, delete saved sessions |
 | `pai config` | `cfg` | Inspect and edit `config.toml` |
 | `pai role` | `roles` | List and inspect available roles |
+| `pai tool` | `tools` | List, inspect, and dry-run custom tools |
 | `pai serve` | — | Serve the browser UI and HTTP API (see [Browser / server mode](#-browser--server-mode)) |
 | `pai conn` | — | Attach a terminal to a running `pai serve` session |
 | `pai help [cmd]` | — | Show help |
@@ -235,6 +236,13 @@ tavily_api_key = "your-tavily-key"  # for web search (env TAVILY_API_KEY as fall
 trusted_cmds = [
     "ls", "cat", "grep", "pwd", "which",
 ]
+# Custom tool names that run without confirmation. A tool is trusted by name,
+# never by the executable or endpoint it wraps. See "Custom tools" below.
+# trusted_tools = ["run_eval", "gh_search"]
+# Workspace roots whose .pai/tools/*.toml definitions may be loaded. A cloned
+# repository is untrusted by default. Project tools are appended to every role
+# in that workspace; their grants are session-only and never persisted.
+# trusted_projects = ["~/work/myproject"]
 # Directories where the file tools (edit, write) apply without confirmation —
 # your "trusted working place". A leading ~ is expanded; empty = confirm every
 # change. Prefer an absolute path over "." so a run from an unexpected
@@ -322,6 +330,101 @@ The old `prompts.toml` was renamed to `role-extra.toml` and is always appended.
 
 See [`internal/prompts/README.md`](internal/prompts/README.md) for the full
 walkthrough, custom roles, and on-demand guides.
+
+### Custom tools
+
+A custom tool is a TOML file in `~/.config/pai/tools/<name>.toml` that wraps a
+repeatable CLI action or one HTTP call. It has typed parameters, a fixed argv or
+request, and an approval card that shows exactly what will run.
+
+```toml
+name        = "run_eval"
+brief       = "run one evaluation dataset"
+kind        = "cli"
+description = "Run scripts/run_eval.py in the eval checkout."
+
+[params]
+dataset = { type = "string",  required = true }
+folds   = { type = "integer", default = 5, min = 2, max = 10 }
+
+[cli]
+command = "uv"
+args    = ["run", "scripts/run_eval.py", "--dataset", "{dataset}", "--folds", "{folds}"]
+dir     = "."
+timeout_seconds = 300
+```
+
+- The filename is the tool name. Built-in names are reserved; collisions are a
+  load error.
+- A role must list the tool in its `tools` array. To add it to a built-in role
+  without copying the role, use `tools = ["run_eval"]` under that role's entry
+  in `~/.config/pai/role-extra.toml`.
+- Arguments are substituted verbatim; spaces, quotes, `;`, and `$(...)` stay
+  inside one argument and are never interpreted by a shell.
+- Trust is by tool name: add it to `[tool] trusted_tools`, or choose **trust
+  this session/always** at the confirmation. The executable it wraps is not
+  trusted.
+- `pai tool ls` lists definitions, `pai tool show <name>` shows a definition and
+  its source, and `pai tool check <name> --json '{"param":"value"}'` validates
+  and prints the argv or HTTP request without executing it.
+
+An HTTP tool pins a method and a literal host; parameters fill only the path,
+query, or a JSON body. There is no retry and no redirect.
+
+```toml
+name  = "gh_search"
+brief = "search GitHub repositories"
+kind  = "http"
+
+[params]
+query = { type = "string",  required = true, max_length = 200 }
+limit = { type = "integer", default = 5, min = 1, max = 20 }
+
+[http]
+method = "GET"
+url    = "https://api.github.com/search/repositories?q={query}&per_page={limit}"
+headers = { Accept = "application/vnd.github+json" }
+auth    = "bearer GH_TOKEN"     # read from the environment at run time
+max_bytes = 32768
+# format = "json"               # pretty-printed JSON (default) or "text"
+```
+
+- The scheme and host are definition-owned; a placeholder there is a load error.
+  Path values are path-escaped and query values query-escaped, so a parameter
+  cannot add a path segment or another query pair.
+- POST bodies come from `body_params = ["name", ...]` plus fixed `body_extra`
+  values and are encoded as JSON, never assembled by string interpolation.
+- Headers are fixed by the definition. `auth` names an environment variable
+  (`bearer NAME` or `header NAME ENV`); values never appear in the approval card.
+- Responses are capped at `max_bytes` (default 32 KiB). Non-2xx statuses,
+  timeouts, and transport failures are observations with a status and a capped
+  body; redirects are refused.
+
+### Project tools
+
+A trusted workspace contributes its own `<workspace>/.pai/tools/*.toml`
+definitions. Add the workspace root (or a parent of it) to
+`[tool] trusted_projects`:
+
+```toml
+[tool]
+trusted_projects = ["~/work/myproject"]
+```
+
+- A cloned repository is untrusted by default, so its definitions cannot reach
+  the model until you name its root. Both the workspace and the configured roots
+  are symlink-resolved before the containment check, and neither the tools
+  directory nor a definition file may be a symlink out of the workspace.
+- Project tools are appended to every role used in that workspace; a role does
+  not have to list them. A name that collides with a built-in or a user tool is
+  a load error, not a silent override.
+- Their grant is session-only: **always** is not offered, the session trust-all
+  switch does not auto-approve them, and choosing trust never writes
+  `trusted_tools`. The unit is still the tool name.
+
+Copyable definitions for both layers live in
+[`examples/tools/`](examples/tools): four project tools (local git/go and two
+HTTP calls) and one user-layer tool, each with the payload to try.
 
 ## 📖 Roles
 

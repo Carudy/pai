@@ -99,6 +99,16 @@ elide_tail_lines  = 4
 # edit this file by hand.
 # trusted_cmds = ["ls", "cat", "git status"]
 
+# Custom tool names (TOML files in ~/.config/pai/tools/) that run without
+# confirmation. Also an array, also hand-edited. A tool is trusted by name, not
+# by its underlying executable/endpoint. Project tools are never persistent.
+# trusted_tools = ["run_eval", "gh_search"]
+
+# Workspace roots whose .pai/tools/*.toml definitions are trusted. A cloned
+# repository is untrusted by default; project tools are session-only and never
+# added to trusted_tools. Hand-edited array.
+# trusted_projects = ["~/work/myproject"]
+
 # Directories where the file tools (edit, write) need no confirmation — your
 # "trusted working place". Also an array, so also hand-edited. A leading ~ is
 # expanded; a relative path resolves against the working directory. Empty (the
@@ -206,8 +216,8 @@ func MergeTemplate(path string) (int, error) {
 // ResetTemplate replaces path with the starter template, then restores the
 // values a reset must never destroy: provider credentials, the search key, the
 // pai conn token, and the hand-edited trusted lists (trusted_cmds,
-// trusted_paths) that cannot be set from the CLI. Everything else returns to its
-// default.
+// trusted_tools, trusted_projects, trusted_paths) that cannot be set from the
+// CLI. Everything else returns to its default.
 func ResetTemplate(path string) error {
 	raw := preserved(path)
 
@@ -250,6 +260,16 @@ func ResetTemplate(path string) error {
 	}
 	if len(raw.Tool.TrustedCmds) > 0 {
 		if err := SetScalar(path, "tool", "trusted_cmds", arrayLiteral(raw.Tool.TrustedCmds)); err != nil {
+			return err
+		}
+	}
+	if len(raw.Tool.TrustedTools) > 0 {
+		if err := SetScalar(path, "tool", "trusted_tools", arrayLiteral(raw.Tool.TrustedTools)); err != nil {
+			return err
+		}
+	}
+	if len(raw.Tool.TrustedProjects) > 0 {
+		if err := SetScalar(path, "tool", "trusted_projects", arrayLiteral(raw.Tool.TrustedProjects)); err != nil {
 			return err
 		}
 	}

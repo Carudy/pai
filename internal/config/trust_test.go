@@ -6,6 +6,39 @@ import (
 	"testing"
 )
 
+func TestAddTrustedTools(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	cfgPath := filepath.Join(dir, "pai", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte("[tool]\ntrusted_tools = [\"run_eval\"]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AddTrustedTools("gh_search", "run_eval"); err != nil {
+		t.Fatal(err)
+	}
+	var raw tomlConfig
+	if err := loadTOML(cfgPath, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.Tool.TrustedTools) != 2 || raw.Tool.TrustedTools[0] != "run_eval" || raw.Tool.TrustedTools[1] != "gh_search" {
+		t.Fatalf("trusted_tools = %v, want [run_eval gh_search]", raw.Tool.TrustedTools)
+	}
+
+	if err := AddTrustedTools("gh_search"); err != nil {
+		t.Fatal(err)
+	}
+	if err := loadTOML(cfgPath, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if len(raw.Tool.TrustedTools) != 2 {
+		t.Errorf("trusted_tools changed on a no-op add: %v", raw.Tool.TrustedTools)
+	}
+}
+
 func TestAddTrustedCmds(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)

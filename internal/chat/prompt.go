@@ -38,6 +38,10 @@ type RolePrompt struct {
 	Description string
 	Intro       string
 	Tools       []ToolSpec
+	// Resolved carries provenance (layer, source, definition hash, execution
+	// kind) for the same tools. Tools stays the prompt-facing projection so the
+	// rendered head is unchanged for built-ins.
+	Resolved prompts.EffectiveSet
 
 	// ProjectContext is the contents of the repository instruction file named by
 	// the role's `context_files`. ContextSource is where it was found, or "" when
@@ -171,6 +175,19 @@ func LoadRolePrompt(name, extra string) (*RolePrompt, error) {
 // session composes the same bytes it did before (see hostinfo.Describe). The zero
 // time means the run is ephemeral, and the head then states no start time.
 func LoadRolePromptAt(name, extra, workingDir string, born time.Time) (*RolePrompt, error) {
+	return LoadRolePromptForSession(name, extra, nil, nil, workingDir, born)
+}
+
+// LoadRolePromptWithTools is LoadRolePromptAt plus role-extra tool names. The
+// resolver returns one effective set with provenance; Tools is its prompt-facing
+// projection, so existing prompt bytes do not change for built-ins.
+func LoadRolePromptWithTools(name, extra string, extraTools []string, workingDir string, born time.Time) (*RolePrompt, error) {
+	return LoadRolePromptForSession(name, extra, extraTools, nil, workingDir, born)
+}
+
+// LoadRolePromptForSession also applies the project trust gate: only a workspace
+// under one of trustedProjects contributes .pai/tools definitions.
+func LoadRolePromptForSession(name, extra string, extraTools, trustedProjects []string, workingDir string, born time.Time) (*RolePrompt, error) {
 	if workingDir == "" {
 		workingDir, _ = os.Getwd()
 	} else {
@@ -185,17 +202,23 @@ func LoadRolePromptAt(name, extra, workingDir string, born time.Time) (*RoleProm
 		return nil, err
 	}
 
-	specs := make([]ToolSpec, 0, len(role.Tools))
-	for _, toolName := range role.Tools {
-		tool, err := prompts.LoadTool(toolName)
-		if err != nil {
-			return nil, fmt.Errorf("role %q: %w", name, err)
-		}
-		// The role's declaration is the tool's identity: it is what the handler
-		// registry and the capability check use, so it wins over the file's own
-		// name field.
-		tool.Name = toolName
-		specs = append(specs, *tool)
+	set, err := prompts.ResolveTools(prompts.ResolveOptions{
+		RoleTools:       role.Tools,
+		RoleExtraTools:  extraTools,
+		Workspace:       workingDir,
+		TrustedProjects: trustedProjects,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("role %q: %w", name, err)
+	}
+	specs := make([]ToolSpec, 0, len(set.Tools))
+	for _, t := range set.Tools {
+		specs = append(specs, ToolSpec{
+			Name:        t.Name,
+			Brief:       t.Brief,
+			Description: t.Description,
+			Schema:      t.Schema,
+		})
 	}
 
 	rp := &RolePrompt{
@@ -203,6 +226,7 @@ func LoadRolePromptAt(name, extra, workingDir string, born time.Time) (*RoleProm
 		Description: role.Description,
 		Intro:       applyIntro(role.Intro, extra),
 		Tools:       specs,
+		Resolved:    set,
 		workingDir:  workingDir,
 	}
 	if len(role.ContextFiles) > 0 && workingDir != "" {

@@ -42,6 +42,16 @@ func UserRolesDir() string {
 	return filepath.Join(dir, "roles")
 }
 
+// UserToolsDir returns ~/.config/pai/tools, where users can drop custom tool
+// definitions. It returns "" if the config directory cannot be determined.
+func UserToolsDir() string {
+	dir := paths.ConfigDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "tools")
+}
+
 // RoleNames returns every available role name (built-in and user-defined),
 // deduplicated and sorted.
 func RoleNames() []string {

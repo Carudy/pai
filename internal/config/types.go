@@ -130,6 +130,8 @@ type tomlConfig struct {
 		PaperSearchSource string   `toml:"papersearch_source"`
 		PaperSearchEmail  string   `toml:"papersearch_email"`
 		TrustedCmds       []string `toml:"trusted_cmds"`
+		TrustedTools      []string `toml:"trusted_tools"`
+		TrustedProjects   []string `toml:"trusted_projects"`
 		// TrustedPaths are directories inside which the file tools (edit, write,
 		// and read when ConfirmRead is set) need no confirmation — the "trusted
 		// working place". Empty trusts nothing.
@@ -183,6 +185,14 @@ type UserConfig struct {
 	// PaperSearchEmail optionally identifies Crossref requests for its polite pool.
 	PaperSearchEmail string
 	TrustedCmds      []string
+	// TrustedTools are custom tool names trusted by default. Unlike
+	// trusted_cmds, the unit is the tool name, not an executable. Project tools
+	// are never covered by this list.
+	TrustedTools []string
+	// TrustedProjects are workspace roots whose .pai/tools/*.toml definitions are
+	// loaded. A cloned repository is untrusted by default; project tools are
+	// session-only and never persisted to trusted_tools.
+	TrustedProjects []string
 
 	// TrustedPaths are directories inside which file edits/creates (and reads,
 	// when ConfirmRead is set) are applied without a prompt. Empty means every
@@ -205,6 +215,10 @@ type UserConfig struct {
 	// loaded from ~/.config/pai/role-extra.toml. There is no replace mode: a
 	// user who wants a different intro defines a custom role instead.
 	RoleExtra string
+	// RoleExtraTools are tool names the user added to the selected role in the
+	// same file. They extend the role's declared list; resolution still rejects
+	// unknown names.
+	RoleExtraTools []string
 
 	// Truncation and compaction for output fed back to the model.
 	Context ContextConfig
@@ -339,6 +353,8 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 	}
 	cfg.PaperSearchEmail = strings.TrimSpace(raw.Tool.PaperSearchEmail)
 	cfg.TrustedCmds = raw.Tool.TrustedCmds
+	cfg.TrustedTools = raw.Tool.TrustedTools
+	cfg.TrustedProjects = raw.Tool.TrustedProjects
 	cfg.TrustedPaths = raw.Tool.TrustedPaths
 	cfg.ConfirmRead = raw.Tool.ConfirmRead
 	cfg.RemoteShell = raw.Tool.RemoteShell

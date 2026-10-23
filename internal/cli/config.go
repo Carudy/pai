@@ -448,7 +448,7 @@ func formatConfigValue(kind, raw string) (string, error) {
 }
 
 func unknownConfigKey(name string, log *tui.Logger) int {
-	if strings.Contains(name, "trusted_cmds") || strings.Contains(name, "trusted_paths") {
+	if strings.Contains(name, "trusted_cmds") || strings.Contains(name, "trusted_tools") || strings.Contains(name, "trusted_projects") || strings.Contains(name, "trusted_paths") {
 		log.Errorf("Error: %s is an array and cannot be set from the CLI; edit %s by hand.\n", name, config.Path())
 		return 1
 	}

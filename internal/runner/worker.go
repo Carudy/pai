@@ -96,6 +96,7 @@ func (w *worker) run() {
 		// Seed the conversation's grants, so a command the user already trusted for
 		// this session does not ask again just because the runtime was retired.
 		rt.TrustedCmds = w.m.commandTrustLocked(w.name)
+		rt.TrustedTools = w.m.toolTrustLocked(w.name)
 		w.model = copyCfg.DefaultModel
 		w.workingDir = cwd
 		w.contextTokens = copyCfg.Context.SummarizeAfterTokens
@@ -125,6 +126,7 @@ func (w *worker) snapshotLocked() Snapshot {
 	s.Reasoning = w.reasoning
 	s.TrustAll = w.m.trustAll[w.name]
 	s.TrustedCmds = w.m.commandTrustLocked(w.name)
+	s.TrustedTools = w.m.toolTrustLocked(w.name)
 	s.Usage, s.TotalUsage, s.UsageCalls = w.usage, w.totalUsage, w.usageCalls
 	s.ContextTokens = w.contextTokens
 	if w.activeTool != nil {
@@ -177,7 +179,7 @@ func (w *worker) Ask(title string) (string, error) {
 	w.instruction = false
 	w.m.mu.Unlock()
 	if !instruction {
-		a, err := w.prompt("ask", title, nil, "")
+		a, err := w.prompt("ask", title, nil, "", true)
 		return a.text, err
 	}
 	var text string
@@ -198,7 +200,7 @@ func (w *worker) Ask(title string) (string, error) {
 	w.emitLocked("busy", nil)
 	return text, nil
 }
-func (w *worker) prompt(kind, title string, untrusted []string, target string) (answer, error) {
+func (w *worker) prompt(kind, title string, untrusted []string, target string, persist bool) (answer, error) {
 	w.m.mu.Lock()
 	tool := w.latestTool
 	w.latestTool = nil // A tool can belong to only its immediately following prompt.
@@ -211,7 +213,7 @@ func (w *worker) prompt(kind, title string, untrusted []string, target string) (
 		w.phase = "waiting_model"
 	}
 	w.m.sequence++
-	w.pending = &Prompt{ID: fmt.Sprint(w.m.sequence), Kind: kind, Title: title, TrustTarget: target}
+	w.pending = &Prompt{ID: fmt.Sprint(w.m.sequence), Kind: kind, Title: title, TrustTarget: target, Persist: persist}
 	if kind == "confirm" {
 		w.pending.Tool = cloneToolCall(tool)
 	}
@@ -243,7 +245,7 @@ func (w *worker) Confirm(title string) (bool, error) {
 	if w.approved() {
 		return true, nil
 	}
-	a, err := w.prompt("confirm", title, nil, "")
+	a, err := w.prompt("confirm", title, nil, "", true)
 	return a.choice != core.TrustDeny, err
 }
 
@@ -262,7 +264,7 @@ func (w *worker) ConfirmCommand(title string, untrusted []string) (core.TrustCho
 	if w.approved() {
 		return core.TrustOnce, nil
 	}
-	a, err := w.prompt("confirm", title, untrusted, "command")
+	a, err := w.prompt("confirm", title, untrusted, "command", true)
 	if err != nil {
 		return core.TrustDeny, err
 	}
@@ -280,9 +282,27 @@ func (w *worker) ConfirmPath(title, dir string) (core.TrustChoice, error) {
 	if w.approved() {
 		return core.TrustOnce, nil
 	}
-	a, err := w.prompt("confirm", title, []string{dir}, "path")
+	a, err := w.prompt("confirm", title, []string{dir}, "path", true)
 	if err != nil {
 		return core.TrustDeny, err
+	}
+	return a.choice, nil
+}
+
+// ConfirmTool implements core.ToolConfirmer: a custom-tool confirmation that
+// also offers to trust the tool name. The manager records the grant so a
+// runtime recreated for the next instruction keeps it. trustAll is false for
+// project tools, which the session's trust-all switch must not auto-approve.
+func (w *worker) ConfirmTool(title string, untrusted []string, persistent, trustAll bool) (core.TrustChoice, error) {
+	if trustAll && w.approved() {
+		return core.TrustOnce, nil
+	}
+	a, err := w.prompt("confirm", title, untrusted, "tool", persistent)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	if a.choice == core.TrustSession || a.choice == core.TrustPersist {
+		w.m.grantToolTrust(w.name, untrusted)
 	}
 	return a.choice, nil
 }

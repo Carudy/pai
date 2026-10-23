@@ -59,6 +59,10 @@ type Runtime struct {
 	// ephemeral and re-confirmed after a restart.
 	TrustedCmds []string
 
+	// TrustedTools are custom tool names trusted for this run only (the tool's
+	// "trust this session" choice). They extend cfg.TrustedTools.
+	TrustedTools []string
+
 	// TrustedPaths are directories trusted for this run only (the file tools' "trust
 	// this session" choice). They extend cfg.TrustedPaths.
 	TrustedPaths []string
@@ -203,7 +207,7 @@ func Run(ctx context.Context, cfg *config.UserConfig, rt *Runtime, history []pro
 		}
 		rt.WorkingDir = wd
 	}
-	rp, err := chat.LoadRolePromptAt(cfg.DefaultRole, cfg.RoleExtra, rt.WorkingDir, rt.SessionBirth)
+	rp, err := chat.LoadRolePromptForSession(cfg.DefaultRole, cfg.RoleExtra, cfg.RoleExtraTools, cfg.TrustedProjects, rt.WorkingDir, rt.SessionBirth)
 	if err != nil {
 		return fmt.Errorf("load role %q: %w", cfg.DefaultRole, err)
 	}
@@ -544,6 +548,36 @@ func invokeTool(
 			toolName, strings.Join(rp.ToolNames(), ", ")), nil
 	}
 
+	if resolved, ok := rp.Resolved.Get(toolName); ok {
+		switch resolved.Kind {
+		case prompts.ToolBuiltin:
+			handler, ok := toolHandlers[toolName]
+			if !ok {
+				return "", fmt.Errorf("tool %q has no handler", toolName)
+			}
+			observation, err := handler(ctx, cfg, rt, reason, payload)
+			if err != nil {
+				return fmt.Sprintf("[tool error]\nTOOL: %s\nERROR: %v", toolName, err), nil
+			}
+			return observation, nil
+		case prompts.ToolCLI:
+			observation, err := runCustomCLI(ctx, cfg, rt, resolved, reason, payload)
+			if err != nil {
+				return fmt.Sprintf("[tool error]\nTOOL: %s\nERROR: %v", toolName, err), nil
+			}
+			return observation, nil
+		case prompts.ToolHTTP:
+			observation, err := runCustomHTTP(ctx, cfg, rt, resolved, reason, payload)
+			if err != nil {
+				return fmt.Sprintf("[tool error]\nTOOL: %s\nERROR: %v", toolName, err), nil
+			}
+			return observation, nil
+		default:
+			return fmt.Sprintf("[tool error]\nTOOL: %s\nERROR: unsupported tool kind %q", toolName, resolved.Kind), nil
+		}
+	}
+
+	// Legacy/manual RolePrompt with no resolved set: built-ins only.
 	handler, ok := toolHandlers[toolName]
 	if !ok {
 		return "", fmt.Errorf("tool %q has no handler", toolName)

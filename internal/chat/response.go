@@ -3,14 +3,32 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/provider"
 )
 
 const maxFormatRetries = 3
+
+// ErrTruncatedResponse means the model's output did not contain one complete
+// brace-balanced object. In practice this is almost always a response cut off by
+// the output-token limit; the caller uses it to ask for a shorter retry instead
+// of a generic format correction.
+var ErrTruncatedResponse = errors.New("no complete JSON object in AI response (unbalanced braces, likely truncated)")
+
+// logTail returns the last max runes of s, for a bounded debug line. It never
+// splits a UTF-8 sequence.
+func logTail(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return "…" + string(r[len(r)-max:])
+}
 
 // Response is one agent response: a single JSON object with an action, a payload,
 // and a short reason.
@@ -75,7 +93,7 @@ func (r *Response) Validate() error {
 func ParseResponse(content string) (*Response, error) {
 	candidates := jsonCandidates(content)
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no complete JSON object in AI response (unbalanced braces, likely truncated)")
+		return nil, fmt.Errorf("%w (%d bytes)", ErrTruncatedResponse, len(content))
 	}
 
 	var (
@@ -126,24 +144,54 @@ func ParseResponseWithRetry(
 			return resp, history, nil
 		}
 
-		p.Logger.Debugf("[Format Error attempt %d/%d]: %v\n", attempt+1, maxFormatRetries, err)
+		truncated := errors.Is(err, ErrTruncatedResponse)
+		if p.Logger != nil {
+			p.Logger.Debugf("[Format Error attempt %d/%d] bytes=%d truncated=%v: %v\n",
+				attempt+1, maxFormatRetries, len(content), truncated, err)
+			p.Logger.Debugf("[Format Error tail]: %s\n", logTail(content, 400))
+		}
 
 		if attempt < maxFormatRetries-1 {
-			p.Observer.Notice(fmt.Sprintf("Response format error, retrying (%d/%d): %v", attempt+1, maxFormatRetries, err))
+			if truncated {
+				// A cut-off response is large and cannot be completed by editing it. Sending
+				// it back makes the retry prompt bigger and slower, and invites the model to
+				// continue the truncated text. Replace it with a short marker instead of
+				// dropping it, so the conversation keeps alternating user/assistant turns.
+				// The stored transcript never had this turn: recording happens only after
+				// parsing succeeds.
+				if n := len(history); n > 0 && history[n-1].Role == provider.RoleAssistant {
+					if p.Logger != nil {
+						p.Logger.Debugf("[Format Retry] omitting truncated assistant turn (%d bytes)\n", len(history[n-1].Content))
+					}
+					history[n-1].Content = "[previous response was truncated and omitted]"
+				}
+				p.Observer.Notice(fmt.Sprintf(
+					"Model response was cut off (likely the output token limit); retrying with a shorter request (%d/%d)",
+					attempt+1, maxFormatRetries))
+			} else {
+				p.Observer.Notice(fmt.Sprintf("Response format error, retrying (%d/%d): %v", attempt+1, maxFormatRetries, err))
+			}
 
 			correctionMsg := fmt.Sprintf(`[system] Your previous response was not valid JSON: %v
 Reply with exactly ONE complete JSON object — every { needs a matching }, no prose and no code fences.
 A tool action looks like:
 %s
-The other actions take a string payload: {"action":"done|ask|terminate","payload":"<string>","reason":"<short>"}`,
+The other actions take a string payload: {"action":"done|ask|terminate","payload":"<string>","reason":"<short>"}
+If the previous response was cut off, shorten the payload or split the work into several smaller tool calls; do not repeat the truncated text.`,
 				err, ToolExample())
 			history = append(history, provider.Message{Role: provider.RoleUser, Content: correctionMsg})
 
+			retryStart := time.Now()
 			content, history, _, _, err = ChatStr(ctx, cfg, rp, p, history)
+			if p.Logger != nil {
+				p.Logger.Debugf("[Format Retry %d] request took %s\n", attempt+1, time.Since(retryStart))
+			}
 			if err != nil {
 				return nil, history, err
 			}
-			p.Logger.Debugf("[AI Retry Output]:\n%s\n", content)
+			if p.Logger != nil {
+				p.Logger.Debugf("[AI Retry Output]:\n%s\n", content)
+			}
 		}
 	}
 	return nil, history, fmt.Errorf("AI failed to produce valid JSON after %d attempts: %w", maxFormatRetries, err)

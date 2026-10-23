@@ -19,12 +19,19 @@ func (m *appModel) View() string {
 		out := label + "\n" + RenderStr("Confirm", "  ⚠︎  "+m.pending.title)
 		if len(m.pending.untrusted) > 0 {
 			what := "not trusted: "
-			if m.pending.path {
+			switch {
+			case m.pending.path:
 				what = "outside trusted paths: "
+			case m.pending.tool:
+				what = "tool not trusted: "
 			}
 			out += "\n" + RenderStr("Warn", "  "+what+strings.Join(m.pending.untrusted, ", "))
 		}
-		return fitLines(out+"\n"+RenderStr("Hint", "  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort"), m.width)
+		hint := "  [y] run once · [s] trust session · [a] always · [n] skip · [ctrl+c] abort"
+		if m.pending.noPersist {
+			hint = "  [y] run once · [s] trust session · [n] skip · [ctrl+c] abort"
+		}
+		return fitLines(out+"\n"+RenderStr("Hint", hint), m.width)
 	}
 
 	if m.pending != nil && m.pending.kind == promptConfirm {

@@ -55,6 +55,9 @@ func chat(
 		var resp *provider.ChatCompletion
 		resp, err = p.Provider.Completion(ctx, params)
 		if err == nil && resp != nil {
+			if p.Logger != nil && len(resp.Choices) > 0 && resp.Choices[0].FinishReason != "" {
+				p.Logger.Debugf("[Provider] finish_reason=%q\n", resp.Choices[0].FinishReason)
+			}
 			content, usage = extractCompletion(resp, showReasoning, p.Observer)
 		}
 	}
@@ -76,7 +79,16 @@ func extractCompletion(resp *provider.ChatCompletion, showReasoning bool, obs co
 	if showReasoning && choice.Reasoning != nil && choice.Reasoning.Content != "" {
 		obs.Reasoning(choice.Reasoning.Content)
 	}
+	if hitTokenLimit(choice.FinishReason) {
+		obs.Notice("model output reached its token limit; the JSON response may be truncated")
+	}
 	return choice.Message.Content, resp.Usage
+}
+
+// hitTokenLimit reports the provider values that mean the model ran out of
+// output budget. OpenAI-compatible servers use "length"; some use "max_tokens".
+func hitTokenLimit(reason string) bool {
+	return reason == "length" || reason == "max_tokens"
 }
 
 // ChatStr sends the conversation and returns the assistant's raw JSON string, plus the
@@ -123,12 +135,16 @@ func streamOnce(
 	chunkChan, errChan := p.Provider.CompletionStream(ctx, params)
 
 	var fullContent strings.Builder
+	var finishReason string
 	for chunk := range chunkChan {
 		// Usage typically arrives in the final chunk.
 		if chunk.Usage != nil {
 			usage = chunk.Usage
 		}
 		for _, choice := range chunk.Choices {
+			if choice.FinishReason != "" {
+				finishReason = choice.FinishReason
+			}
 			if showReasoning && choice.Delta.Reasoning != nil && choice.Delta.Reasoning.Content != "" {
 				p.Observer.Reasoning(choice.Delta.Reasoning.Content)
 				shown = true
@@ -141,6 +157,12 @@ func streamOnce(
 
 	if err := <-errChan; err != nil {
 		return "", nil, shown, err
+	}
+	if p.Logger != nil && finishReason != "" {
+		p.Logger.Debugf("[Provider] finish_reason=%q\n", finishReason)
+	}
+	if hitTokenLimit(finishReason) {
+		p.Observer.Notice("model output reached its token limit; the JSON response may be truncated")
 	}
 	return fullContent.String(), usage, shown, nil
 }
@@ -157,8 +179,11 @@ func streamOnce(
 // braces — greedy swallows everything to the last }, non-greedy truncates the
 // nested payload object that our protocol relies on.
 //
-// Scanning stops at the first unbalanced '{' (truncated output): returning a
-// partial object would let a half-formed action be applied.
+// An unmatched '{' is usually a truncated response, but it can also be a stray
+// brace in prose before the real object. The scan continues in that case (never
+// returning the partial span), unless the unmatched text already looks like the
+// response itself; otherwise a truncated response could be "recovered" from one
+// of its nested objects.
 func jsonCandidates(content string) []string {
 	var out []string
 	for i := 0; i < len(content); {
@@ -168,12 +193,36 @@ func jsonCandidates(content string) []string {
 		}
 		end, ok := matchingBrace(content, i)
 		if !ok {
-			break
+			if looksLikeResponseStart(content, i) {
+				break
+			}
+			i++
+			continue
 		}
 		out = append(out, content[i:end+1])
 		i = end + 1
 	}
 	return out
+}
+
+// looksLikeResponseStart reports whether the object at start looks like the
+// agent's response rather than an incidental brace in prose. The response's first
+// key is one of the protocol fields; prose after a stray '{' is not. Keeping the
+// scan stopped in this case avoids mistaking a truncated response's nested
+// object for the answer, while a prose brace followed by a real object still
+// lets the scan continue.
+func looksLikeResponseStart(content string, start int) bool {
+	rest := strings.TrimLeft(content[start:], " \t\r\n")
+	if !strings.HasPrefix(rest, "{") {
+		return false
+	}
+	after := strings.TrimLeft(rest[1:], " \t\r\n")
+	for _, key := range []string{`"action"`, `"toolname"`, `"payload"`, `"reason"`} {
+		if strings.HasPrefix(after, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchingBrace returns the index of the '}' closing the '{' at start, counting

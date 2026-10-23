@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -197,5 +198,33 @@ func TestJSONCandidates(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("candidate %d = %q, want %q", i, got[i], want[i])
 		}
+	}
+
+	// A prose brace with no closing brace must not hide the real object.
+	got = jsonCandidates(`a { b {"n":1}`)
+	if len(got) != 1 || got[0] != `{"n":1}` {
+		t.Fatalf("prose brace: got %q", got)
+	}
+}
+
+// A stray unmatched brace in prose must not hide the real object behind it.
+func TestParseContinuesAfterUnmatchedProseBrace(t *testing.T) {
+	raw := "I'll write it as { and then:\n{\"action\":\"done\",\"payload\":\"ok\",\"reason\":\"r\"}"
+	resp, err := ParseResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.Action != ActionDone || resp.GetPayload() != "ok" {
+		t.Fatalf("got action=%q payload=%q", resp.Action, resp.GetPayload())
+	}
+}
+
+// A genuinely truncated response is still reported through the sentinel, so the
+// retry loop can ask for a shorter response instead of a generic correction.
+func TestTruncatedResponseSentinel(t *testing.T) {
+	raw := `{"action":"tool","toolname":"remote","payload":{"host":"h","cmd":"ls"},"reason":"r"`
+	_, err := ParseResponse(raw)
+	if !errors.Is(err, ErrTruncatedResponse) {
+		t.Fatalf("err = %v, want ErrTruncatedResponse", err)
 	}
 }

@@ -29,6 +29,21 @@ See the [module map](../organization.md) for the loop's dependencies and ports.
   contracts, safety limits, and upstream comparisons. `command.go` declares
   in-session commands and generated help.
 
+## Custom tools
+
+User CLI tools and HTTP tools resolve through `prompts.ResolveTools` and are
+dispatched by the same `invokeTool` path as built-ins. `runCustomCLI` validates
+the object payload, renders the argv without a shell, confirms the tool name when
+it is untrusted, and feeds the result back as one observation.
+`runCustomHTTP` renders the URL and body, resolves auth from the environment
+(header names only in the approval card), and reports status plus a capped body;
+non-2xx and timeouts are observations. Trust is by tool name, not by the
+executable or endpoint it wraps. A project tool (`LayerProject`) always prompts
+unless it was trusted earlier in the same session: its `Grant.Persistent` and
+`Grant.TrustAll` are false, so an **always** answer stays in memory and the
+session trust-all switch does not skip it. A persistent user-tool grant is
+written by `config.AddTrustedTools`, which the role layer owns.
+
 ## Boundaries
 
 Roles differ by TOML, not separate loops. Tool handlers validate model payloads

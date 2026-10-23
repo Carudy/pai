@@ -1,0 +1,16 @@
+# User-layer demo. Copy to ~/.config/pai/tools/lines.toml, then add
+# tools = ["lines"] under a role in ~/.config/pai/role-extra.toml.
+# Unlike .pai/tools/*.toml, a user tool is not appended automatically.
+name  = "lines"
+brief = "count lines and words in a project file"
+kind  = "cli"
+description = "Demo user tool: count lines and words in one of a few fixed project files."
+
+[params]
+file = { type = "enum", required = true, values = ["README.md", "go.mod", "Makefile"] }
+
+[cli]
+command = "wc"
+args    = ["-l", "-w", "{file}"]
+dir     = "."
+timeout_seconds = 30

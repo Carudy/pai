@@ -1,9 +1,7 @@
 package tool
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -420,47 +418,5 @@ func ExecuteCommandAt(ctx context.Context, command, workingDir string, streamW i
 	// pipes once cancellation has fired rather than blocking forever.
 	cmd.WaitDelay = waitDelay
 
-	var output []byte
-	var err error
-
-	if streamW != nil {
-		// Streaming mode: capture into buffer while also writing to streamW.
-		var buf bytes.Buffer
-		mw := io.MultiWriter(&buf, streamW)
-		cmd.Stdout = mw
-		cmd.Stderr = mw
-		err = cmd.Run()
-		output = buf.Bytes()
-	} else {
-		// Blocking mode (original behaviour).
-		output, err = cmd.CombinedOutput()
-	}
-
-	result := ExecResult{Output: string(output)}
-
-	if ctx.Err() == context.DeadlineExceeded {
-		result.TimedOut = true
-		result.ExitCode = -1
-		return result, nil
-	}
-
-	// Check for cancellation (e.g. SIGINT).
-	if ctx.Err() != nil {
-		result.ExitCode = -1
-		if result.Output == "" {
-			result.Output = CancelledOutput
-		}
-		return result, ctx.Err()
-	}
-
-	if err != nil {
-		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-			result.ExitCode = exitErr.ExitCode()
-			return result, nil
-		}
-		result.Output = fmt.Sprintf("%s\n[Error: %v]", result.Output, err)
-		return result, fmt.Errorf("execution error: %w", err)
-	}
-
-	return result, nil
+	return runPrepared(ctx, cmd, streamW)
 }

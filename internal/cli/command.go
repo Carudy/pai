@@ -68,6 +68,14 @@ func commands() []command {
 			help:    roleHelp,
 			run:     runRole,
 		},
+		{
+			name:    "tool",
+			aliases: []string{"tools"},
+			summary: "List, inspect, and dry-run custom tools",
+			usage:   "pai tool <list|show|check> [args]",
+			help:    toolHelp,
+			run:     runTool,
+		},
 	}
 }
 

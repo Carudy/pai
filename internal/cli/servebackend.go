@@ -98,11 +98,11 @@ func (b *serveBackend) Context(name string, offset, limit int) (runner.ContextVi
 	if role == "" {
 		role = cfg.DefaultRole
 	}
-	extra, err := config.LoadRoleExtra(role)
+	extra, extraTools, err := config.LoadRoleExtraEntry(role)
 	if err != nil {
 		return runner.ContextView{}, fmt.Errorf("load role extra: %w", err)
 	}
-	rp, err := chat.LoadRolePromptAt(role, extra, s.Meta.Cwd, s.Meta.CreatedAt)
+	rp, err := chat.LoadRolePromptForSession(role, extra, extraTools, cfg.TrustedProjects, s.Meta.Cwd, s.Meta.CreatedAt)
 	if err != nil {
 		return runner.ContextView{}, fmt.Errorf("load role: %w", err)
 	}
@@ -544,12 +544,13 @@ func (b *serveBackend) PrepareWorkspace(name, cwd string) (*config.UserConfig, p
 	if cfg.Provider == "" || cfg.Model == "" {
 		return fail(errors.New("model must be provider:model"))
 	}
-	extra, err := config.LoadRoleExtra(cfg.DefaultRole)
+	extra, extraTools, err := config.LoadRoleExtraEntry(cfg.DefaultRole)
 	if err != nil {
 		return fail(fmt.Errorf("load role extra: %w", err))
 	}
 	cfg.RoleExtra = extra
-	if _, err := chat.LoadRolePromptAt(cfg.DefaultRole, extra, cwd, time.Time{}); err != nil {
+	cfg.RoleExtraTools = extraTools
+	if _, err := chat.LoadRolePromptForSession(cfg.DefaultRole, extra, extraTools, cfg.TrustedProjects, cwd, time.Time{}); err != nil {
 		return fail(fmt.Errorf("load role: %w", err))
 	}
 	pc := cfg.ProvidersConfigs[cfg.Provider]

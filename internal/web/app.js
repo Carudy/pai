@@ -1033,6 +1033,11 @@ function snapshot(s) {
         original.append(text('summary', 'Original command'), command); $('pending').append(original);
       }
     }
+    if (tool.Source) $('pending').append(text('p', 'source: ' + tool.Source, 'reason'));
+    if (tool.Body) {
+      $('pending').append(text('p', 'request body:', 'reason'));
+      $('pending').append(text('pre', tool.Body, 'command-detail'));
+    }
     if (tool.Reason) $('pending').append(text('p', tool.Reason, 'reason'));
     if (tool.Diff) $('pending').append(diff(tool.Diff));
   }
@@ -1046,13 +1051,15 @@ function snapshot(s) {
     if (untrusted.length) {
       // A chained command needs approval for specific programs (or a file change
       // for its directory): offer to trust for this run or for good.
-      const label = p.trust_target === 'path' ? 'outside trusted paths: ' : 'not trusted: ';
+      const label = p.trust_target === 'path' ? 'outside trusted paths: ' :
+        p.trust_target === 'tool' ? 'tool not trusted: ' : 'not trusted: ';
       $('pending').append(text('p', '⚠ ' + label + untrusted.join(', '), 'untrusted-names'));
       const once = text('button', 'Once'), session = text('button', 'Trust session'), always = text('button', 'Always'), no = text('button', 'Decline');
       once.className = 'primary'; session.className = 'secondary'; always.className = 'secondary'; no.className = 'caution';
       once.onclick = () => reply('', 'once'); session.onclick = () => reply('', 'session');
       always.onclick = () => reply('', 'always'); no.onclick = () => reply('', 'deny');
-      $('pending').append(actionRow([once, session, always, no]));
+      // Project tools are session-only; the server omits persist for them.
+      $('pending').append(actionRow(p.persist === false ? [once, session, no] : [once, session, always, no]));
     } else {
       const yes = text('button', 'Approve'), no = text('button', 'Decline');
       yes.className = 'primary'; no.className = 'caution';

@@ -74,30 +74,40 @@ func loadTOML(path string, dst any) error {
 
 // roleExtra is the parsed shape of a role's entry in role-extra.toml.
 type roleExtra struct {
-	Text string `toml:"text"`
+	Text  string   `toml:"text"`
+	Tools []string `toml:"tools"`
 }
 
 // LoadRoleExtra reads ~/.config/pai/role-extra.toml and returns the extra intro
 // text for roleName (empty when unset). The text is appended to the role's intro.
 func LoadRoleExtra(roleName string) (string, error) {
+	text, _, err := LoadRoleExtraEntry(roleName)
+	return text, err
+}
+
+// LoadRoleExtraEntry returns both the extra intro text and any tools the user
+// added to the role. Tools are names resolved by prompts; a name still has to
+// exist and is still bounded by the role's capability check.
+func LoadRoleExtraEntry(roleName string) (string, []string, error) {
 	cfgDir := paths.ConfigDir()
 	if cfgDir == "" {
-		return "", nil
+		return "", nil, nil
 	}
 	path := filepath.Join(cfgDir, "role-extra.toml")
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return "", nil
+		return "", nil, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("failed to read %s: %w", path, err)
+		return "", nil, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 	var entries map[string]roleExtra
 	if err := toml.Unmarshal(data, &entries); err != nil {
-		return "", fmt.Errorf("failed to parse %s: %w", path, err)
+		return "", nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
-	return entries[roleName].Text, nil
+	entry := entries[roleName]
+	return entry.Text, entry.Tools, nil
 }
 
 func mergeEnvAPIKeys(cfg *UserConfig) {

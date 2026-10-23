@@ -1,0 +1,13 @@
+name  = "go_test"
+brief = "run go test for one package path"
+kind  = "cli"
+description = "Run go test for a package inside the workspace. The package argument must be a relative ./ path, so it cannot start with a flag; the command runs without a shell."
+
+[params]
+package = { type = "string", default = "./internal/prompts", max_length = 120, pattern = "^\\./[A-Za-z0-9_./-]+$", description = "package path, e.g. ./internal/cli" }
+
+[cli]
+command = "go"
+args    = ["test", "{package}"]
+dir     = "."
+timeout_seconds = 300

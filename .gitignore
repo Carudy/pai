@@ -38,3 +38,6 @@ todo.md
 
 # Grant/proposal drafts kept locally.
 proposal/
+
+# Local design plans (loop/tool/capability contracts).
+/plan/

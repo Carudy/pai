@@ -38,6 +38,37 @@ func AddTrustedCmds(names ...string) error {
 	return SetScalar(path, "tool", "trusted_cmds", arrayLiteral(merged))
 }
 
+// AddTrustedTools appends custom tool names to [tool] trusted_tools, creating the
+// array if it is absent, and writes nothing when every name is already present.
+// It backs a custom tool's "always" choice; the unit is the tool name, not the
+// underlying executable or endpoint.
+func AddTrustedTools(names ...string) error {
+	path := Path()
+	if path == "" {
+		return fmt.Errorf("cannot determine the config path")
+	}
+	var raw tomlConfig
+	if err := loadTOML(path, &raw); err != nil {
+		return err
+	}
+	seen := make(map[string]bool, len(raw.Tool.TrustedTools))
+	merged := append([]string{}, raw.Tool.TrustedTools...)
+	for _, n := range raw.Tool.TrustedTools {
+		seen[n] = true
+	}
+	for _, n := range names {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		merged = append(merged, n)
+	}
+	if len(merged) == len(raw.Tool.TrustedTools) {
+		return nil
+	}
+	return SetScalar(path, "tool", "trusted_tools", arrayLiteral(merged))
+}
+
 // AddTrustedPath appends a directory to [tool] trusted_paths, creating the array
 // if it is absent, and writes nothing when it is already present. It backs the
 // file tools' "trust this directory" choice.

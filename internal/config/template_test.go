@@ -222,6 +222,8 @@ base_url = "https://example.test/v1"
 [tool]
 tavily_api_key = "tv-secret"
 trusted_cmds = ["ls", "git status"]
+trusted_tools = ["run_eval"]
+trusted_projects = ["/work/project"]
 `
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
@@ -247,6 +249,12 @@ trusted_cmds = ["ls", "git status"]
 	}
 	if len(raw.Tool.TrustedCmds) != 2 || raw.Tool.TrustedCmds[0] != "ls" {
 		t.Errorf("trusted_cmds = %v, want it preserved", raw.Tool.TrustedCmds)
+	}
+	if len(raw.Tool.TrustedTools) != 1 || raw.Tool.TrustedTools[0] != "run_eval" {
+		t.Errorf("trusted_tools = %v, want it preserved", raw.Tool.TrustedTools)
+	}
+	if len(raw.Tool.TrustedProjects) != 1 || raw.Tool.TrustedProjects[0] != "/work/project" {
+		t.Errorf("trusted_projects = %v, want it preserved", raw.Tool.TrustedProjects)
 	}
 	// Everything else returns to the template's default.
 	if raw.App.DefaultRole != "devops" {

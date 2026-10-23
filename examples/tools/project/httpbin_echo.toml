@@ -1,0 +1,17 @@
+name  = "httpbin_echo"
+brief = "POST a JSON body and read it back"
+kind  = "http"
+description = "POST to httpbin.org/anything to inspect the request body. Exercises body_params and integers; it sends no secrets. Needs network access."
+
+[params]
+note  = { type = "string", required = true, max_length = 100 }
+count = { type = "integer", default = 1, min = 1, max = 5 }
+
+[http]
+method = "POST"
+url    = "https://httpbin.org/anything"
+headers = { Accept = "application/json" }
+body_params = ["note", "count"]
+body_extra = { source = "pai" }
+max_bytes = 8192
+format = "json"

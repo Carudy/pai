@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/provider"
 )
@@ -112,5 +113,113 @@ func TestStreamDoesNotRetryOtherErrors(t *testing.T) {
 	}
 	if fp.calls != 1 {
 		t.Errorf("calls = %d, want 1", fp.calls)
+	}
+}
+
+// finishProvider returns one chunk with a chosen finish_reason.
+type finishProvider struct{ reason string }
+
+func (p *finishProvider) Completion(context.Context, provider.CompletionParams) (*provider.ChatCompletion, error) {
+	return &provider.ChatCompletion{Choices: []provider.Choice{{
+		Message:      provider.Message{Content: `{}`},
+		FinishReason: p.reason,
+	}}}, nil
+}
+
+func (p *finishProvider) CompletionStream(context.Context, provider.CompletionParams) (<-chan provider.ChatCompletionChunk, <-chan error) {
+	chunks := make(chan provider.ChatCompletionChunk, 1)
+	errs := make(chan error, 1)
+	chunks <- provider.ChatCompletionChunk{Choices: []provider.ChunkChoice{{
+		Delta:        provider.ChunkDelta{Content: `{}`},
+		FinishReason: p.reason,
+	}}}
+	close(chunks)
+	errs <- nil
+	return chunks, errs
+}
+
+// retryCompletionProvider records each request and returns a scripted reply.
+type retryCompletionProvider struct {
+	replies []string
+	seen    [][]provider.Message
+}
+
+func (p *retryCompletionProvider) Completion(_ context.Context, params provider.CompletionParams) (*provider.ChatCompletion, error) {
+	p.seen = append(p.seen, append([]provider.Message(nil), params.Messages...))
+	reply := p.replies[min(len(p.seen)-1, len(p.replies)-1)]
+	return &provider.ChatCompletion{Choices: []provider.Choice{{
+		Message:      provider.Message{Content: reply},
+		FinishReason: "stop",
+	}}}, nil
+}
+
+func (p *retryCompletionProvider) CompletionStream(context.Context, provider.CompletionParams) (<-chan provider.ChatCompletionChunk, <-chan error) {
+	panic("streaming is disabled in this test")
+}
+
+// A truncated assistant turn must not be replayed in full: it is large, it is
+// unusable, and replaying it makes the retry slower and invites the model to
+// continue the cut-off text. The placeholder keeps user/assistant alternation.
+func TestTruncatedRetryOmitsLargeAssistantTurn(t *testing.T) {
+	truncated := `{"action":"tool","toolname":"remote","payload":{"host":"h","cmd":"ls"},"reason":"r"`
+	fp := &retryCompletionProvider{replies: []string{`{"action":"done","payload":"ok","reason":"r"}`}}
+	obs := &recordingObserver{}
+	cfg := &config.UserConfig{DefaultModel: "test:model", Streaming: false, Context: config.ContextConfig{KeepTurns: 4}}
+	history := []provider.Message{
+		{Role: provider.RoleUser, Content: "list the host"},
+		{Role: provider.RoleAssistant, Content: truncated},
+	}
+	resp, _, err := ParseResponseWithRetry(context.Background(), cfg, &RolePrompt{}, Ports{Provider: fp, Observer: obs}, truncated, history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Action != ActionDone {
+		t.Fatalf("action = %q", resp.Action)
+	}
+	if len(fp.seen) != 1 {
+		t.Fatalf("retry requests = %d, want 1", len(fp.seen))
+	}
+	var sawPlaceholder, sawTruncated bool
+	for _, m := range fp.seen[0] {
+		if m.Role == provider.RoleAssistant && m.Content == "[previous response was truncated and omitted]" {
+			sawPlaceholder = true
+		}
+		if strings.Contains(m.Content, `"host":"h"`) {
+			sawTruncated = true
+		}
+	}
+	if !sawPlaceholder {
+		t.Fatal("retry request is missing the truncation placeholder")
+	}
+	if sawTruncated {
+		t.Fatal("retry request still contains the full truncated response")
+	}
+	if len(obs.notices) == 0 || !strings.Contains(obs.notices[0], "cut off") {
+		t.Fatalf("notices = %v", obs.notices)
+	}
+}
+
+// A length-limited response is valid transport but incomplete content. Say so,
+// so the parser's "truncated" retry is not mistaken for a slow network.
+func TestNoticesTokenLimit(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			fp := &finishProvider{reason: "length"}
+			obs := &recordingObserver{}
+			if stream {
+				if _, _, err := doStream(context.Background(), Ports{Provider: fp, Observer: obs}, provider.CompletionParams{}, false); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				truncated, err := fp.Completion(context.Background(), provider.CompletionParams{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				extractCompletion(truncated, false, obs)
+			}
+			if len(obs.notices) != 1 || !strings.Contains(obs.notices[0], "token limit") {
+				t.Fatalf("notices = %v", obs.notices)
+			}
+		})
 	}
 }

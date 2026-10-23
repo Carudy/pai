@@ -52,6 +52,9 @@ type Manager struct {
 	// runtime is retired by any settings change, while the grant is about the
 	// conversation and should outlast that.
 	commandTrust map[string]map[string]bool
+	// toolTrust is the custom-tool counterpart, keyed by tool name. The unit is
+	// the definition, so a grant never covers the executable it wraps.
+	toolTrust map[string]map[string]bool
 	// reasoning is a per-session reasoning-effort override, in memory only. It
 	// lives here for the same reason as trustAll: it must outlast the worker
 	// recreated for each instruction.
@@ -223,6 +226,89 @@ func (m *Manager) CommandTrust(name string) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return commandTrustNames(m.commandTrust[name])
+}
+
+// SetToolTrust grants or revokes one custom tool name for a session. The name
+// must be a bare tool name; a path or command line would not mean what it looks
+// like. Project tools are never persisted, but this in-memory grant still only
+// applies to the named definition.
+func (m *Manager) SetToolTrust(name, tool string, on bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.ctx.Err() != nil {
+		return ErrClosed
+	}
+	if strings.TrimSpace(name) == "" {
+		return errors.New("session name is empty")
+	}
+	if !m.knownSessionLocked(name) {
+		return ErrNotFound
+	}
+	toolName, err := toolTrustName(tool)
+	if err != nil {
+		return err
+	}
+	if m.toolTrust == nil {
+		m.toolTrust = make(map[string]map[string]bool)
+	}
+	if on {
+		if m.toolTrust[name] == nil {
+			m.toolTrust[name] = make(map[string]bool)
+		}
+		m.toolTrust[name][toolName] = true
+	} else {
+		delete(m.toolTrust[name], toolName)
+	}
+	return nil
+}
+
+// ToolTrust returns the custom tool names granted for a session, sorted.
+func (m *Manager) ToolTrust(name string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return commandTrustNames(m.toolTrust[name])
+}
+
+// grantToolTrust records what a custom-tool confirmation answered, so the grant
+// survives the runtime being retired by a later settings change.
+func (m *Manager) grantToolTrust(name string, names []string) {
+	if len(names) == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return
+	}
+	if m.toolTrust == nil {
+		m.toolTrust = make(map[string]map[string]bool)
+	}
+	if m.toolTrust[name] == nil {
+		m.toolTrust[name] = make(map[string]bool)
+	}
+	for _, n := range names {
+		if tool, err := toolTrustName(n); err == nil {
+			m.toolTrust[name][tool] = true
+		}
+	}
+}
+
+func (m *Manager) toolTrustLocked(name string) []string {
+	return commandTrustNames(m.toolTrust[name])
+}
+
+func toolTrustName(tool string) (string, error) {
+	name := strings.TrimSpace(tool)
+	if name == "" {
+		return "", errors.New("tool name is empty")
+	}
+	if len(name) > 64 {
+		return "", errors.New("tool name is too long")
+	}
+	if strings.ContainsAny(name, " \t\n/") {
+		return "", errors.New("tool name must be a bare name, without spaces or a path")
+	}
+	return name, nil
 }
 
 // grantCommandTrust records what a confirmation answered, so that a grant the user
