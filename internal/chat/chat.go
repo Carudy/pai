@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/Carudy/pai/internal/config"
@@ -89,18 +90,39 @@ func ChatStr(ctx context.Context, cfg *config.UserConfig, rp *RolePrompt, p Port
 // ---------------------------------------------------------------------------
 
 // doStream reads streaming chunks, forwards reasoning tokens to the observer,
-// collects content tokens, and tracks usage.
+// collects content tokens, and tracks usage. A stall before anything was rendered
+// is retried once: the reader saw nothing, so resending is invisible — the same
+// thing they would do by hand after giving up on a silent request.
 func doStream(
 	ctx context.Context,
 	p Ports,
 	params provider.CompletionParams,
 	showReasoning bool,
 ) (string, *provider.Usage, error) {
+	for attempt := 1; ; attempt++ {
+		content, usage, shown, err := streamOnce(ctx, p, params, showReasoning)
+		if err == nil {
+			return content, usage, nil
+		}
+		if shown || attempt >= 2 || !errors.Is(err, provider.ErrStalled) || ctx.Err() != nil {
+			return "", nil, err
+		}
+		p.Observer.Notice("model stream stalled before any output; retrying once")
+	}
+}
+
+// streamOnce performs one streaming request. shown reports whether anything was
+// rendered to the reader (reasoning is displayed live; content is not), which is
+// what makes a retry safe or not.
+func streamOnce(
+	ctx context.Context,
+	p Ports,
+	params provider.CompletionParams,
+	showReasoning bool,
+) (content string, usage *provider.Usage, shown bool, err error) {
 	chunkChan, errChan := p.Provider.CompletionStream(ctx, params)
 
 	var fullContent strings.Builder
-	var usage *provider.Usage
-
 	for chunk := range chunkChan {
 		// Usage typically arrives in the final chunk.
 		if chunk.Usage != nil {
@@ -109,6 +131,7 @@ func doStream(
 		for _, choice := range chunk.Choices {
 			if showReasoning && choice.Delta.Reasoning != nil && choice.Delta.Reasoning.Content != "" {
 				p.Observer.Reasoning(choice.Delta.Reasoning.Content)
+				shown = true
 			}
 			if token := choice.Delta.Content; token != "" {
 				fullContent.WriteString(token)
@@ -117,9 +140,9 @@ func doStream(
 	}
 
 	if err := <-errChan; err != nil {
-		return "", nil, err
+		return "", nil, shown, err
 	}
-	return fullContent.String(), usage, nil
+	return fullContent.String(), usage, shown, nil
 }
 
 // ---------------------------------------------------------------------------

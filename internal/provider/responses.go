@@ -66,7 +66,7 @@ func (p *responsesProvider) CompletionStream(ctx context.Context, params Complet
 		return chunkChan, errChan
 	}
 
-	resp, err := postJSONStream(ctx, p.spec.name, p.spec.baseURL, p.apiKey, p.spec.headers, body)
+	resp, err := postJSONStream(ctx, p.spec.name, p.spec.baseURL, p.apiKey, p.spec.headers, body, streamIdleTimeout)
 	if err != nil {
 		errChan <- err
 		close(chunkChan)

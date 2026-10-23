@@ -305,6 +305,14 @@ headers (for example a custom `User-Agent`). PAI always sends a `User-Agent` and
 for the OpenCode Go gateway (`opencode.ai`), generates the `x-opencode-session`
 routing id that gateway requires; a header you set with the same name wins.
 
+Requests are bounded so a silent provider cannot hang the run: 2 minutes to the
+first byte of a streamed call, 90 seconds of silence inside a stream, and 10
+minutes for a non-streaming completion. Transient 429/5xx/connection failures are
+retried (up to 3 attempts, honouring `Retry-After` up to 15 seconds), and a stream
+that stalls before showing anything is retried once. A stall after output has
+appeared is reported rather than replayed, so partial answers are never
+duplicated. `Ctrl+C` cancels immediately.
+
 ### Extending a role
 
 Append your own instructions to any role's intro with

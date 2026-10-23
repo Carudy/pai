@@ -15,7 +15,11 @@ See the [module map](../organization.md) for the surrounding layers.
 - `RolePrompt` keeps a stable prompt head; `OutputGuide` supplies the JSON
   response contract after history on each request.
 - `ChatStr` uses `Ports` for provider calls, observation, and logging,
-  respecting configured streaming and reporting token usage.
+  respecting configured streaming and reporting token usage. A stream that fails
+  is retried once **only** when nothing had been rendered yet (a stall that
+  already showed reasoning or content is reported instead, so partial output is
+  never duplicated); the transport's own bounded waits and retries are described
+  in [`internal/provider`](../provider/README.md).
 - `ParseResponse` / `ParseResponseWithRetry` validate model actions.
 - `Truncate`, `CompactHistory`, `TrimHistory`, and `summarize.go` bound model context;
   shortening replay does not replace durable session history. Both compaction

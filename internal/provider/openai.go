@@ -89,7 +89,7 @@ func (p *openAIProvider) CompletionStream(ctx context.Context, params Completion
 		return chunkChan, errChan
 	}
 
-	resp, err := postJSONStream(ctx, p.spec.name, p.spec.baseURL, p.apiKey, p.spec.headers, bodyBytes)
+	resp, err := postJSONStream(ctx, p.spec.name, p.spec.baseURL, p.apiKey, p.spec.headers, bodyBytes, streamIdleTimeout)
 	if err != nil {
 		errChan <- err
 		close(chunkChan)
