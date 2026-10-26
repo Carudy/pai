@@ -10,6 +10,16 @@ See the [module map](../organization.md) for layering.
 
 Suggested validation from the repository root: `go test ./internal/runner`.
 
+## Resident scheduling (P1)
+
+`Scheduler` is the central, transport-free timer/queue for resident sessions.
+The host supplies `ServiceHost.Activate`; the scheduler guarantees at most one
+activation per session, bounds concurrency with `maxActive`, folds an overdue
+timer into a `core.Wake`, and queues events that arrive during an activation for
+the next one. `ServiceInbox` is the worker side: the host pushes one wake,
+`role.RunService` blocks in `Next`, and `Done` acknowledges it. Neither type
+opens the store; durable event acking belongs to the backend port.
+
 ## Integration contract
 
 Only the composition root supplies a `Backend`; runner imports no storage or transport adapters. Backend methods may run concurrently. `Prepare` returns a per-worker configuration/provider/recorder, resumed messages, and a cleanup function. It must return promptly (the requested interface has no context). Cleanup runs once before the worker's slot is released. Runner copies the configuration struct; treat its nested maps/slices as immutable or return independently owned values.
