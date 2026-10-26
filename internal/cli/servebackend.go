@@ -35,6 +35,7 @@ func serveMeta(m session.Meta) runner.Meta {
 // The serve backend is the production implementation of the optional resident
 // ports. Events use the immutable session id; metadata stays name-keyed.
 var _ runner.ServiceEventBackend = (*serveBackend)(nil)
+var _ runner.ServiceWatcherBackend = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 	store, ok := b.store.(session.ServiceStore)
@@ -113,6 +114,52 @@ func (b *serveBackend) ServiceSpec(name string) (string, error) {
 		return "", err
 	}
 	return info.Spec, nil
+}
+
+func (b *serveBackend) Watchers(sessionID string) ([]runner.WatcherState, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return nil, err
+	}
+	stored, err := store.Watchers(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]runner.WatcherState, 0, len(stored))
+	for _, w := range stored {
+		out = append(out, runner.WatcherState{
+			ID: w.ID, SessionID: w.SessionID, Name: w.Name, Spec: w.Spec,
+			Enabled: w.Enabled, ApprovedAt: w.ApprovedAt,
+			LastRun: w.LastRun, NextRun: w.NextRun, LastState: w.LastState, LastError: w.LastError,
+		})
+	}
+	return out, nil
+}
+
+func (b *serveBackend) PutWatcher(w runner.WatcherState) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return err
+	}
+	return store.PutWatcher(session.Watcher{
+		ID: w.ID, SessionID: w.SessionID, Name: w.Name, Spec: w.Spec,
+		Enabled: w.Enabled, ApprovedAt: w.ApprovedAt,
+		LastRun: w.LastRun, NextRun: w.NextRun, LastState: w.LastState, LastError: w.LastError,
+	})
+}
+
+func (b *serveBackend) SetWatcherState(id string, lastRun, nextRun *time.Time, lastState, lastErr string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return err
+	}
+	return store.SetWatcherState(id, lastRun, nextRun, lastState, lastErr)
 }
 
 func (b *serveBackend) List() ([]runner.Meta, error) {

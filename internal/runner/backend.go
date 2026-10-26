@@ -117,10 +117,40 @@ type ServiceEventBackend interface {
 	SetNextWake(name string, at *time.Time) error
 }
 
-// ServiceInfoBackend exposes a service's stored manifest JSON, which the
-// scheduler uses to compute the next heartbeat after an activation.
+// ServiceInfoBackend exposes a service's stored manifest JSON. The runner reads
+// report_every and on_change from it, and falls back to its interval when the
+// backend cannot persist watcher state.
 type ServiceInfoBackend interface {
 	ServiceSpec(name string) (string, error)
+}
+
+// ServiceWatcherBackend is the durable half of host-side probes. The runner
+// executes a probe when it is due, persists what it observed, and wakes the
+// model only when that observation crossed the trigger. A backend without it
+// still runs a service: its watchers are then only a scheduling interval from
+// the manifest and are never executed.
+type ServiceWatcherBackend interface {
+	// Watchers returns every probe attached to the session, by immutable id.
+	Watchers(sessionID string) ([]WatcherState, error)
+	// PutWatcher inserts or replaces one probe by (session id, name).
+	PutWatcher(w WatcherState) error
+	// SetWatcherState records one probe run. id is the stored watcher id.
+	SetWatcherState(id string, lastRun, nextRun *time.Time, lastState, lastErr string) error
+}
+
+// WatcherState mirrors one persisted probe. Spec is config.MarshalWatcherSpec's
+// JSON; the runner parses it only through config, so it needs no session types.
+type WatcherState struct {
+	ID         string
+	SessionID  string
+	Name       string
+	Spec       string
+	Enabled    bool
+	ApprovedAt *time.Time
+	LastRun    *time.Time
+	NextRun    *time.Time
+	LastState  string
+	LastError  string
 }
 
 // WorkspaceBackend resolves the immutable workspace when preparing a runtime.

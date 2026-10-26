@@ -64,57 +64,53 @@ func (m *Manager) WakeService(name string, wake core.Wake) bool {
 }
 
 // Activate implements ServiceHost: it prepares or reuses the service's resident
-// worker, delivers one wake, and waits for that activation to end.
+// worker, runs any due probes, and — only when something warrants it — hands one
+// wake to RunService and waits for that activation to end.
 func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*time.Time, error) {
 	w, err := m.serviceWorker(ctx, name)
 	if err != nil {
 		return nil, err
 	}
+	now := time.Now()
+
+	probeEvents, probeNext := m.probeDue(ctx, w, now)
+	wake.Events = mergeEvents(wake.Events, append(m.dueEvents(w, now), probeEvents...))
+
+	// A bare clock tick is only the scheduler's hint to probe. When no probe
+	// crossed its trigger, the activation ends here: an unchanged world costs no
+	// model call.
+	if !hasSubstantive(wake.Events) {
+		next := m.nextServiceWake(name, probeNext, time.Now())
+		m.persistNextWake(w, name, next)
+		return next, nil
+	}
+
 	if strings.TrimSpace(wake.Situation) == "" {
 		wake.Situation = renderSituation(wake)
 	}
-	next, err := w.activate(ctx, wake)
+	_, err = w.activate(ctx, wake)
 	if err != nil {
-		return nil, err
+		// The wake's events were nacked with a backoff; make sure the scheduler
+		// looks again even if no watcher would have woken the service.
+		retry := time.Now().Add(30 * time.Second)
+		probeNext = earlier(probeNext, &retry)
 	}
-	if at := m.serviceNextWake(name); at != nil {
-		if eb, ok := m.backend.(ServiceEventBackend); ok {
-			if setErr := eb.SetNextWake(name, at); setErr != nil {
-				w.m.mu.Lock()
-				w.emitLocked("error", "could not persist the next wake: "+setErr.Error())
-				w.m.mu.Unlock()
-			}
-		}
-		next = at
-	}
-	return next, nil
+	at := m.nextServiceWake(name, probeNext, time.Now())
+	m.persistNextWake(w, name, at)
+	return at, err
 }
 
-// serviceNextWake computes the service's next heartbeat from its manifest.
-// Watcher probes are not executed yet; their interval is still the next time
-// the service should look at the world.
-func (m *Manager) serviceNextWake(name string) *time.Time {
-	m.mu.Lock()
-	spec := m.serviceSpecs[name]
-	m.mu.Unlock()
-	if spec == "" {
-		if b, ok := m.backend.(ServiceInfoBackend); ok {
-			if stored, err := b.ServiceSpec(name); err == nil && stored != "" {
-				m.mu.Lock()
-				m.serviceSpecs[name] = stored
-				m.mu.Unlock()
-				spec = stored
-			}
-		}
+// persistNextWake records the timer the scheduler will use after a restart. A
+// failure is surfaced but does not abort the run: the in-memory scheduler still
+// knows when to wake.
+func (m *Manager) persistNextWake(w *worker, name string, at *time.Time) {
+	eb, ok := m.backend.(ServiceEventBackend)
+	if !ok {
+		return
 	}
-	manifest, err := config.ParseStoredServiceSpec(spec)
-	if err != nil {
-		return nil
+	if err := eb.SetNextWake(name, at); err != nil {
+		w.emit("error", "could not persist the next wake: "+err.Error())
 	}
-	if at, ok := manifest.NextWake(time.Now()); ok {
-		return &at
-	}
-	return nil
 }
 
 func (m *Manager) isService(name string) bool {

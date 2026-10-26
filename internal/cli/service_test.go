@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/session"
 	"github.com/Carudy/pai/internal/tui"
 )
@@ -108,8 +109,17 @@ every = "45s"
 		t.Fatal("store does not expose service state")
 	}
 	watchers, err := ss.Watchers(meta.Meta.ID)
-	if err != nil || len(watchers) != 1 || watchers[0].Name != "tick" {
+	if err != nil || len(watchers) != 2 {
 		t.Fatalf("watchers = %+v, %v", watchers, err)
+	}
+	// report_every is stored as the reserved timer watcher, next to the manifest's
+	// own probes.
+	names := map[string]bool{}
+	for _, w := range watchers {
+		names[w.Name] = true
+	}
+	if !names["tick"] || !names[config.ReportWatcherName] {
+		t.Fatalf("watcher names = %v, want tick and %s", names, config.ReportWatcherName)
 	}
 	info, err := ss.ServiceInfo("svc")
 	if err != nil || !strings.Contains(info.Spec, `"goal":"watch the river"`) {

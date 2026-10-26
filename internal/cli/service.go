@@ -29,7 +29,8 @@ func serviceHelp() string {
 A service is a resident session. ` + "`pai serve`" + ` starts the scheduler and registers
 every service it finds; this command only creates and inspects the durable state.
 Creating a manifest with command watchers requires --yes: a command probe is
-persistent code execution on a schedule, so review it first.
+persistent code execution on a schedule, so review it first. report_every is
+stored as the reserved timer watcher _report and shown with the others.
 
 The session store is exclusive, so stop ` + "`pai serve`" + ` before running create/show/list.`
 }
@@ -292,6 +293,22 @@ func serviceCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 			Enabled: true, ApprovedAt: &now, NextRun: &next,
 		}); err != nil {
 			log.Errorf("Error storing watcher %q: %v\n", w.Name, err)
+			return 1
+		}
+	}
+	// report_every is stored as the reserved timer watcher so the heartbeat shares
+	// the probes' one schedule and one next-wake computation.
+	if manifest.ReportEvery > 0 {
+		spec := config.WatcherSpec{
+			Name: config.ReportWatcherName, Kind: "timer", Every: manifest.ReportEvery,
+			Timeout: min(10*time.Second, manifest.ReportEvery),
+		}
+		next := now.Add(manifest.ReportEvery)
+		if err := ss.PutWatcher(session.Watcher{
+			SessionID: created.Meta.ID, Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
+			Enabled: true, ApprovedAt: &now, NextRun: &next,
+		}); err != nil {
+			log.Errorf("Error storing the report watcher: %v\n", err)
 			return 1
 		}
 	}
