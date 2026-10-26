@@ -319,10 +319,10 @@ page.run("activity({type:'notice',data:'trusted from now on: /srv'}); toast('b')
 assert.equal(page.run('toastHost.children.length'), 3, 'toasts are bounded');
 assert.equal(page.run("toastHost.firstElementChild.className"), 'toast');
 assert.equal(page.run("toastHost.firstElementChild.textContent"), 'trusted from now on: /srv', 'a notice is toasted, not only logged');
-page.run("selected=''; localStorage.setItem('pai.session','two'); restoreSession([{name:'one',cwd:'/a'},{name:'two',cwd:'/b'}])");
-assert.equal(page.run('selected'), 'two', 'a reload reopens the remembered session');
-page.run("selected=''; localStorage.setItem('pai.session','ghost'); restoreSession([{name:'one',cwd:'/a'}])");
-assert.equal(page.run('selected'), '', 'a forgotten session is not reopened');
+page.run("selected=''; location.pathname='/'; localStorage.setItem('pai.session','two'); restoreSession([{name:'one',cwd:'/a'},{name:'two',cwd:'/b'}])");
+assert.equal(page.run('selected'), '', 'a bare page does not reopen the remembered session');
+page.run("selected=''; location.pathname='/'; localStorage.setItem('pai.session','ghost'); restoreSession([{name:'one',cwd:'/a'}])");
+assert.equal(page.run('selected'), '', 'a remembered name is ignored');
 page.run("selected=''; controls()"); assert.equal(page.get('send').disabled, true);
 page.run("selected='one'; $('message').value='  '; controls()"); assert.equal(page.get('send').disabled, true);
 page.run("$('message').value='next'; snapshot({state:'busy',queued:1}); controls()");
@@ -899,12 +899,11 @@ function verifyModelOptions() {
 // Deleting the open session returns the workspace to its unselected state.
 async function verifyDeleteOpen() {
   const p = browser();
-  p.run("selected='one'; globalThis.calls=[]; api=async(path,body)=>{calls.push([path,body]);return {ok:true};}; sessions=async reset=>calls.push(['sessions',reset]); disconnect=()=>{}; confirm=()=>true; localStorage.setItem('pai.session','one')");
+  p.run("selected='one'; globalThis.calls=[]; api=async(path,body)=>{calls.push([path,body]);return {ok:true};}; sessions=async reset=>calls.push(['sessions',reset]); disconnect=()=>{}; confirm=()=>true");
   await p.run("deleteSession('one')");
   assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [['delete', {name:'one'}], ['sessions', true]], 'delete then reload the list');
   assert.equal(p.run('selected'), '', 'the workspace is cleared');
   assert.equal(p.get('title').textContent, 'Select or create a session');
-  assert.equal(p.run("localStorage.getItem('pai.session')"), null, 'the remembered session is forgotten');
 }
 
 async function verifyWorkingDir() {
@@ -1014,6 +1013,13 @@ async function verifySessionURL() {
   link.run('restoreSession([{name:"two",cwd:"/b"}])');
   assert.equal(link.run('selected'), 'two', 'a shared link opens its session');
   assert.deepEqual(link.pushes, [], 'the opening load adds no history entry');
+
+  // A bare "/" is the picker, even when another tab has selected a session:
+  // selection is never remembered outside the URL.
+  const bare = browser();
+  bare.run("location.pathname='/'; localStorage.setItem('pai.session','one')");
+  bare.run('restoreSession([{name:"one",cwd:"/a"}])');
+  assert.equal(bare.run('selected'), '', 'a bare page opens no session');
 
   // A stale bookmark must not strand the page: the URL is dropped and the empty
   // workspace is shown instead.

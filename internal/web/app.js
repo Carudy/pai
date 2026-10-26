@@ -24,10 +24,10 @@ let pendingID = null, pendingSession = null;
 let defaultModel = '', savedModel = '', liveModel = '', modelDirty = false, modelBlocked = true, modelApplying = false;
 let savedReasoning = '', reasoningDirty = false, reasoningApplying = false;
 let modelList = [];
-// The browser remembers the open session in localStorage, never a cookie: it is
-// only needed after the page loads, so it need not travel on every request, and
-// it needs no server state. A cleared store just leaves the workspace empty.
-const SESSION_KEY = 'pai.session';
+// The URL is the authority for the open session (/session/<name>). There is no
+// remembered-session fallback: a bare "/" shows the picker, so one tab cannot
+// reopen another tab's session on refresh. localStorage is still used for
+// display preferences (theme, panels, popover position), never for selection.
 // The one-click instruction the Apply plan button sends. It is deliberately a
 // plain sentence: the model reads it like any other user turn.
 const AUTO_REPLY = 'Apply your plan.';
@@ -1492,7 +1492,6 @@ function jumpContextBottom() {
 // ── Session actions ─────────────────────────────────────────
 async function select(name, cwd, replaceURL = false) {
   disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
-  try { localStorage.setItem(SESSION_KEY, name); } catch {}
   setSessionURL(name, replaceURL);
   clearReasoning(); contextEstimate = null; usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('title').title = name;
@@ -1532,22 +1531,20 @@ function setSessionURL(name, replace) {
     else globalThis.history.pushState({name}, '', path);
   } catch { /* an origin that forbids pushState must not break the workspace */ }
 }
-// Reopen the session the URL names, or the remembered one, if it still exists in
-// the listed set.
+// Reopen the session the URL names. The URL is the only authority: a bare "/"
+// leaves the workspace empty instead of silently reopening whatever another tab
+// selected last. A stale name is dropped so a bookmark cannot strand the page.
 function restoreSession(list) {
   if (selected) return;
   const fromURL = sessionFromURL();
-  if (fromURL) {
-    if (list.some(meta => meta.name === fromURL)) { select(fromURL, undefined, true); return; }
-    // A stale bookmark must not strand the page, so drop it and fall back to the
-    // remembered session below.
-    toast('Session "' + fromURL + '" no longer exists.');
-    setSessionURL('', true);
+  if (!fromURL) return;
+  if (list.some(meta => meta.name === fromURL)) {
+    select(fromURL, undefined, true);
+    return;
   }
-  let name = '';
-  try { name = localStorage.getItem(SESSION_KEY) || ''; } catch { return; }
-  if (!name || !list.some(meta => meta.name === name)) return;
-  select(name, undefined, true);
+  // Clear first: clearWorkspace empties the notice host.
+  clearWorkspace();
+  toast('Session "' + fromURL + '" no longer exists.');
 }
 // Back and forward walk session pages, so the browser's history is the session's
 // history rather than a pile of identical workspace entries.
@@ -1656,7 +1653,6 @@ async function deleteSession(name) {
 // Return the workspace to its pre-selection state once the open session is gone.
 function clearWorkspace() {
   disconnect(); generation++; selected = '';
-  try { localStorage.removeItem(SESSION_KEY); } catch {}
   setSessionURL('', true);
   durable = []; liveSteps = []; currentStep = null; thinking = '';
   liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0; followTail = true;

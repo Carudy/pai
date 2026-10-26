@@ -182,8 +182,11 @@ rejected; there is no URL authentication.
   appears. A 401 shows the login form; any other first-request failure reveals the
   shell so the user still has the UI and an error toast.
 - `GET /session/<name>`: the same single-page shell as `/`, so a session URL can
-  be bookmarked, shared and reloaded. The app reads the name from the path and
-  falls back to the remembered session (with a notice) when it no longer exists.
+  be bookmarked, shared and reloaded. The app reads the name from the path; a
+  bare `/` always shows the session picker and never reopens whatever another
+  tab selected last. A stale name is cleared to `/` with a notice. The URL is
+  the only authority for the open session — selection is not stored in a cookie
+  or localStorage.
   Anything else under the prefix, or more than one segment deep, is 404; nothing
   is read from disk by that name, and only `GET` is allowed.
 - `GET /api/info`: `{ "identity": "user@host" }`, the server's identity for the
@@ -434,13 +437,12 @@ sessions (it is only visible while reasoning). Repeated snapshots for the same s
 the existing question form, focus, and draft; a new ID or cleared prompt resets
 the card. Drafts are not persisted across page reloads or session switches. Selecting
 another session closes its subscription but never calls Cancel. New named
-sessions start on their first Send, not on selection. The workspace remembers the
-open session in `localStorage` (never a cookie: it is only needed after the page
-loads, so it need not travel on every request and needs no server state) and
-reopens it on reload if it still exists. The open session is also named in the
-URL (`/session/<name>`), which wins over the remembered name; back and forward
+sessions start on their first Send, not on selection. The open session is named
+in the URL (`/session/<name>`), and that URL is the only authority: a bare `/`
+shows the picker rather than reopening another tab's session, back and forward
 move between sessions, and a link to a session that has gone is reported and
-dropped. Transient `notice` events (a trust
+dropped. Selection is never stored in a cookie or `localStorage`. Transient
+`notice` events (a trust
 downgrade, a newly trusted directory) surface as short-lived toasts above the
 composer in addition to the activity log.
 
