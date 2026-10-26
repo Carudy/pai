@@ -68,11 +68,28 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 		if ctx.Err() != nil {
 			actErr = ctx.Err()
 		}
-		if doneErr := inbox.Done(wake, actErr); doneErr != nil {
+		if doneErr := inbox.Done(wake, wakeResult(result, actErr)); doneErr != nil {
 			return fmt.Errorf("ack service wake: %w", doneErr)
 		}
 		if actErr != nil {
 			return actErr
 		}
 	}
+}
+
+// wakeResult describes the activation to the host. An interrupted activation is
+// a yield: the session is fine, this episode just stopped. A failed one is an
+// error even when the model had reached an outcome.
+func wakeResult(res activationResult, cause error) core.WakeResult {
+	out, status := res.outcome.String(), res.status
+	if res.interrupted {
+		out = outcomeYield.String()
+	}
+	if cause != nil {
+		out = "error"
+		if status == "" {
+			status = cause.Error()
+		}
+	}
+	return core.WakeResult{Outcome: out, Status: status, Err: cause}
 }

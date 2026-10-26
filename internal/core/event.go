@@ -85,12 +85,22 @@ type Wake struct {
 	Preempt   bool
 }
 
+// WakeResult is how one activation ended, reported with the acknowledgment so a
+// host can persist the session's state and a bounded status line. Outcome is the
+// driver's terminal name — yield, done, ask, terminate, or error — and Status is
+// the text of the terminal action (empty for a silent yield).
+type WakeResult struct {
+	Outcome string
+	Status  string
+	Err     error
+}
+
 // Inbox is the service driver's input. Next blocks for the next wake, Poll is
 // for a step-boundary check, and Done acks on success or nacks on failure.
 type Inbox interface {
 	Next(ctx context.Context) (Wake, error)
 	Poll() (Wake, bool)
-	Done(w Wake, err error) error
+	Done(w Wake, res WakeResult) error
 }
 
 // SortEvents orders events in place: class first, then deadline (zero last),

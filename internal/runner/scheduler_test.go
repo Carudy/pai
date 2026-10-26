@@ -177,9 +177,9 @@ func TestMergeWakeCoalescesAndOrders(t *testing.T) {
 func TestServiceInboxPushNextPollDone(t *testing.T) {
 	ctx := context.Background()
 	var acked core.Wake
-	var ackErr error
-	inbox := NewServiceInbox(1, func(w core.Wake, err error) error {
-		acked, ackErr = w, err
+	var ackResult core.WakeResult
+	inbox := NewServiceInbox(1, func(w core.Wake, res core.WakeResult) error {
+		acked, ackResult = w, res
 		return nil
 	})
 	if !inbox.Push(core.Wake{Reason: "one"}) {
@@ -200,11 +200,11 @@ func TestServiceInboxPushNextPollDone(t *testing.T) {
 	if err != nil || w.Reason != "next" {
 		t.Fatalf("Next = (%+v, %v)", w, err)
 	}
-	if err := inbox.Done(w, context.Canceled); err != nil {
+	if err := inbox.Done(w, core.WakeResult{Outcome: "error", Err: context.Canceled}); err != nil {
 		t.Fatal(err)
 	}
-	if acked.Reason != "next" || ackErr != context.Canceled {
-		t.Fatalf("ack = (%+v, %v)", acked, ackErr)
+	if acked.Reason != "next" || ackResult.Err != context.Canceled || ackResult.Outcome != "error" {
+		t.Fatalf("ack = (%+v, %+v)", acked, ackResult)
 	}
 }
 

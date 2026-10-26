@@ -73,7 +73,7 @@ edges are listed under [Dependency rules](#dependency-rules).
 
 | Package | Responsibility | Key types |
 |---|---|---|
-| `core` | The ports the loop needs from its host, plus shared value types. No internal deps. | `Observer`, `Prompter`, `CommandConfirmer`, `PathConfirmer`, `ToolConfirmer`, `Recorder`, `Sessions`, `Steerer`, `Event`, `EventClass`, `Wake`, `Inbox`, `ModeChat`, `ModeService`, `Turn`, `ToolCall`, `ToolResult`, `Usage`, `TrustChoice`, `ErrAborted` |
+| `core` | The ports the loop needs from its host, plus shared value types. No internal deps. | `Observer`, `Prompter`, `CommandConfirmer`, `PathConfirmer`, `ToolConfirmer`, `Recorder`, `Sessions`, `Steerer`, `Event`, `EventClass`, `Wake`, `WakeResult`, `Inbox`, `ModeChat`, `ModeService`, `Turn`, `ToolCall`, `ToolResult`, `Usage`, `TrustChoice`, `ErrAborted` |
 | `paths` | XDG-aware directories. Leaf. | `ConfigDir`, `DataDir`, `Home` |
 | `provider` | LLM transport: OpenAI-compatible chat-completions and Responses protocols, streaming, provider registry. Leaf, stdlib only. | `Provider`, `CreateClient`, `ProviderConfig`, `Message`, `CompletionParams`, `ChatCompletion`, `ReasoningEffort` |
 | `hostinfo` | The host facts embedded in the system prompt (OS, platform, shell, user, date, workspace). Leaf, so composition never shells out. | `Describe` |

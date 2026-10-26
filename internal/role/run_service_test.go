@@ -17,8 +17,8 @@ import (
 // fakeInbox yields a fixed sequence of wakes, then io.EOF. It records the ack
 // (and nack) for each wake.
 type fakeInbox struct {
-	wakes []core.Wake
-	acks  []error
+	wakes   []core.Wake
+	results []core.WakeResult
 }
 
 func (f *fakeInbox) Next(context.Context) (core.Wake, error) {
@@ -31,8 +31,8 @@ func (f *fakeInbox) Next(context.Context) (core.Wake, error) {
 }
 
 func (f *fakeInbox) Poll() (core.Wake, bool) { return core.Wake{}, false }
-func (f *fakeInbox) Done(_ core.Wake, err error) error {
-	f.acks = append(f.acks, err)
+func (f *fakeInbox) Done(_ core.Wake, res core.WakeResult) error {
+	f.results = append(f.results, res)
 	return nil
 }
 
@@ -77,13 +77,26 @@ func TestRunServiceAcksWakesAndInjectsSituation(t *testing.T) {
 	if fp.calls != 3 {
 		t.Fatalf("provider calls = %d, want 3", fp.calls)
 	}
-	if len(inbox.acks) != 3 {
-		t.Fatalf("acks = %v, want 3", inbox.acks)
+	if len(inbox.results) != 3 {
+		t.Fatalf("acks = %v, want 3", inbox.results)
 	}
-	for i, ack := range inbox.acks {
-		if ack != nil {
-			t.Fatalf("ack %d = %v, want nil", i, ack)
+	wantOutcomes := []string{"done", "yield", "yield"}
+	for i, ack := range inbox.results {
+		if ack.Err != nil {
+			t.Fatalf("ack %d = %v, want nil", i, ack.Err)
 		}
+		if ack.Outcome != wantOutcomes[i] {
+			t.Fatalf("ack %d outcome = %q, want %q", i, ack.Outcome, wantOutcomes[i])
+		}
+	}
+	if inbox.results[0].Status != "first task complete" {
+		t.Fatalf("done status = %q", inbox.results[0].Status)
+	}
+	if !strings.Contains(inbox.results[1].Status, `"until"`) {
+		t.Fatalf("yield status = %q, want the host hint payload", inbox.results[1].Status)
+	}
+	if !strings.Contains(inbox.results[2].Status, "level 3.8") {
+		t.Fatalf("inform status = %q", inbox.results[2].Status)
 	}
 
 	// The service prompt adds inform/yield to the advertised contract; the

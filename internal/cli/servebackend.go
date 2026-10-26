@@ -36,6 +36,7 @@ func serveMeta(m session.Meta) runner.Meta {
 // ports. Events use the immutable session id; metadata stays name-keyed.
 var _ runner.ServiceEventBackend = (*serveBackend)(nil)
 var _ runner.ServiceWatcherBackend = (*serveBackend)(nil)
+var _ runner.ServiceStateBackend = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 	store, ok := b.store.(session.ServiceStore)
@@ -100,6 +101,16 @@ func (b *serveBackend) SetNextWake(name string, at *time.Time) error {
 		return err
 	}
 	return store.SetNextWake(name, at)
+}
+
+func (b *serveBackend) SetServiceState(name, state, status string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return err
+	}
+	return store.SetServiceState(name, state, status)
 }
 
 func (b *serveBackend) ServiceSpec(name string) (string, error) {

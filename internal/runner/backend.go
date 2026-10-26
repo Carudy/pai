@@ -124,6 +124,15 @@ type ServiceInfoBackend interface {
 	ServiceSpec(name string) (string, error)
 }
 
+// ServiceStateBackend persists a resident session's runtime state and bounded
+// status document. It is separate from ServiceInfoBackend so a backend can
+// expose a manifest without accepting state writes.
+type ServiceStateBackend interface {
+	// SetServiceState records state and status. It must not bump updated_at: a
+	// service waking on a timer should not reorder the session list.
+	SetServiceState(name, state, status string) error
+}
+
 // ServiceWatcherBackend is the durable half of host-side probes. The runner
 // executes a probe when it is due, persists what it observed, and wakes the
 // model only when that observation crossed the trigger. A backend without it

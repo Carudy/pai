@@ -49,6 +49,7 @@ type worker struct {
 	mode       string
 	sessionID  string
 	inbox      *ServiceInbox
+	parked     bool // waiting for a human answer; suppress the report heartbeat
 	ready      chan struct{}
 	readyErr   error
 	activation chan serviceResult

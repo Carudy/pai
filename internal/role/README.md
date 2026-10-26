@@ -64,7 +64,10 @@ waits for the next instruction, a service sleeps until the next event. `inform`
 and `yield` both end an activation.
 
 `RunService` takes a `core.Inbox`, injects each wake's situation as a trailing
-projection (never a recorded turn), and acks or nacks the wake.
+projection (never a recorded turn), and acks or nacks the wake. The ack carries
+a `core.WakeResult`: the outcome (`yield`/`done`/`ask`/`terminate`/`error`) and
+the terminal action's payload as a bounded status, which the host persists so a
+service view can show the last report without replaying the transcript.
 `maxServiceActivationSteps` is a fixed safety rail against a non-terminating
 episode, not a cost budget.
 

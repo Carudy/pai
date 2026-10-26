@@ -202,7 +202,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, conv *co
 
 		// Each step gets its own context so Ctrl+C can cancel just this step.
 		stepCtx, endStep := rt.beginStep(ctx)
-		out, newHistory, err := step(stepCtx, cfg, rt, conv.rp, conv.history)
+		res, err := step(stepCtx, cfg, rt, conv.rp, conv.history)
 		interrupted := stepCtx.Err() != nil
 		endStep()
 
@@ -212,26 +212,26 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, conv *co
 			rt.record(core.Turn{Role: "assistant", Kind: core.KindNote, Content: "[interrupted by user]"})
 			// A step can finish just as the cancel arrives; keep the turn it
 			// produced so an interactive session can refer to it after the wait.
-			if newHistory != nil {
-				conv.history = newHistory
+			if res.history != nil {
+				conv.history = res.history
 			}
 			return activationResult{outcome: outcomeYield, interrupted: true}, nil
 
 		case err != nil:
 			return activationResult{}, err
 
-		case out == outcomeContinue:
-			conv.history = newHistory
+		case res.outcome == outcomeContinue:
+			conv.history = res.history
 			rt.Observer.Separator()
 
 		default:
 			// done/terminate/ask/yield: adopt the final history before handing
 			// control back. It ends with the model's own reply, and a follow-up that
 			// refers to it is unanswerable without it.
-			if newHistory != nil {
-				conv.history = newHistory
+			if res.history != nil {
+				conv.history = res.history
 			}
-			return activationResult{outcome: out}, nil
+			return activationResult{outcome: res.outcome, status: res.status}, nil
 		}
 	}
 }
@@ -283,6 +283,27 @@ func steeringMessage(msg string) string {
 	return "[user steering]\n" + msg
 }
 
+// stepResult is what one step did. A continue outcome carries the extended
+// history for the next step; a terminal one carries the action's payload as the
+// status a driver may persist for a session view.
+type stepResult struct {
+	outcome outcome
+	status  string
+	history []provider.Message
+}
+
+// statusLimit bounds the status document persisted for a service view. The whole
+// payload already lives in the transcript.
+const statusLimit = 2 << 10
+
+func clampStatus(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > statusLimit {
+		return s[:statusLimit] + "…"
+	}
+	return s
+}
+
 // step runs one reason–act–observe turn. The returned outcome is terminal
 // (yield/done/ask/terminate) only when the activation should stop; a tool call
 // returns outcomeContinue and stays inside the same activation.
@@ -291,13 +312,13 @@ func step(
 	cfg *config.UserConfig,
 	rt *Runtime,
 	rp *chat.RolePrompt,
-	history []provider.Message) (outcome, []provider.Message, error) {
+	history []provider.Message) (stepResult, error) {
 
 	ports := rt.chatPorts()
 
 	content, newHistory, usage, promptEstimate, err := chat.ChatStr(ctx, cfg, rp, ports, history)
 	if err != nil {
-		return outcomeTerminate, nil, err
+		return stepResult{outcome: outcomeTerminate}, err
 	}
 	history = newHistory
 
@@ -327,7 +348,7 @@ func step(
 
 	resp, history, err := chat.ParseResponseWithRetry(ctx, cfg, rp, ports, content, history)
 	if err != nil {
-		return outcomeTerminate, nil, err
+		return stepResult{outcome: outcomeTerminate}, err
 	}
 
 	// Persist the accepted assistant turn (after any format retries). The store keeps
@@ -357,37 +378,37 @@ func step(
 	switch resp.Action {
 	case chat.ActionDone:
 		rt.Observer.Done(resp.GetPayload())
-		return outcomeDone, history, nil
+		return stepResult{outcome: outcomeDone, status: clampStatus(resp.GetPayload()), history: history}, nil
 
 	case chat.ActionTerminate:
 		rt.Observer.Terminate(resp.GetPayload())
-		return outcomeTerminate, history, nil
+		return stepResult{outcome: outcomeTerminate, status: clampStatus(resp.GetPayload()), history: history}, nil
 
 	case chat.ActionAsk:
 		// The question is shown and recorded like any other reply; control returns
 		// to the user's normal input path instead of a separate blocking prompt. The
 		// answer arrives as the next instruction, which the model reads in history.
 		rt.Observer.Ask(resp.GetPayload())
-		return outcomeAsk, history, nil
+		return stepResult{outcome: outcomeAsk, status: clampStatus(resp.GetPayload()), history: history}, nil
 
 	case chat.ActionInform:
-		// The status document is a service-mode concern (P1); for now the report is
-		// surfaced like any other output. Inform ends the activation in both modes.
+		// A report is the service's status document: the driver persists it and the
+		// session view shows it until the next report.
 		rt.Observer.Output(resp.GetPayload())
-		return outcomeYield, history, nil
+		return stepResult{outcome: outcomeYield, status: clampStatus(resp.GetPayload()), history: history}, nil
 
 	case chat.ActionYield:
 		// Nothing more to do this episode. The reason was shown above unless it is
 		// empty; the optional payload carries host hints (until/on) that the
-		// scheduler will interpret in P1.
-		return outcomeYield, history, nil
+		// scheduler will interpret in a later phase.
+		return stepResult{outcome: outcomeYield, status: clampStatus(resp.GetPayload()), history: history}, nil
 
 	case chat.ActionTool:
 		rt.Logger.Debugf("toolname: %s\n", resp.ToolName)
 
 		observation, err := invokeTool(ctx, cfg, rt, rp, resp.ToolName, resp.Payload, resp.Reason)
 		if err != nil {
-			return outcomeTerminate, nil, err
+			return stepResult{outcome: outcomeTerminate}, err
 		}
 		rt.record(core.Turn{Role: "user", Kind: core.KindToolResult, Content: observation})
 		history = append(history, provider.Message{
@@ -397,10 +418,10 @@ func step(
 		})
 
 	default:
-		return outcomeTerminate, nil, fmt.Errorf("unknown action %q", resp.Action)
+		return stepResult{outcome: outcomeTerminate}, fmt.Errorf("unknown action %q", resp.Action)
 	}
 
-	return outcomeContinue, history, nil
+	return stepResult{history: history}, nil
 }
 
 // invokeTool dispatches a tool call and returns the observation to feed back to

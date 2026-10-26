@@ -12,12 +12,12 @@ import (
 // second event into the next activation rather than queueing unbounded work.
 type ServiceInbox struct {
 	wakes chan core.Wake
-	done  func(core.Wake, error) error
+	done  func(core.Wake, core.WakeResult) error
 }
 
 // NewServiceInbox creates the inbox. done is called exactly once per wake; a
 // nil callback is allowed for a driver that has no durable side to acknowledge.
-func NewServiceInbox(buffer int, done func(core.Wake, error) error) *ServiceInbox {
+func NewServiceInbox(buffer int, done func(core.Wake, core.WakeResult) error) *ServiceInbox {
 	if buffer < 1 {
 		buffer = 1
 	}
@@ -56,11 +56,11 @@ func (i *ServiceInbox) Poll() (core.Wake, bool) {
 }
 
 // Done acknowledges the wake and reports the activation's result.
-func (i *ServiceInbox) Done(w core.Wake, err error) error {
+func (i *ServiceInbox) Done(w core.Wake, res core.WakeResult) error {
 	if i.done == nil {
 		return nil
 	}
-	return i.done(w, err)
+	return i.done(w, res)
 }
 
 var _ core.Inbox = (*ServiceInbox)(nil)

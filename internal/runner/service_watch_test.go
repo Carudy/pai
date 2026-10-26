@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -82,6 +83,21 @@ func (b *watchTestBackend) watcher(t *testing.T, name string) WatcherState {
 	}
 	t.Fatalf("watcher %q was not stored", name)
 	return WatcherState{}
+}
+
+// dueNow makes a stored watcher due, so the next activation probes it.
+func (b *watchTestBackend) dueNow(t *testing.T, name string) {
+	t.Helper()
+	past := time.Now().Add(-time.Second)
+	b.wmu.Lock()
+	defer b.wmu.Unlock()
+	for i := range b.watchers {
+		if b.watchers[i].Name == name {
+			b.watchers[i].NextRun = &past
+			return
+		}
+	}
+	t.Fatalf("watcher %q was not stored", name)
 }
 
 func newWatchService(t *testing.T, fp *serviceTestProvider, watchers ...WatcherState) (*Manager, *watchTestBackend) {
@@ -238,5 +254,62 @@ func TestServiceRecoversDueEvents(t *testing.T) {
 	backend.mu.Unlock()
 	if len(acked) != 1 || acked[0] != 7 {
 		t.Fatalf("acked = %v, want the recovered event 7", acked)
+	}
+}
+
+// An activation that ends by asking parks the session: the question is visible
+// in status, and the report heartbeat stops until a human (or a probe) wakes it.
+func TestServiceParksOnAskAndSuppressesHeartbeat(t *testing.T) {
+	fp := &serviceTestProvider{
+		replies: []string{`{"action":"ask","payload":"which gate should open?","reason":"need input"}`},
+		done:    make(chan int, 2),
+	}
+	m, backend := newWatchService(t, fp)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wake := core.Wake{Reason: "user", Events: []core.Event{{ID: 1, Class: core.EventUser, Kind: "user_input", Payload: "go"}}}
+	if _, err := m.Activate(ctx, "svc", wake); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	state, status := backend.persistedState()
+	if state != StateParked || !strings.Contains(status, "which gate") {
+		t.Fatalf("state = %q, status = %q; want parked with the question", state, status)
+	}
+
+	// The report tick is due, but a heartbeat would only repeat the question.
+	backend.dueNow(t, config.ReportWatcherName)
+	if _, err := m.Activate(ctx, "svc", clockWake()); err != nil {
+		t.Fatalf("Activate after ask: %v", err)
+	}
+	if fp.CallCount() != 1 {
+		t.Fatalf("model calls = %d, want the parked service to skip the heartbeat", fp.CallCount())
+	}
+	if state, _ := backend.persistedState(); state != StateParked {
+		t.Fatalf("state = %q, want it to stay parked", state)
+	}
+}
+
+// An inform is the service's status document: it is persisted with the wake's
+// outcome so the CLI can show the last report without replaying the transcript.
+func TestServicePersistsReportAsStatus(t *testing.T) {
+	fp := &serviceTestProvider{
+		replies: []string{`{"action":"inform","payload":"level 3.8 m, above the warning band","reason":"threshold"}`},
+		done:    make(chan int, 2),
+	}
+	m, backend := newWatchService(t, fp)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	wake := core.Wake{Reason: "user", Events: []core.Event{{ID: 1, Class: core.EventUser, Kind: "user_input", Payload: "go"}}}
+	if _, err := m.Activate(ctx, "svc", wake); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	state, status := backend.persistedState()
+	if state != StateSuspended {
+		t.Fatalf("state = %q, want suspended after a report", state)
+	}
+	if !strings.Contains(status, "level 3.8") {
+		t.Fatalf("status = %q, want the report payload", status)
 	}
 }

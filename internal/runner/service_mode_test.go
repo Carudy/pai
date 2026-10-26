@@ -58,6 +58,8 @@ type serviceTestBackend struct {
 	acked    []int64
 	nacked   []int64
 	nextWake *time.Time
+	state    string
+	status   string
 }
 
 func (b *serviceTestBackend) List() ([]Meta, error) { return []Meta{b.meta}, nil }
@@ -112,6 +114,19 @@ func (b *serviceTestBackend) SetNextWake(_ string, at *time.Time) error {
 	defer b.mu.Unlock()
 	b.nextWake = at
 	return nil
+}
+
+func (b *serviceTestBackend) SetServiceState(_ string, state, status string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.state, b.status = state, status
+	return nil
+}
+
+func (b *serviceTestBackend) persistedState() (string, string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state, b.status
 }
 
 func (b *serviceTestBackend) ServiceSpec(string) (string, error) { return b.spec, nil }

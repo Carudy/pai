@@ -15,8 +15,7 @@ import (
 )
 
 type serviceResult struct {
-	next *time.Time
-	err  error
+	err error
 }
 
 // StartServices registers every persisted service with the scheduler. Chat
@@ -296,7 +295,7 @@ func (w *worker) activate(ctx context.Context, wake core.Wake) (*time.Time, erro
 	}
 	select {
 	case result := <-w.activation:
-		return result.next, result.err
+		return nil, result.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	case <-w.ctx.Done():
@@ -304,20 +303,48 @@ func (w *worker) activate(ctx context.Context, wake core.Wake) (*time.Time, erro
 	}
 }
 
-// serviceDone acknowledges the wake's events, returns the worker to suspended,
-// and releases the scheduler's activation slot.
-func (w *worker) serviceDone(wake core.Wake, cause error) error {
-	ackErr := w.ackWake(wake, cause)
+// serviceDone acknowledges the wake's events, records how the activation ended,
+// and returns the worker to suspended or parked.
+func (w *worker) serviceDone(wake core.Wake, res core.WakeResult) error {
+	ackErr := w.ackWake(wake, res.Err)
+
+	state, phase, status := StateSuspended, "suspended", res.Status
+	switch res.Outcome {
+	case "ask":
+		state, phase = StateParked, "parked"
+		if reason := strings.TrimSpace(res.Status); reason != "" {
+			status = "waiting for an answer: " + reason
+		} else {
+			status = "waiting for an answer"
+		}
+	case "error":
+		if status == "" && res.Err != nil {
+			status = res.Err.Error()
+		}
+	}
 
 	w.m.mu.Lock()
 	if w.state != StateStopped {
-		w.state = StateSuspended
-		w.phase = "suspended"
-		w.emitLocked(StateSuspended, nil)
+		w.state, w.phase = state, phase
+		w.parked = state == StateParked
+		w.failure = ""
+		if res.Err != nil {
+			w.failure = res.Err.Error()
+		}
+		w.emitLocked(state, nil)
 	}
 	w.m.mu.Unlock()
+
+	// The state outlives the worker: a restart must show the same suspended or
+	// parked view, and the last report stays readable in `pai service show`.
+	if sb, ok := w.m.backend.(ServiceStateBackend); ok {
+		if err := sb.SetServiceState(w.name, state, status); err != nil {
+			w.emit("error", "could not persist the service state: "+err.Error())
+		}
+	}
+
 	select {
-	case w.activation <- serviceResult{err: cause}:
+	case w.activation <- serviceResult{err: res.Err}:
 	default:
 	}
 	return ackErr

@@ -33,7 +33,7 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 		return nil, nil
 	}
 	m.mu.Lock()
-	id, dir := w.sessionID, w.workingDir
+	id, dir, parked := w.sessionID, w.workingDir, w.parked
 	name := w.name
 	m.mu.Unlock()
 	if id == "" {
@@ -103,7 +103,8 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 	}
 
 	// on_change means "report only when something changed": the report tick is a
-	// heartbeat, not news, so it is dropped when no other probe fired.
+	// heartbeat, not news, so it is dropped when no other probe fired. Being
+	// parked on a question suppresses it too — a heartbeat would only re-ask.
 	changed := false
 	for _, o := range fired {
 		if o.spec.Name != config.ReportWatcherName {
@@ -114,8 +115,13 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 
 	events := make([]core.Event, 0, len(fired))
 	for _, o := range fired {
-		if manifest != nil && manifest.OnChange && o.spec.Name == config.ReportWatcherName && !changed {
-			continue
+		if o.spec.Name == config.ReportWatcherName {
+			if manifest != nil && manifest.OnChange && !changed {
+				continue
+			}
+			if parked {
+				continue
+			}
 		}
 		ev := watcherEvent(id, o.spec, o.res, now)
 		if eb, ok := m.backend.(ServiceEventBackend); ok {
