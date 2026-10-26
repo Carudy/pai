@@ -19,6 +19,10 @@ const (
 	MinWatchInterval = 10 * time.Second
 	// MaxWatchersPerService bounds the probe pool a single service can create.
 	MaxWatchersPerService = 8
+	// ReportWatcherName is the reserved timer watcher that carries
+	// service.report_every. Manifest watcher names must start with a letter, so a
+	// user cannot collide with it.
+	ReportWatcherName = "_report"
 )
 
 // ServiceManifest is one parsed, normalized manifest.
@@ -145,27 +149,45 @@ func ParseStoredServiceSpec(spec string) (*ServiceManifest, error) {
 		return nil, fmt.Errorf("stored report_every: %w", err)
 	}
 	for _, w := range raw.Watch {
-		spec := WatcherSpec{
-			Name: w.Name, Kind: w.Kind, Cmd: w.Cmd, Severity: w.Severity,
-		}
-		if spec.Every, err = parseDuration(w.Every); err != nil {
+		spec, err := watcherFromJSON(w)
+		if err != nil {
 			return nil, fmt.Errorf("stored watcher %q: %w", w.Name, err)
-		}
-		if spec.Timeout, err = parseDuration(w.Timeout); err != nil {
-			return nil, fmt.Errorf("stored watcher %q: %w", w.Name, err)
-		}
-		if spec.Debounce, err = parseDuration(w.For); err != nil {
-			return nil, fmt.Errorf("stored watcher %q: %w", w.Name, err)
-		}
-		if spec.Cooldown, err = parseDuration(w.Cooldown); err != nil {
-			return nil, fmt.Errorf("stored watcher %q: %w", w.Name, err)
-		}
-		if w.Trigger != nil {
-			spec.Trigger = &WatchTrigger{Kind: w.Trigger.Kind, Field: w.Trigger.Field, Op: w.Trigger.Op, Value: w.Trigger.Value}
 		}
 		manifest.Watchers = append(manifest.Watchers, spec)
 	}
 	return manifest, nil
+}
+
+// ParseWatcherSpec decodes one watcher's stored JSON. Like
+// ParseStoredServiceSpec it parses only: the values were validated before they
+// were stored, so this must not reject a row a running service already owns.
+func ParseWatcherSpec(spec string) (WatcherSpec, error) {
+	var raw watcherJSON
+	if err := json.Unmarshal([]byte(spec), &raw); err != nil {
+		return WatcherSpec{}, fmt.Errorf("parse watcher spec: %w", err)
+	}
+	return watcherFromJSON(raw)
+}
+
+func watcherFromJSON(raw watcherJSON) (WatcherSpec, error) {
+	w := WatcherSpec{Name: raw.Name, Kind: raw.Kind, Cmd: raw.Cmd, Severity: raw.Severity}
+	var err error
+	if w.Every, err = parseDuration(raw.Every); err != nil {
+		return WatcherSpec{}, fmt.Errorf("every: %w", err)
+	}
+	if w.Timeout, err = parseDuration(raw.Timeout); err != nil {
+		return WatcherSpec{}, fmt.Errorf("timeout: %w", err)
+	}
+	if w.Debounce, err = parseDuration(raw.For); err != nil {
+		return WatcherSpec{}, fmt.Errorf("for: %w", err)
+	}
+	if w.Cooldown, err = parseDuration(raw.Cooldown); err != nil {
+		return WatcherSpec{}, fmt.Errorf("cooldown: %w", err)
+	}
+	if raw.Trigger != nil {
+		w.Trigger = &WatchTrigger{Kind: raw.Trigger.Kind, Field: raw.Trigger.Field, Op: raw.Trigger.Op, Value: raw.Trigger.Value}
+	}
+	return w, nil
 }
 
 func normalizeManifest(raw serviceFile) (*ServiceManifest, error) {

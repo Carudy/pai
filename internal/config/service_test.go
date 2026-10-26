@@ -134,3 +134,27 @@ workspace = "/w"
 		t.Fatalf("err = %v, want the watcher limit", err)
 	}
 }
+
+func TestWatcherSpecRoundTrip(t *testing.T) {
+	w := WatcherSpec{
+		Name: "river-level", Kind: "command", Cmd: `cat /srv/hydro/level.json`,
+		Every: time.Minute, Timeout: 5 * time.Second,
+		Debounce: 2 * time.Minute, Cooldown: time.Hour, Severity: "high",
+		Trigger: &WatchTrigger{Kind: "json_number", Field: "river.level", Op: ">", Value: 3.2},
+	}
+	back, err := ParseWatcherSpec(MarshalWatcherSpec(w))
+	if err != nil {
+		t.Fatalf("ParseWatcherSpec: %v", err)
+	}
+	if back.Name != w.Name || back.Kind != w.Kind || back.Cmd != w.Cmd ||
+		back.Every != w.Every || back.Timeout != w.Timeout || back.Debounce != w.Debounce ||
+		back.Cooldown != w.Cooldown || back.Severity != w.Severity {
+		t.Fatalf("round trip = %+v, want %+v", back, w)
+	}
+	if back.Trigger == nil || back.Trigger.Field != "river.level" || back.Trigger.Op != ">" {
+		t.Fatalf("trigger = %+v", back.Trigger)
+	}
+	if got, ok := back.Trigger.Value.(float64); !ok || got != 3.2 {
+		t.Fatalf("trigger value = %#v, want 3.2", back.Trigger.Value)
+	}
+}
