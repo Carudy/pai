@@ -76,6 +76,14 @@ func commands() []command {
 			help:    toolHelp,
 			run:     runTool,
 		},
+		{
+			name:    "service",
+			aliases: []string{"services"},
+			summary: "Create and inspect resident service sessions",
+			usage:   "pai service <list|show|create> [args]",
+			help:    serviceHelp,
+			run:     runServiceCmd,
+		},
 	}
 }
 

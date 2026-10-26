@@ -66,6 +66,7 @@ type Manager struct {
 	scheduler    *Scheduler
 	serviceNames map[string]bool
 	sessionIDs   map[string]string
+	serviceSpecs map[string]string
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {
@@ -78,6 +79,7 @@ func New(ctx context.Context, backend Backend, max int) *Manager {
 		entries:      make(map[string]*worker),
 		serviceNames: make(map[string]bool),
 		sessionIDs:   make(map[string]string),
+		serviceSpecs: make(map[string]string),
 	}
 	m.scheduler = NewScheduler(ctx, m, max)
 	go func() { <-ctx.Done(); m.Close() }()

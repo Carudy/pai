@@ -117,6 +117,12 @@ type ServiceEventBackend interface {
 	SetNextWake(name string, at *time.Time) error
 }
 
+// ServiceInfoBackend exposes a service's stored manifest JSON, which the
+// scheduler uses to compute the next heartbeat after an activation.
+type ServiceInfoBackend interface {
+	ServiceSpec(name string) (string, error)
+}
+
 // WorkspaceBackend resolves the immutable workspace when preparing a runtime.
 // The returned Meta carries the session's working directory and its creation time:
 // the runtime pins that birth time into the prompt head, so a fresh runtime

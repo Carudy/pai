@@ -27,9 +27,14 @@ func (m *Manager) StartServices() error {
 	if err != nil {
 		return err
 	}
+	specs, _ := m.backend.(ServiceInfoBackend)
 	for _, meta := range metas {
 		if meta.Mode != ModeService {
 			continue
+		}
+		spec := ""
+		if specs != nil {
+			spec, _ = specs.ServiceSpec(meta.Name)
 		}
 		m.mu.Lock()
 		if m.closed || m.ctx.Err() != nil {
@@ -38,6 +43,9 @@ func (m *Manager) StartServices() error {
 		}
 		m.serviceNames[meta.Name] = true
 		m.sessionIDs[meta.Name] = meta.ID
+		if spec != "" {
+			m.serviceSpecs[meta.Name] = spec
+		}
 		m.mu.Unlock()
 		m.scheduler.Register(meta.Name, meta.NextWake)
 	}
@@ -65,7 +73,48 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	if strings.TrimSpace(wake.Situation) == "" {
 		wake.Situation = renderSituation(wake)
 	}
-	return w.activate(ctx, wake)
+	next, err := w.activate(ctx, wake)
+	if err != nil {
+		return nil, err
+	}
+	if at := m.serviceNextWake(name); at != nil {
+		if eb, ok := m.backend.(ServiceEventBackend); ok {
+			if setErr := eb.SetNextWake(name, at); setErr != nil {
+				w.m.mu.Lock()
+				w.emitLocked("error", "could not persist the next wake: "+setErr.Error())
+				w.m.mu.Unlock()
+			}
+		}
+		next = at
+	}
+	return next, nil
+}
+
+// serviceNextWake computes the service's next heartbeat from its manifest.
+// Watcher probes are not executed yet; their interval is still the next time
+// the service should look at the world.
+func (m *Manager) serviceNextWake(name string) *time.Time {
+	m.mu.Lock()
+	spec := m.serviceSpecs[name]
+	m.mu.Unlock()
+	if spec == "" {
+		if b, ok := m.backend.(ServiceInfoBackend); ok {
+			if stored, err := b.ServiceSpec(name); err == nil && stored != "" {
+				m.mu.Lock()
+				m.serviceSpecs[name] = stored
+				m.mu.Unlock()
+				spec = stored
+			}
+		}
+	}
+	manifest, err := config.ParseStoredServiceSpec(spec)
+	if err != nil {
+		return nil
+	}
+	if at, ok := manifest.NextWake(time.Now()); ok {
+		return &at
+	}
+	return nil
 }
 
 func (m *Manager) isService(name string) bool {

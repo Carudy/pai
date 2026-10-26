@@ -26,6 +26,11 @@ See the [module map](../organization.md) for its near-leaf position.
   the URL and origin reset with the rest. Flag/environment precedence is resolved
   in `cli`, not here.
 - `SetScalar` / `UnsetScalar` perform comment-preserving scalar edits.
+- `ParseServiceManifest` parses and validates a resident-session manifest
+  (`[service]` plus `[[watch]]`), normalizes durations and trigger shapes, and
+  produces the canonical JSON stored in `sessions.spec`;
+  `ParseStoredServiceSpec` reads it back. Interval floors, watcher limits, and
+  command/trigger rules are structural rails, not cost budgets.
 - `LoadRoleExtraEntry` is the role-extra seam for custom tools; the tool
   definitions themselves are parsed by `prompts`.
 - `Template`, `WriteTemplate`, `MergeTemplate`, and `ResetTemplate` support

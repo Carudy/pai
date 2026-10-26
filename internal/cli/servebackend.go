@@ -101,6 +101,20 @@ func (b *serveBackend) SetNextWake(name string, at *time.Time) error {
 	return store.SetNextWake(name, at)
 }
 
+func (b *serveBackend) ServiceSpec(name string) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return "", err
+	}
+	info, err := store.ServiceInfo(name)
+	if err != nil {
+		return "", err
+	}
+	return info.Spec, nil
+}
+
 func (b *serveBackend) List() ([]runner.Meta, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
