@@ -78,7 +78,7 @@ func commands() []command {
 		},
 		{
 			name:    "service",
-			aliases: []string{"services"},
+			aliases: []string{"services", "svc"},
 			summary: "Create and inspect resident service sessions",
 			usage:   "pai service <list|show|create> [args]",
 			help:    serviceHelp,

@@ -27,12 +27,12 @@ var (
 	ErrExists = errors.New("session already exists")
 )
 
-// Session modes. The store treats the mode as an opaque string; runner and
-// config share these values so a service created by the CLI is recognized when
-// `pai serve` registers resident sessions.
+// Session modes. The store treats the mode as an opaque string shared with
+// core, so a service created by the CLI is recognized when `pai serve`
+// registers resident sessions.
 const (
-	ModeChat    = "chat"
-	ModeService = "service"
+	ModeChat    = core.ModeChat
+	ModeService = core.ModeService
 )
 
 // Meta describes a session without loading its turns.

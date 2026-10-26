@@ -82,6 +82,24 @@ every = "45s"
 	if meta.Meta.Mode != session.ModeService || meta.Meta.ID == "" || meta.Meta.Cwd != resolved {
 		t.Fatalf("stored meta = %+v", meta.Meta)
 	}
+
+	// A service is still a session: the generic listing shows its mode, and the
+	// generic show works even though the service view is richer.
+	var sessionsOut bytes.Buffer
+	if code := sessionList(store, &sessionsOut, log); code != 0 {
+		t.Fatalf("session list: %s", sessionsOut.String())
+	}
+	if !strings.Contains(sessionsOut.String(), "MODE") || !strings.Contains(sessionsOut.String(), "service") {
+		t.Fatalf("session list does not show the mode: %q", sessionsOut.String())
+	}
+	var sessionOut bytes.Buffer
+	if code := sessionShow(store, "svc", &sessionOut, log); code != 0 {
+		t.Fatalf("session show: %s", sessionOut.String())
+	}
+	if !strings.Contains(sessionOut.String(), "mode:    service") {
+		t.Fatalf("session show does not show the mode: %q", sessionOut.String())
+	}
+
 	if meta.Meta.NextWake == nil {
 		t.Fatal("the initial next wake was not stored")
 	}
@@ -129,6 +147,13 @@ trigger = { kind = "changed" }
 	out.Reset()
 	if code := runServiceCmd(context.Background(), []string{"create", "probe", "--file", path, "--yes"}, &out, log); code != 0 {
 		t.Fatalf("create with --yes: %s", out.String())
+	}
+}
+
+func TestServiceAlias(t *testing.T) {
+	c := findCommand("svc")
+	if c == nil || c.name != "service" {
+		t.Fatalf("findCommand(\"svc\") = %+v", c)
 	}
 }
 

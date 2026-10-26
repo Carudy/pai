@@ -260,9 +260,10 @@ func sessionList(store session.Store, stdout io.Writer, log *tui.Logger) int {
 	}
 
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tROLE\tTURNS\tUPDATED\tCWD")
+	fmt.Fprintln(tw, "NAME\tMODE\tROLE\tTURNS\tUPDATED\tCWD")
 	for _, m := range metas {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", m.Name, m.Role, m.Turns, humanAge(m.UpdatedAt), m.Cwd)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
+			m.Name, emptyOr(m.Mode, session.ModeChat), m.Role, m.Turns, humanAge(m.UpdatedAt), m.Cwd)
 	}
 	return flush(tw)
 }
@@ -274,8 +275,8 @@ func sessionShow(store session.Store, name string, stdout io.Writer, log *tui.Lo
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "name:    %s\nrole:    %s\nmodel:   %s\ncwd:     %s\ncreated: %s\nupdated: %s\nturns:   %d\n\n",
-		sess.Meta.Name, sess.Meta.Role, sess.Meta.Model, sess.Meta.Cwd,
+	fmt.Fprintf(stdout, "name:    %s\nmode:    %s\nrole:    %s\nmodel:   %s\ncwd:     %s\ncreated: %s\nupdated: %s\nturns:   %d\n\n",
+		sess.Meta.Name, emptyOr(sess.Meta.Mode, session.ModeChat), sess.Meta.Role, sess.Meta.Model, sess.Meta.Cwd,
 		sess.Meta.CreatedAt.Format(time.RFC3339), humanAge(sess.Meta.UpdatedAt), sess.Meta.Turns)
 
 	// Show the tail of the transcript; full turns can be very long.

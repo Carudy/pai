@@ -1,5 +1,7 @@
 package runner
 
+import "github.com/Carudy/pai/internal/core"
+
 // Snapshot.State values. Chat uses starting, busy, awaiting, and stopped; a
 // resident service adds suspended (asleep, safe to evict) and parked (waiting
 // for a human reply) in the next phase. Clients compare these strings, so keep
@@ -13,9 +15,8 @@ const (
 	StateStopped   = "stopped"
 )
 
-// Session modes. A chat session is driven by instructions; a service session is
-// driven by the scheduler and stays resident between wakes.
+// Session modes, shared with the rest of the stack through core.
 const (
-	ModeChat    = "chat"
-	ModeService = "service"
+	ModeChat    = core.ModeChat
+	ModeService = core.ModeService
 )

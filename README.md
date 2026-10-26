@@ -76,7 +76,7 @@ Each command has a short alias, and every command has its own `--help`:
 | `pai config` | `cfg` | Inspect and edit `config.toml` |
 | `pai role` | `roles` | List and inspect available roles |
 | `pai tool` | `tools` | List, inspect, and dry-run custom tools |
-| `pai service` | `services` | Create and inspect resident service sessions |
+| `pai service` | `services`, `svc` | Create and inspect resident service sessions |
 | `pai serve` | — | Serve the browser UI and HTTP API (see [Browser / server mode](#-browser--server-mode)) |
 | `pai conn` | — | Attach a terminal to a running `pai serve` session |
 | `pai help [cmd]` | — | Show help |
