@@ -17,8 +17,15 @@ The host supplies `ServiceHost.Activate`; the scheduler guarantees at most one
 activation per session, bounds concurrency with `maxActive`, folds an overdue
 timer into a `core.Wake`, and queues events that arrive during an activation for
 the next one. `ServiceInbox` is the worker side: the host pushes one wake,
-`role.RunService` blocks in `Next`, and `Done` acknowledges it. Neither type
-opens the store; durable event acking belongs to the backend port.
+`role.RunService` blocks in `Next`, and `Done` acknowledges it.
+
+The manager is the production host. `StartServices` registers persisted services,
+`Activate` prepares or reuses the resident worker, and `Send` on a service
+becomes a durable `EventUser` instead of a chat task. A service worker prepares
+once, calls `role.RunService`, and stays `suspended` between wakes; `busy` marks
+an activation. `ServiceEventBackend` is the optional durable port for append,
+ack/nack, due events, and the next wake; a backend without it runs an ephemeral
+service.
 
 ## Integration contract
 

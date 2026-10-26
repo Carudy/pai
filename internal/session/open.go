@@ -35,15 +35,22 @@ func Open() (Store, error) {
 	if err != nil {
 		return nil, errors.Join(fmt.Errorf("open session store: %w", err), lock.Close())
 	}
-	return &ownedStore{Store: store, lock: lock}, nil
+	service, _ := store.(ServiceStore)
+	return &ownedStore{Store: store, ServiceStore: service, lock: lock}, nil
 }
 
 type ownedStore struct {
 	Store
+	// ServiceStore is the same backend's resident-session methods. Embedding the
+	// interface keeps a type assertion on the returned Store working through the
+	// ownership wrapper.
+	ServiceStore
 	lock *os.File
 	once sync.Once
 	err  error
 }
+
+var _ ServiceStore = (*ownedStore)(nil)
 
 func (s *ownedStore) Close() error {
 	s.once.Do(func() {

@@ -12,3 +12,10 @@ const (
 	StateParked    = "parked"
 	StateStopped   = "stopped"
 )
+
+// Session modes. A chat session is driven by instructions; a service session is
+// driven by the scheduler and stays resident between wakes.
+const (
+	ModeChat    = "chat"
+	ModeService = "service"
+)

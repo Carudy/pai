@@ -42,48 +42,24 @@ type worker struct {
 	pending       *Prompt
 	reply         chan answer
 	subs          map[chan Event]struct{}
+
+	// Service mode. mode is "" for chat; a service worker keeps the runtime
+	// alive across wakes and blocks in RunService. inbox is the worker side of
+	// the scheduler; activation carries the end of one wake back to Activate.
+	mode       string
+	sessionID  string
+	inbox      *ServiceInbox
+	ready      chan struct{}
+	readyErr   error
+	activation chan serviceResult
 }
 
 func (w *worker) run() {
 	defer w.m.wg.Done()
-	defer func() {
-		w.cancel()
-		w.m.mu.Lock()
-		w.state = StateStopped
-		w.phase = "stopped"
-		w.activeTool = nil
-		w.latestTool = nil
-		w.pending = nil
-		w.emitLocked(StateStopped, nil)
-		for ch := range w.subs {
-			delete(w.subs, ch)
-			close(ch)
-		}
-		if w.failure != "" {
-			w.m.rememberFailureLocked(w.snapshotLocked())
-		}
-		delete(w.m.entries, w.name)
-		close(w.done)
-		w.m.mu.Unlock()
-	}()
-	var cfg *config.UserConfig
-	var p provider.Provider
-	var rec core.Recorder
-	var history []provider.Message
-	var cleanup func()
-	var meta Meta
-	var err error
-	if b, ok := w.m.backend.(WorkspaceBackend); ok {
-		cfg, p, rec, history, cleanup, meta, err = b.PrepareWorkspace(w.name, w.workingDir)
-	} else {
-		cfg, p, rec, history, cleanup, err = w.m.backend.Prepare(w.name)
-	}
-	cwd := meta.Cwd
+	defer w.finishRun()
+	cfg, p, rec, history, cleanup, meta, cwd, err := w.prepare()
 	if cleanup != nil {
 		defer cleanup()
-	}
-	if err == nil && (cfg == nil || p == nil) {
-		err = errors.New("backend returned incomplete runtime")
 	}
 	if err == nil && w.ctx.Err() == nil {
 		copyCfg := *cfg
@@ -118,6 +94,52 @@ func (w *worker) run() {
 		w.emitLocked("error", err.Error())
 		w.m.mu.Unlock()
 	}
+}
+
+// prepare resolves the backend resources shared by a chat run and a service
+// activation. The caller owns cleanup.
+func (w *worker) prepare() (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), Meta, string, error) {
+	var (
+		cfg     *config.UserConfig
+		p       provider.Provider
+		rec     core.Recorder
+		history []provider.Message
+		cleanup func()
+		meta    Meta
+		err     error
+	)
+	if b, ok := w.m.backend.(WorkspaceBackend); ok {
+		cfg, p, rec, history, cleanup, meta, err = b.PrepareWorkspace(w.name, w.workingDir)
+	} else {
+		cfg, p, rec, history, cleanup, err = w.m.backend.Prepare(w.name)
+	}
+	if err == nil && (cfg == nil || p == nil) {
+		err = errors.New("backend returned incomplete runtime")
+	}
+	return cfg, p, rec, history, cleanup, meta, meta.Cwd, err
+}
+
+// finishRun is the one cleanup path for both modes. It closes the worker's
+// events and removes it from the manager's entries.
+func (w *worker) finishRun() {
+	w.cancel()
+	w.m.mu.Lock()
+	w.state = StateStopped
+	w.phase = "stopped"
+	w.activeTool = nil
+	w.latestTool = nil
+	w.pending = nil
+	w.emitLocked(StateStopped, nil)
+	for ch := range w.subs {
+		delete(w.subs, ch)
+		close(ch)
+	}
+	if w.failure != "" {
+		w.m.rememberFailureLocked(w.snapshotLocked())
+	}
+	delete(w.m.entries, w.name)
+	close(w.done)
+	w.m.mu.Unlock()
 }
 
 func (w *worker) snapshotLocked() Snapshot {

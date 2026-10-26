@@ -105,6 +105,18 @@ type Backend interface {
 // each one, so a host implements only the subset its backend supports; a method
 // made mandatory on Backend would break backends that cannot provide it.
 
+// ServiceEventBackend is the durable half of a resident session. Events
+// reference the immutable session id; metadata such as the next wake is still
+// keyed by the display name. A backend without it can still run an ephemeral
+// service, but events are not persisted, acked, or retried.
+type ServiceEventBackend interface {
+	AppendEvent(sessionID string, e core.Event) (int64, error)
+	AckEvents(sessionID string, ids []int64) error
+	NackEvent(sessionID string, id int64, cause error) error
+	DueEvents(sessionID string, now time.Time, limit int) ([]core.Event, error)
+	SetNextWake(name string, at *time.Time) error
+}
+
 // WorkspaceBackend resolves the immutable workspace when preparing a runtime.
 // The returned Meta carries the session's working directory and its creation time:
 // the runtime pins that birth time into the prompt head, so a fresh runtime

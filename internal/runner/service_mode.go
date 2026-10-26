@@ -1,0 +1,334 @@
+package runner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/Carudy/pai/internal/chat"
+	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/core"
+	"github.com/Carudy/pai/internal/provider"
+	"github.com/Carudy/pai/internal/role"
+)
+
+type serviceResult struct {
+	next *time.Time
+	err  error
+}
+
+// StartServices registers every persisted service with the scheduler. Chat
+// sessions are untouched. It is called once by the composition root after the
+// manager is built.
+func (m *Manager) StartServices() error {
+	metas, err := m.backend.List()
+	if err != nil {
+		return err
+	}
+	for _, meta := range metas {
+		if meta.Mode != ModeService {
+			continue
+		}
+		m.mu.Lock()
+		if m.closed || m.ctx.Err() != nil {
+			m.mu.Unlock()
+			return ErrClosed
+		}
+		m.serviceNames[meta.Name] = true
+		m.sessionIDs[meta.Name] = meta.ID
+		m.mu.Unlock()
+		m.scheduler.Register(meta.Name, meta.NextWake)
+	}
+	return nil
+}
+
+// RegisterService schedules a service by name without preparing its runtime.
+// The worker is created lazily on the first wake.
+func (m *Manager) RegisterService(name string, next *time.Time) {
+	m.scheduler.Register(name, next)
+}
+
+// WakeService delivers an already-built wake to a registered service.
+func (m *Manager) WakeService(name string, wake core.Wake) bool {
+	return m.scheduler.Wake(name, wake)
+}
+
+// Activate implements ServiceHost: it prepares or reuses the service's resident
+// worker, delivers one wake, and waits for that activation to end.
+func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*time.Time, error) {
+	w, err := m.serviceWorker(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(wake.Situation) == "" {
+		wake.Situation = renderSituation(wake)
+	}
+	return w.activate(ctx, wake)
+}
+
+func (m *Manager) isService(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.serviceNames[name] {
+		return true
+	}
+	w := m.entries[name]
+	return w != nil && w.mode == ModeService
+}
+
+// sendServiceEvent turns a user instruction into a durable EventUser and wakes
+// the scheduler, instead of pushing to a chat worker's task channel.
+func (m *Manager) sendServiceEvent(name, text string) error {
+	if err := validate(text); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if m.closed || m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return ErrClosed
+	}
+	id := m.sessionIDs[name]
+	known := m.serviceNames[name]
+	m.mu.Unlock()
+	if !known {
+		return ErrNotFound
+	}
+
+	ev := core.Event{
+		Session: id, Class: core.EventUser, Kind: "user_input", Source: "user",
+		Payload: text, At: time.Now(),
+	}
+	if eb, ok := m.backend.(ServiceEventBackend); ok && id != "" {
+		eid, err := eb.AppendEvent(id, ev)
+		if err != nil {
+			return fmt.Errorf("append user event: %w", err)
+		}
+		ev.ID = eid
+	}
+	wake := core.Wake{Reason: "user input", Events: []core.Event{ev}}
+	if m.scheduler.Wake(name, wake) {
+		return nil
+	}
+	// The session may be known but not yet registered (for example a service
+	// created after startup). Register it and retry once.
+	m.scheduler.Register(name, nil)
+	if m.scheduler.Wake(name, wake) {
+		return nil
+	}
+	return ErrNotFound
+}
+
+// serviceWorker returns the resident worker for a service, starting it on first
+// use. A failed preparation is reported through readyErr.
+func (m *Manager) serviceWorker(ctx context.Context, name string) (*worker, error) {
+	m.mu.Lock()
+	if m.closed || m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return nil, ErrClosed
+	}
+	w := m.entries[name]
+	if w == nil {
+		wctx, cancel := context.WithCancel(m.ctx)
+		w = &worker{
+			m: m, name: name, mode: ModeService, ctx: wctx, cancel: cancel,
+			done: make(chan struct{}), ready: make(chan struct{}),
+			activation: make(chan serviceResult, 1),
+			state:      StateStarting, phase: "starting",
+			tasks: make(chan string, 1), steering: make(chan string, 1),
+			subs: make(map[chan Event]struct{}),
+		}
+		m.entries[name] = w
+		m.wg.Add(1)
+		go w.runService()
+		m.mu.Unlock()
+	} else {
+		if w.mode != ModeService {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("session %q is not a service", name)
+		}
+		m.mu.Unlock()
+	}
+	select {
+	case <-w.ready:
+	case <-w.done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if w.readyErr != nil {
+		return nil, w.readyErr
+	}
+	return w, nil
+}
+
+// runService prepares the runtime once and then drives role.RunService across
+// wakes. The worker stays resident (suspended) between activations.
+func (w *worker) runService() {
+	defer w.m.wg.Done()
+	defer w.finishRun()
+
+	var (
+		copyCfg config.UserConfig
+		rt      *role.Runtime
+		rp      *chat.RolePrompt
+	)
+	cfg, p, rec, history, cleanup, meta, cwd, err := w.prepare()
+	if cleanup != nil {
+		defer cleanup()
+	}
+	if w.ctx.Err() != nil && err == nil {
+		err = w.ctx.Err()
+	}
+	if err == nil {
+		copyCfg = *cfg
+		if v := w.reasoningOverride(); v != "" {
+			copyCfg.ReasoningEffort = provider.ReasoningEffort(v)
+		}
+		rt = &role.Runtime{
+			WorkingDir: cwd, SessionBirth: meta.CreatedAt, TokenScale: meta.TokenScale,
+			Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w,
+			Interactive: false, SessionName: w.name,
+		}
+		rp, err = chat.LoadRolePromptForSession(copyCfg.DefaultRole, copyCfg.RoleExtra, copyCfg.RoleExtraTools, copyCfg.TrustedProjects, cwd, meta.CreatedAt)
+		if err == nil {
+			w.m.mu.Lock()
+			w.rt = rt
+			rt.TrustedCmds = w.m.commandTrustLocked(w.name)
+			rt.TrustedTools = w.m.toolTrustLocked(w.name)
+			w.model = copyCfg.DefaultModel
+			w.workingDir = cwd
+			w.contextTokens = copyCfg.Context.SummarizeAfterTokens
+			w.sessionID = meta.ID
+			w.m.serviceNames[w.name] = true
+			w.m.sessionIDs[w.name] = meta.ID
+			w.inbox = NewServiceInbox(1, w.serviceDone)
+			w.state = StateSuspended
+			w.phase = "suspended"
+			w.m.mu.Unlock()
+		}
+	}
+
+	w.m.mu.Lock()
+	w.readyErr = err
+	w.m.mu.Unlock()
+	close(w.ready)
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			w.m.mu.Lock()
+			w.failure = err.Error()
+			w.emitLocked("error", err.Error())
+			w.m.mu.Unlock()
+		}
+		return
+	}
+
+	err = role.RunService(w.ctx, &copyCfg, rt, rp, w.inbox, history)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		w.m.mu.Lock()
+		w.failure = err.Error()
+		w.emitLocked("error", err.Error())
+		w.m.mu.Unlock()
+	}
+}
+
+// activate marks the worker busy, hands one wake to RunService, and waits for
+// that activation to end.
+func (w *worker) activate(ctx context.Context, wake core.Wake) (*time.Time, error) {
+	w.m.mu.Lock()
+	if w.state == StateStopped || w.inbox == nil {
+		w.m.mu.Unlock()
+		return nil, ErrNotFound
+	}
+	w.state = StateBusy
+	w.phase = "waiting_model"
+	w.emitLocked(StateBusy, nil)
+	inbox := w.inbox
+	w.m.mu.Unlock()
+
+	if !inbox.Push(wake) {
+		return nil, errors.New("service inbox already has a pending wake")
+	}
+	select {
+	case result := <-w.activation:
+		return result.next, result.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-w.ctx.Done():
+		return nil, w.ctx.Err()
+	}
+}
+
+// serviceDone acknowledges the wake's events, returns the worker to suspended,
+// and releases the scheduler's activation slot.
+func (w *worker) serviceDone(wake core.Wake, cause error) error {
+	ackErr := w.ackWake(wake, cause)
+
+	w.m.mu.Lock()
+	if w.state != StateStopped {
+		w.state = StateSuspended
+		w.phase = "suspended"
+		w.emitLocked(StateSuspended, nil)
+	}
+	w.m.mu.Unlock()
+	select {
+	case w.activation <- serviceResult{err: cause}:
+	default:
+	}
+	return ackErr
+}
+
+func (w *worker) ackWake(wake core.Wake, cause error) error {
+	eb, ok := w.m.backend.(ServiceEventBackend)
+	if !ok || w.sessionID == "" {
+		return nil
+	}
+	ids := make([]int64, 0, len(wake.Events))
+	for _, ev := range wake.Events {
+		if ev.ID != 0 {
+			ids = append(ids, ev.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if cause == nil {
+		return eb.AckEvents(w.sessionID, ids)
+	}
+	var first error
+	for _, id := range ids {
+		if err := eb.NackEvent(w.sessionID, id, cause); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// renderSituation is the host's bounded projection of a wake. Telemetry never
+// enters the model's context; the rest is ranked and capped so one noisy event
+// cannot dominate the prompt.
+func renderSituation(wake core.Wake) string {
+	var b strings.Builder
+	b.WriteString("## Situation\n")
+	if wake.Reason != "" {
+		b.WriteString("Wake: " + wake.Reason + "\n")
+	}
+	for _, ev := range wake.Events {
+		if ev.Class == core.EventTelemetry {
+			continue
+		}
+		payload := ev.Payload
+		if len(payload) > 512 {
+			payload = payload[:512] + "…"
+		}
+		fmt.Fprintf(&b, "- [%s] %s: %s\n", ev.Class, ev.Source, payload)
+	}
+	const limit = 4 << 10
+	if b.Len() > limit {
+		return b.String()[:limit] + "\n[truncated]"
+	}
+	return b.String()
+}
+
+// Keep the compiler honest about the service-mode interface.
+var _ ServiceHost = (*Manager)(nil)

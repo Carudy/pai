@@ -164,6 +164,10 @@ func runServe(ctx context.Context, args []string, stdout io.Writer, log *tui.Log
 	defer stop()
 	manager := runner.New(runCtx, &serveBackend{store: store, cwd: cwd}, f.maxActive)
 	defer manager.Close()
+	if err := manager.StartServices(); err != nil {
+		log.Errorf("start services: %v\n", err)
+		return 1
+	}
 	handler := web.New(manager, web.Options{Token: token, PublicOrigin: f.publicOrigin, AllowOrigins: f.allowOrigins, ServerCwd: cwd, Identity: hostinfo.Identity()})
 	// Origin checks alone do not prevent DNS rebinding on unauthenticated loopback.
 	host := listener.Addr().String()

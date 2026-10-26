@@ -59,6 +59,13 @@ type Manager struct {
 	// lives here for the same reason as trustAll: it must outlast the worker
 	// recreated for each instruction.
 	reasoning map[string]string
+
+	// scheduler decides when a resident service runs; serviceNames/sessionIDs
+	// remember which sessions are services and their immutable identity without
+	// loading the backend on every Send.
+	scheduler    *Scheduler
+	serviceNames map[string]bool
+	sessionIDs   map[string]string
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {
@@ -66,7 +73,13 @@ func New(ctx context.Context, backend Backend, max int) *Manager {
 		max = 1
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	m := &Manager{ctx: ctx, cancel: cancel, backend: backend, max: max, entries: make(map[string]*worker)}
+	m := &Manager{
+		ctx: ctx, cancel: cancel, backend: backend, max: max,
+		entries:      make(map[string]*worker),
+		serviceNames: make(map[string]bool),
+		sessionIDs:   make(map[string]string),
+	}
+	m.scheduler = NewScheduler(ctx, m, max)
 	go func() { <-ctx.Done(); m.Close() }()
 	return m
 }
@@ -435,6 +448,12 @@ func (m *Manager) knownSessionLocked(name string) bool {
 }
 
 func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
+	if strings.TrimSpace(name) != "" && m.isService(name) {
+		if strings.TrimSpace(cwd) != "" {
+			return errors.New("a service session's workspace is fixed")
+		}
+		return m.sendServiceEvent(name, text)
+	}
 	if cwd != "" {
 		if _, ok := m.backend.(WorkspaceBackend); !ok {
 			return errors.New("backend does not support working directories")
@@ -803,6 +822,9 @@ func (m *Manager) Close() {
 		w.cancel()
 	}
 	m.mu.Unlock()
+	if m.scheduler != nil {
+		m.scheduler.Close()
+	}
 	m.wg.Wait()
 	m.mu.Lock()
 	defer m.mu.Unlock()

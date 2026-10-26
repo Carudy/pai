@@ -32,6 +32,75 @@ func serveMeta(m session.Meta) runner.Meta {
 		NextWake: m.NextWake, TokenScale: m.TokenScale()}
 }
 
+// The serve backend is the production implementation of the optional resident
+// ports. Events use the immutable session id; metadata stays name-keyed.
+var _ runner.ServiceEventBackend = (*serveBackend)(nil)
+
+func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
+	store, ok := b.store.(session.ServiceStore)
+	if !ok {
+		return nil, errors.New("session store does not expose service state")
+	}
+	return store, nil
+}
+
+func (b *serveBackend) AppendEvent(sessionID string, e core.Event) (int64, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return 0, err
+	}
+	e.Session = sessionID
+	return store.AppendEvent(e)
+}
+
+func (b *serveBackend) AckEvents(_ string, ids []int64) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return err
+	}
+	return store.AckEvents(ids)
+}
+
+func (b *serveBackend) NackEvent(_ string, id int64, cause error) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return err
+	}
+	msg := ""
+	if cause != nil {
+		msg = cause.Error()
+	}
+	// A failed activation is retried after a short backoff; the durable attempts
+	// count is there for a later dead-letter policy.
+	return store.NackEvent(id, time.Now().Add(30*time.Second), msg, false)
+}
+
+func (b *serveBackend) DueEvents(sessionID string, now time.Time, limit int) ([]core.Event, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.DueEvents(sessionID, now, limit)
+}
+
+func (b *serveBackend) SetNextWake(name string, at *time.Time) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return err
+	}
+	return store.SetNextWake(name, at)
+}
+
 func (b *serveBackend) List() ([]runner.Meta, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
