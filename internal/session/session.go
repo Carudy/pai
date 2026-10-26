@@ -10,6 +10,7 @@
 package session
 
 import (
+	crand "crypto/rand"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -28,6 +29,9 @@ var (
 
 // Meta describes a session without loading its turns.
 type Meta struct {
+	// ID is the immutable identity used by events, watchers, mail, and tasks. It
+	// survives a rename; Name stays the display key for turns and CLI commands.
+	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Role      string    `json:"role"`
 	Model     string    `json:"model"`
@@ -36,6 +40,12 @@ type Meta struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Turns     int       `json:"turns,omitempty"`
+
+	// Mode is "chat" or "service". State is the last persisted runtime state; a
+	// service's NextWake is when the scheduler should wake it.
+	Mode     string     `json:"mode,omitempty"`
+	State    string     `json:"state,omitempty"`
+	NextWake *time.Time `json:"next_wake,omitempty"`
 
 	// PromptTokens and PromptEstimate are the last request's prompt size as the
 	// provider reported it, and the size PAI's estimator predicted for that same
@@ -90,6 +100,10 @@ func NewName() string {
 	}
 	return time.Now().Format("20060102-150405") + "-" + string(suffix)
 }
+
+// newID returns an immutable session identity. crypto/rand.Text is opaque,
+// unguessable, and has no storage or decoding requirements; it is not a name.
+func newID() string { return crand.Text() }
 
 // validate returns an error if name is not usable.
 func validate(name string) error {

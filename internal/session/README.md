@@ -9,7 +9,10 @@ See the [module map](../organization.md) for the storage adapter boundary.
   cgo-free). `Backend` names the engine for display.
 - `Store` creates, loads, lists, appends, renames, and deletes sessions.
 - `Meta` includes role, model, cwd, title, timestamps, and turn count;
-  `Session` pairs metadata with ordered `core.Turn` history.
+  `Session` pairs metadata with ordered `core.Turn` history. `Meta.ID` is the
+  immutable identity used by events, watchers, mail, and tasks; `Name` stays the
+  display key and is what turns and the CLI reference. `Meta.Mode` (chat or
+  service), `Meta.State`, and `Meta.NextWake` carry resident-session state.
 - `Store.SetModel`, `Store.SetRole`, `Store.SetWorkingDir`, and `Store.Truncate`
   change saved metadata or history without touching the rest; `Rename`/`Delete`
   round out the set.
@@ -33,6 +36,23 @@ See the [module map](../organization.md) for the storage adapter boundary.
   inspector and the chat cards can show and toggle it.
 - `NewRecorder` implements `core.Recorder`; `controller.go` adapts session
   operations to the loop's storage port.
+
+## Service state
+
+- `ServiceStore` is implemented by the SQLite store (type-assert a `Store`). It
+  persists a service's status document, manifest spec, next wake, a durable
+  `core.Event` queue, and its watchers. Events use states
+  `pending/leased/done/dead`; a lease left by a crash is reset to pending on the
+  next open, and a dedupe key replaces an existing pending event rather than
+  stacking duplicates. Watchers are keyed by `(session_id, name)` and keep their
+  last observed state, next run, and last error.
+- State changes (`SetServiceState`, `SetNextWake`, `SetUsage`) deliberately leave
+  `updated_at` alone: a timer probe must not reorder the session list every cycle.
+- `ServiceInfo` adds the status document and manifest spec to `Meta`, so listing
+  chat sessions does not load either.
+- Migrations are additive: existing databases gain `id`, `mode`, `state`,
+  `status`, `spec`, and `next_wake`, rows are backfilled with an immutable id, and
+  `PRAGMA user_version` is set. Budget columns are deferred for 0.9.x.
 
 ## Ownership and boundaries
 

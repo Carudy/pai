@@ -82,7 +82,109 @@ CREATE TABLE IF NOT EXISTS turn_overrides (
 	if err := s.ensureColumn("turns", "essential", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	// Service-session columns. The immutable id is added and backfilled before the
+	// unique index and the tables that reference it. Budget columns are deferred
+	// for 0.9.x; they are additive when they land.
+	for _, col := range [][2]string{
+		{"id", "TEXT"},
+		{"mode", "TEXT NOT NULL DEFAULT 'chat'"},
+		{"state", "TEXT NOT NULL DEFAULT ''"},
+		{"status", "TEXT NOT NULL DEFAULT ''"},
+		{"spec", "TEXT NOT NULL DEFAULT '{}'"},
+		{"next_wake", "INTEGER"},
+	} {
+		if err := s.ensureColumn("sessions", col[0], col[1]); err != nil {
+			return err
+		}
+	}
+	if err := s.backfillIDs(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS sessions_id ON sessions(id)`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`
+CREATE TABLE IF NOT EXISTS events (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id   TEXT    NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  class        INTEGER NOT NULL,
+  kind         TEXT    NOT NULL,
+  source       TEXT    NOT NULL,
+  payload      TEXT    NOT NULL,
+  dedup_key    TEXT,
+  created_at   INTEGER NOT NULL,
+  available_at INTEGER NOT NULL,
+  deadline     INTEGER,
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  state        TEXT    NOT NULL DEFAULT 'pending',
+  lease_until  INTEGER,
+  last_error   TEXT
+);
+CREATE INDEX IF NOT EXISTS events_due ON events(session_id, state, available_at);
+CREATE UNIQUE INDEX IF NOT EXISTS events_dedup
+  ON events(session_id, dedup_key) WHERE dedup_key IS NOT NULL AND state = 'pending';
+CREATE TABLE IF NOT EXISTS watchers (
+  id          TEXT PRIMARY KEY,
+  session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  spec        TEXT NOT NULL,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  approved_at INTEGER,
+  last_run    INTEGER,
+  next_run    INTEGER,
+  last_state  TEXT NOT NULL DEFAULT '',
+  last_error  TEXT NOT NULL DEFAULT '',
+  version     INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (session_id, name)
+);`); err != nil {
+		return err
+	}
+	// No worker survives the process, so a lease left by a crash is pending work.
+	if err := s.ResetLeases(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`PRAGMA user_version = 1`); err != nil {
+		return err
+	}
 	return nil
+}
+
+// backfillIDs gives every session created before the identity column an
+// immutable id. It runs in one transaction so the unique index cannot be
+// created against a half-migrated table.
+func (s *sqliteStore) backfillIDs() error {
+	rows, err := s.db.Query(`SELECT name FROM sessions WHERE id IS NULL OR id = ''`)
+	if err != nil {
+		return err
+	}
+	var names []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if len(names) == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, name := range names {
+		if _, err := tx.Exec(`UPDATE sessions SET id = ? WHERE name = ?`, newID(), name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // ensureColumn adds a column when an older database predates it. table and decl are
@@ -119,11 +221,18 @@ func (s *sqliteStore) Create(meta Meta) (*Session, error) {
 	if err := validate(meta.Name); err != nil {
 		return nil, err
 	}
+	// A session's identity is local and opaque: always mint a new one. Callers may
+	// copy a Meta to create a related session (a rewind backup, for example), and
+	// reusing its id would collide with the original.
+	meta.ID = newID()
+	if meta.Mode == "" {
+		meta.Mode = "chat"
+	}
 	now := time.Now()
 	res, err := s.db.Exec(
-		`INSERT OR IGNORE INTO sessions(name, role, model, cwd, title, created_at, updated_at)
-		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
-		meta.Name, meta.Role, meta.Model, meta.Cwd, meta.Title, now.Unix(), now.Unix())
+		`INSERT OR IGNORE INTO sessions(name, id, role, model, cwd, title, created_at, updated_at, mode)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		meta.Name, meta.ID, meta.Role, meta.Model, meta.Cwd, meta.Title, now.Unix(), now.Unix(), meta.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -139,11 +248,12 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 		m         Meta
 		createdAt int64
 		updatedAt int64
+		nextWake  sql.NullInt64
 	)
 	err := s.db.QueryRow(
-		`SELECT name, role, model, cwd, title, created_at, updated_at, prompt_tokens, prompt_estimate
+		`SELECT name, id, role, model, cwd, title, created_at, updated_at, prompt_tokens, prompt_estimate, mode, state, next_wake
 		 FROM sessions WHERE name = ?`, name).
-		Scan(&m.Name, &m.Role, &m.Model, &m.Cwd, &m.Title, &createdAt, &updatedAt, &m.PromptTokens, &m.PromptEstimate)
+		Scan(&m.Name, &m.ID, &m.Role, &m.Model, &m.Cwd, &m.Title, &createdAt, &updatedAt, &m.PromptTokens, &m.PromptEstimate, &m.Mode, &m.State, &nextWake)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 	}
@@ -151,6 +261,7 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 		return nil, err
 	}
 	m.CreatedAt, m.UpdatedAt = time.Unix(createdAt, 0), time.Unix(updatedAt, 0)
+	m.NextWake = unixPtr(nextWake)
 
 	rows, err := s.db.Query(`SELECT seq, role, kind, content, at, essential FROM turns WHERE name = ? ORDER BY seq`, name)
 	if err != nil {
@@ -222,8 +333,9 @@ func (s *sqliteStore) Latest(cwd string) (*Session, error) {
 
 func (s *sqliteStore) List() ([]Meta, error) {
 	rows, err := s.db.Query(`
-SELECT s.name, s.role, s.model, s.cwd, s.title, s.created_at, s.updated_at,
-       (SELECT COUNT(1) FROM turns t WHERE t.name = s.name)
+SELECT s.name, s.id, s.role, s.model, s.cwd, s.title, s.created_at, s.updated_at,
+       (SELECT COUNT(1) FROM turns t WHERE t.name = s.name),
+       s.mode, s.state, s.next_wake
 FROM sessions s ORDER BY s.updated_at DESC, s.name`)
 	if err != nil {
 		return nil, err
@@ -237,11 +349,13 @@ FROM sessions s ORDER BY s.updated_at DESC, s.name`)
 			createdAt int64
 			updatedAt int64
 			turns     int
+			nextWake  sql.NullInt64
 		)
-		if err := rows.Scan(&m.Name, &m.Role, &m.Model, &m.Cwd, &m.Title, &createdAt, &updatedAt, &turns); err != nil {
+		if err := rows.Scan(&m.Name, &m.ID, &m.Role, &m.Model, &m.Cwd, &m.Title, &createdAt, &updatedAt, &turns, &m.Mode, &m.State, &nextWake); err != nil {
 			return nil, err
 		}
 		m.CreatedAt, m.UpdatedAt, m.Turns = time.Unix(createdAt, 0), time.Unix(updatedAt, 0), turns
+		m.NextWake = unixPtr(nextWake)
 		metas = append(metas, m)
 	}
 	return metas, rows.Err()

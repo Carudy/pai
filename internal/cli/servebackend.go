@@ -27,8 +27,9 @@ type serveBackend struct {
 }
 
 func serveMeta(m session.Meta) runner.Meta {
-	return runner.Meta{Name: m.Name, Role: m.Role, Model: m.Model, Cwd: m.Cwd,
-		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, TokenScale: m.TokenScale()}
+	return runner.Meta{Name: m.Name, ID: m.ID, Role: m.Role, Model: m.Model, Cwd: m.Cwd,
+		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Mode: m.Mode, State: m.State,
+		NextWake: m.NextWake, TokenScale: m.TokenScale()}
 }
 
 func (b *serveBackend) List() ([]runner.Meta, error) {

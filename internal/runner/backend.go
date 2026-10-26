@@ -20,6 +20,13 @@ type Meta struct {
 	Cwd       string    `json:"cwd"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// ID is the immutable identity events, watchers, mail, and tasks reference.
+	// Name remains the display key used by the CLI and web routes.
+	ID string `json:"id,omitempty"`
+	// Mode is "chat" or "service"; State is the last persisted runtime state.
+	Mode     string     `json:"mode,omitempty"`
+	State    string     `json:"state,omitempty"`
+	NextWake *time.Time `json:"next_wake,omitempty"`
 	// TokenScale converts PAI's token estimate into the provider's own accounting,
 	// learned from the session's last request. Zero means uncalibrated.
 	TokenScale float64 `json:"token_scale,omitempty"`
