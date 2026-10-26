@@ -490,6 +490,18 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, 200, snapshot)
+	case "/api/service":
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		// The read side of `pai service show`: the CLI needs the store lock, so a
+		// running server is the only way to inspect a resident session.
+		view, err := h.manager.ServiceView(r.URL.Query().Get("name"))
+		if err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, view)
 	case "/api/events":
 		if !method(w, r, http.MethodGet) {
 			return

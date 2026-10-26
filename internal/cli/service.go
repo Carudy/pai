@@ -32,7 +32,8 @@ Creating a manifest with command watchers requires --yes: a command probe is
 persistent code execution on a schedule, so review it first. report_every is
 stored as the reserved timer watcher _report and shown with the others.
 
-The session store is exclusive, so stop ` + "`pai serve`" + ` before running create/show/list.`
+The session store is exclusive, so stop ` + "`pai serve`" + ` before running create/show/list.
+While a server is running, GET /api/service?name=<name> returns the same view.`
 }
 
 func runServiceCmd(_ context.Context, args []string, stdout io.Writer, log *tui.Logger) int {

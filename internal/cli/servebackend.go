@@ -37,6 +37,7 @@ func serveMeta(m session.Meta) runner.Meta {
 var _ runner.ServiceEventBackend = (*serveBackend)(nil)
 var _ runner.ServiceWatcherBackend = (*serveBackend)(nil)
 var _ runner.ServiceStateBackend = (*serveBackend)(nil)
+var _ runner.ServiceBackend = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 	store, ok := b.store.(session.ServiceStore)
@@ -125,6 +126,32 @@ func (b *serveBackend) ServiceSpec(name string) (string, error) {
 		return "", err
 	}
 	return info.Spec, nil
+}
+
+func (b *serveBackend) ServiceView(name string) (runner.ServiceView, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	info, err := store.ServiceInfo(name)
+	if err != nil {
+		return runner.ServiceView{}, fmt.Errorf("%w: %s", runner.ErrNotFound, name)
+	}
+	watchers, err := store.Watchers(info.ID)
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	view := runner.ServiceView{Meta: serveMeta(info.Meta), Status: info.Status, Spec: info.Spec}
+	for _, w := range watchers {
+		view.Watchers = append(view.Watchers, runner.WatcherState{
+			ID: w.ID, SessionID: w.SessionID, Name: w.Name, Spec: w.Spec,
+			Enabled: w.Enabled, ApprovedAt: w.ApprovedAt,
+			LastRun: w.LastRun, NextRun: w.NextRun, LastState: w.LastState, LastError: w.LastError,
+		})
+	}
+	return view, nil
 }
 
 func (b *serveBackend) Watchers(sessionID string) ([]runner.WatcherState, error) {

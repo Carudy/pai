@@ -164,6 +164,35 @@ func (m *Manager) sendServiceEvent(name, text string) error {
 	return ErrNotFound
 }
 
+// ServiceView reports one resident session: durable state from the store, plus
+// the live phase and last error when the worker is prepared. It is the read side
+// of `pai service show`, available while a server holds the store lock.
+func (m *Manager) ServiceView(name string) (ServiceView, error) {
+	backend, ok := m.backend.(ServiceBackend)
+	if !ok {
+		return ServiceView{}, errors.New("this backend does not expose service views")
+	}
+	view, err := backend.ServiceView(name)
+	if err != nil {
+		return ServiceView{}, err
+	}
+	if view.Mode != ModeService {
+		return ServiceView{}, fmt.Errorf("%w: %s", ErrNotFound, name)
+	}
+	m.mu.Lock()
+	if w := m.entries[name]; w != nil {
+		if w.phase != "" {
+			view.Phase = w.phase
+		}
+		if w.state != "" {
+			view.State = w.state
+		}
+		view.Error = w.failure
+	}
+	m.mu.Unlock()
+	return view, nil
+}
+
 // serviceWorker returns the resident worker for a service, starting it on first
 // use. A failed preparation is reported through readyErr.
 func (m *Manager) serviceWorker(ctx context.Context, name string) (*worker, error) {

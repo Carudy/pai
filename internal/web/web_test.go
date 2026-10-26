@@ -1505,3 +1505,49 @@ func TestActionsAndSSEReconnect(t *testing.T) {
 	post("cancel", `{"name":"one"}`, 202)
 	post("steer", `{"name":"one","text":"/help"}`, 400)
 }
+
+// serviceViewBackend exposes one service; everything else falls through to the
+// plain test backend.
+type serviceViewBackend struct{ backend }
+
+func (serviceViewBackend) ServiceView(name string) (runner.ServiceView, error) {
+	if name != "svc" {
+		return runner.ServiceView{}, fmt.Errorf("%w: %s", runner.ErrNotFound, name)
+	}
+	return runner.ServiceView{
+		Meta:   runner.Meta{Name: "svc", ID: "sid-1", Mode: runner.ModeService, State: "parked"},
+		Status: "level 3.8 m, above the warning band",
+		Spec:   `{"goal":"watch the river"}`,
+		Phase:  "parked",
+		Watchers: []runner.WatcherState{
+			{ID: "w1", Name: "river", Enabled: true, LastState: `{"value":"3.8"}`},
+		},
+	}, nil
+}
+
+// The service view is readable while a server holds the store lock: it carries
+// the last report, the manifest, and the probes, which /api/sessions does not.
+func TestServiceViewAPI(t *testing.T) {
+	m := runner.New(context.Background(), serviceViewBackend{}, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+
+	w := request(h, http.MethodGet, "/api/service?name=svc", "", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("service view: %d %s", w.Code, w.Body.String())
+	}
+	var view runner.ServiceView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Name != "svc" || view.Mode != runner.ModeService || view.State != "parked" {
+		t.Fatalf("view = %+v", view)
+	}
+	if !strings.Contains(view.Status, "level 3.8") || len(view.Watchers) != 1 || view.Watchers[0].Name != "river" {
+		t.Fatalf("view detail = %+v", view)
+	}
+
+	if w := request(h, http.MethodGet, "/api/service?name=nope", "", nil, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown service = %d, want 404", w.Code)
+	}
+}

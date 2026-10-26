@@ -150,16 +150,35 @@ type ServiceWatcherBackend interface {
 // WatcherState mirrors one persisted probe. Spec is config.MarshalWatcherSpec's
 // JSON; the runner parses it only through config, so it needs no session types.
 type WatcherState struct {
-	ID         string
-	SessionID  string
-	Name       string
-	Spec       string
-	Enabled    bool
-	ApprovedAt *time.Time
-	LastRun    *time.Time
-	NextRun    *time.Time
-	LastState  string
-	LastError  string
+	ID         string     `json:"id,omitempty"`
+	SessionID  string     `json:"session_id,omitempty"`
+	Name       string     `json:"name"`
+	Spec       string     `json:"spec,omitempty"`
+	Enabled    bool       `json:"enabled"`
+	ApprovedAt *time.Time `json:"approved_at,omitempty"`
+	LastRun    *time.Time `json:"last_run,omitempty"`
+	NextRun    *time.Time `json:"next_run,omitempty"`
+	LastState  string     `json:"last_state,omitempty"`
+	LastError  string     `json:"last_error,omitempty"`
+}
+
+// ServiceView is the projection a client needs to inspect one resident session:
+// durable metadata, the last status document, the manifest, and the probes.
+// Phase and Error are filled from a live worker when one exists.
+type ServiceView struct {
+	Meta
+	Status   string         `json:"status,omitempty"`
+	Spec     string         `json:"spec,omitempty"`
+	Phase    string         `json:"phase,omitempty"`
+	Error    string         `json:"error,omitempty"`
+	Watchers []WatcherState `json:"watchers,omitempty"`
+}
+
+// ServiceBackend reads one service without requiring a live runtime. A backend
+// without it cannot serve service inspection, but the CLI can still read its own
+// store directly.
+type ServiceBackend interface {
+	ServiceView(name string) (ServiceView, error)
 }
 
 // WorkspaceBackend resolves the immutable workspace when preparing a runtime.
