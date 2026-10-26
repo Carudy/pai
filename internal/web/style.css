@@ -2140,3 +2140,212 @@ header p {
 :root[data-theme="dark"] .primary {
     color: #0b0b0d;
 }
+
+/* ── Sidebar mode tabs and the create panel ───────────────── */
+.new-session {
+    width: 100%;
+}
+
+.session-tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 2px;
+}
+
+.session-tabs button {
+    flex: 1;
+    padding: 5px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: var(--soft);
+    color: var(--muted);
+    font-size: 12px;
+    font-style: normal;
+}
+
+.session-tabs button.selected {
+    background: var(--link-bg);
+    border-color: var(--link-border);
+    color: var(--link-ink);
+    font-weight: 650;
+}
+
+/* Only services carry a state in the list; chat rows stay name-only. */
+.session-row .session-state {
+    align-self: center;
+    flex: 0 0 auto;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--soft);
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.session-row .session-state[data-state='busy'] {
+    background: var(--complete-bg);
+    color: var(--complete-ink);
+}
+
+.session-row .session-state[data-state='parked'] {
+    color: var(--red);
+    border: 1px solid var(--border);
+    background: transparent;
+}
+
+.panel-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: #00000066;
+}
+
+.panel-overlay[hidden] {
+    display: none;
+}
+
+.panel-card {
+    width: min(760px, 100%);
+    max-height: 90vh;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--panel);
+    box-shadow: var(--shadow);
+}
+
+.panel-card header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.panel-card h2 {
+    margin: 0;
+    font-size: 18px;
+}
+
+.create-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.create-form[hidden] {
+    display: none;
+}
+
+.create-form textarea {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.create-form .check {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.muted {
+    color: var(--muted);
+}
+
+/* ── Service view above the conversation ──────────────────── */
+#service-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 8px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+}
+
+#service-panel[hidden] {
+    display: none;
+}
+
+.service-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.service-badge {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--soft);
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.service-badge[data-state='busy'] {
+    background: var(--complete-bg);
+    color: var(--complete-ink);
+}
+
+.service-badge[data-state='parked'] {
+    color: var(--red);
+}
+
+.service-next {
+    flex: 1;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.service-status {
+    margin: 0;
+    font-size: 13px;
+    white-space: pre-wrap;
+}
+
+#service-panel summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.watcher-row {
+    display: grid;
+    grid-template-columns: minmax(8ch, 1fr) auto auto minmax(0, 2fr);
+    gap: 8px;
+    align-items: baseline;
+    padding: 4px 0;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+}
+
+.watcher-name {
+    font-weight: 650;
+}
+
+.watcher-meta,
+.watcher-times {
+    color: var(--muted);
+}
+
+.watcher-state {
+    overflow-wrap: anywhere;
+}
+
+.watcher-state.error {
+    color: var(--red);
+}
+
+#service-manifest-view {
+    max-height: 220px;
+    overflow: auto;
+    font-size: 11px;
+}

@@ -32,25 +32,10 @@
                     <p id="identity" class="identity" hidden></p>
                 </div>
                 <hr class="response-divider">
-                <form id="new-session">
-                    <label for="session-name">New Session</label>
-                    <input id="session-name" maxlength="256" placeholder="Session name" required />
-                    <label for="session-cwd">Working DIR</label>
-                    <input id="session-cwd" placeholder="PAI serving DIR" aria-describedby="cwd-hint" />
-                    <fieldset id="role-fieldset" class="role-fieldset">
-                        <legend>Role</legend>
-                        <div
-                            id="session-role"
-                            class="role-options"
-                            role="radiogroup"
-                            aria-label="Role"
-                        ></div>
-                    </fieldset>
-                    <button id="create-session" class="primary" type="submit">Create</button>
-                </form>
+                <button id="open-create" class="primary new-session" type="button">+ New session</button>
                 <hr class="response-divider">
                 <div class="panel-head">
-                    <h2 id="sessions-heading">Sessions</h2>
+                    <h2 id="sessions-heading">Chat</h2>
                     <button
                         id="toggle-sessions-list"
                         type="button"
@@ -61,6 +46,10 @@
                     >
                         <span class="chevron" aria-hidden="true">▾</span></button
                     >
+                </div>
+                <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Session mode">
+                    <button id="tab-chat" type="button" role="tab" aria-selected="true" aria-controls="sessions">Chat</button
+                    ><button id="tab-service" type="button" role="tab" aria-selected="false" aria-controls="sessions">Services</button>
                 </div>
                 <div id="sessions-body">
                     <p id="sessions-status" role="status">Loading sessions…</p>
@@ -172,6 +161,22 @@
                         </header>
                         <div id="context-body"></div>
                     </section>
+                    <section id="service-panel" aria-label="Service" hidden>
+                        <div class="service-head">
+                            <span id="service-state" class="service-badge"></span>
+                            <span id="service-next" class="service-next"></span>
+                            <button id="refresh-service" type="button" title="Reload this service view">↻</button>
+                        </div>
+                        <p id="service-status" class="service-status"></p>
+                        <details id="service-watchers-box" open>
+                            <summary>Watchers</summary>
+                            <div id="service-watchers" class="service-watchers"></div>
+                        </details>
+                        <details id="service-manifest-box">
+                            <summary>Manifest</summary>
+                            <pre id="service-manifest-view"></pre>
+                        </details>
+                    </section>
                     <div id="conversation">
                         <section id="history" aria-label="Conversation">
                             <div class="empty">
@@ -278,6 +283,45 @@
                     <div id="live-progress"></div>
                 </div>
             </aside>
+        </div>
+        <div id="create-panel" class="panel-overlay" hidden>
+            <div class="panel-card" role="dialog" aria-modal="true" aria-labelledby="create-title">
+                <header>
+                    <h2 id="create-title">New session</h2>
+                    <button id="close-create" type="button" title="Close" aria-label="Close">✕</button>
+                </header>
+                <div id="create-tabs" class="session-tabs" role="tablist" aria-label="New session mode">
+                    <button id="create-tab-chat" type="button" role="tab" aria-selected="true">Chat</button
+                    ><button id="create-tab-service" type="button" role="tab" aria-selected="false">Service</button>
+                </div>
+                <form id="new-session" class="create-form">
+                    <label for="session-name">Name</label>
+                    <input id="session-name" maxlength="256" placeholder="Session name" required />
+                    <label for="session-cwd">Working DIR</label>
+                    <input id="session-cwd" placeholder="Defaults to the server directory" aria-describedby="cwd-hint" />
+                    <fieldset id="role-fieldset" class="role-fieldset">
+                        <legend>Role</legend>
+                        <div
+                            id="session-role"
+                            class="role-options"
+                            role="radiogroup"
+                            aria-label="Role"
+                        ></div>
+                    </fieldset>
+                    <button id="create-session" class="primary" type="submit">Create</button>
+                </form>
+                <form id="new-service" class="create-form" hidden>
+                    <label for="service-name">Name</label>
+                    <input id="service-name" maxlength="256" placeholder="Service name" required />
+                    <label for="service-manifest">Manifest (TOML)</label>
+                    <textarea id="service-manifest" rows="14" spellcheck="false"></textarea>
+                    <label class="check" for="service-approve">
+                        <input id="service-approve" type="checkbox" />
+                        I reviewed the command watchers; they may run on a schedule
+                    </label>
+                    <button id="create-service" class="primary" type="submit">Create service</button>
+                </form>
+            </div>
         </div>
     </body>
 </html>

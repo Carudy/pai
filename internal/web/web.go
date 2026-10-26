@@ -142,9 +142,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
-		if name == "" || isSessionPath(r.URL.Path) {
-			// A session URL serves the same single-page shell as "/": the app reads
-			// the name from the path and falls back cleanly when it is unknown.
+		if name == "" || isSessionPath(r.URL.Path) || isDashboardPath(r.URL.Path) {
+			// A session or dashboard URL serves the same single-page shell as "/":
+			// the app reads the route from the path and falls back cleanly when it
+			// is unknown.
 			name = "index.html"
 		}
 		if !assetSet[name] {
@@ -720,6 +721,13 @@ func parseOrigin(value string) (*url.URL, bool) {
 func isSessionPath(path string) bool {
 	rest, ok := strings.CutPrefix(path, "/session/")
 	return ok && rest != "" && !strings.Contains(rest, "/")
+}
+
+// isDashboardPath matches the empty workspace: "/dashboard" shows chat sessions,
+// "/dashboard/service" the resident ones. Both serve the same shell.
+func isDashboardPath(path string) bool {
+	path = strings.TrimSuffix(path, "/")
+	return path == "/dashboard" || path == "/dashboard/service"
 }
 
 // sameOrigin reports whether a mutating request came from an origin this handler

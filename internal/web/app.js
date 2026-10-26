@@ -6,6 +6,15 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let selected = '', generation = 0, stream = null, retry = null, lastEventAt = 0, refreshTimer = null, sessionBusy = false;
+// Sidebar mode: one list, filtered by whether a session is chat or a resident
+// service. It is URL state (/dashboard vs /dashboard/service), never local
+// storage, for the same reason the selected session is.
+let sessionMode = 'chat';
+// The service view for the open session, and the request counter that keeps a
+// slow refresh from painting over a newer one.
+let serviceView = null, serviceRequest = 0, serviceTimer = null;
+let serverCwd = '';
+let createMode = 'chat';
 // Reconnect delay for the event stream: back off while the server is unreachable
 // (or a session has no live worker) instead of hammering it every few seconds.
 let retryDelay = 2500;
@@ -467,8 +476,9 @@ async function sessions(reset = false) {
   if (reset) { sessionOffset = 0; $('sessions').replaceChildren(); }
   $('sessions-status').replaceChildren(spinner(), text('span', 'Loading sessions…'));
   let page;
-  try { page = await api('sessions?offset=' + sessionOffset + '&limit=100'); }
+  try { page = await api('sessions?offset=' + sessionOffset + '&limit=100&mode=' + sessionMode); }
   catch (e) { $('sessions-status').textContent = 'Could not load sessions. Please retry or reload.'; throw e; }
+  if (typeof page.default_cwd === 'string') serverCwd = page.default_cwd;
   for (const meta of page.sessions || []) {
     const row = text('div', '', 'session-row');
     row.dataset.name = meta.name;
@@ -482,13 +492,153 @@ async function sessions(reset = false) {
     remove.title = 'Delete this session';
     remove.setAttribute('aria-label', 'Delete session ' + meta.name);
     remove.onclick = event => { event.stopPropagation(); return deleteSession(meta.name); };
-    row.append(button, remove);
+    row.append(button);
+    if (meta.mode === 'service') {
+      // A service's state is the interesting part of the row: it says whether the
+      // session is asleep, parked on a question, or working.
+      const state = text('span', String(meta.state || 'stored'), 'session-state');
+      state.dataset.state = String(meta.state || 'stored');
+      if (meta.next_wake) state.title = 'next wake ' + formatTime(meta.next_wake);
+      row.append(state);
+    }
+    row.append(remove);
     $('sessions').append(row);
   }
   sessionOffset += (page.sessions || []).length; $('more-sessions').hidden = sessionOffset >= page.total;
-  $('sessions-status').textContent = sessionOffset ? '' : 'No saved sessions yet. Create a named session above.';
+  $('sessions-status').textContent = sessionOffset ? '' : (sessionMode === 'service' ? 'No services yet. Create one to run on its own schedule.' : 'No saved sessions yet. Create a named session above.');
   return page.sessions || [];
 }
+
+// ── Sidebar mode and the service view ──────────────────────
+function validMode(mode) { return mode === 'service' ? 'service' : 'chat'; }
+
+function applyModeUI() {
+  const service = sessionMode === 'service';
+  $('tab-chat').setAttribute('aria-selected', String(!service));
+  $('tab-service').setAttribute('aria-selected', String(service));
+  $('tab-chat').classList.toggle('selected', !service);
+  $('tab-service').classList.toggle('selected', service);
+  $('sessions-heading').textContent = service ? 'Services' : 'Chat';
+  $('sessions').setAttribute('aria-label', service ? 'Services' : 'Chat sessions');
+  if (!service) { $('service-panel').hidden = true; serviceView = null; }
+  if (!selected) {
+    $('title').textContent = service ? 'Select or create a service' : 'Select or create a session';
+    paintEmpty();
+  }
+}
+
+function setMode(mode, { url = true, load = true } = {}) {
+  sessionMode = validMode(mode);
+  applyModeUI();
+  if (url && !selected) setDashboardURL(sessionMode, false);
+  if (load) sessions(true).catch(error);
+}
+
+function paintEmpty() {
+  if (selected) return;
+  const empty = text('div', '', 'empty');
+  if (sessionMode === 'service') {
+    empty.append(text('h3', 'Resident services'), text('p', 'A service wakes on its own schedule, probes the world, and reports only when something changed. Select one to inspect it, or create one above.'));
+  } else {
+    empty.append(text('h3', 'Best partner, PAI!'), text('p', 'Open a named session to start working with PAI.'));
+  }
+  $('history').replaceChildren(empty);
+}
+
+// The dashboard paths carry the sidebar mode, matching the rule that the URL is
+// the only authority for what the page shows.
+function dashboardPath(mode) { return validMode(mode) === 'service' ? '/dashboard/service' : '/dashboard'; }
+function routeFromURL() {
+  const path = globalThis.location.pathname || '/';
+  const match = path.match(/^\/session\/([^/]+)$/);
+  if (match) {
+    try { return { name: decodeURIComponent(match[1]) }; } catch { return { name: '' }; }
+  }
+  return { mode: /^\/dashboard\/service\/?$/.test(path) ? 'service' : 'chat' };
+}
+
+async function loadService() {
+  if (!selected || sessionMode !== 'service') { serviceView = null; $('service-panel').hidden = true; return; }
+  const request = ++serviceRequest, name = selected;
+  try {
+    const view = await api('service?name=' + encodeURIComponent(name));
+    if (request !== serviceRequest || selected !== name) return;
+    serviceView = view;
+    paintService();
+  } catch (e) {
+    if (request !== serviceRequest) return;
+    if (e.status === 404) { serviceView = null; $('service-panel').hidden = true; return; }
+    error(e);
+  }
+}
+function scheduleService() { clearTimeout(serviceTimer); serviceTimer = setTimeout(() => { loadService().catch(() => {}); }, 400); }
+
+function specOf(watcher) {
+  try { return JSON.parse(watcher.spec || '{}'); } catch { return {}; }
+}
+function paintService() {
+  const view = serviceView;
+  if (!view) { $('service-panel').hidden = true; return; }
+  $('service-panel').hidden = false;
+  const state = String(view.state || 'stored');
+  const badge = $('service-state');
+  badge.textContent = view.phase && view.phase !== state ? state + ' · ' + view.phase : state;
+  badge.dataset.state = state;
+  $('service-next').textContent = view.next_wake ? 'next wake ' + formatTime(view.next_wake) : 'no timer';
+  $('service-status').textContent = view.status ? view.status : 'No report yet.';
+
+  const box = $('service-watchers');
+  box.replaceChildren();
+  const watchers = view.watchers || [];
+  if (!watchers.length) box.append(text('p', 'No watchers: this service only wakes when you send it something.', 'muted'));
+  for (const w of watchers) {
+    const spec = specOf(w);
+    const row = text('div', '', 'watcher-row');
+    const label = w.name === '_report' ? 'report (heartbeat)' : w.name;
+    row.append(text('span', label, 'watcher-name'));
+    row.append(text('span', [spec.kind || 'timer', spec.every].filter(Boolean).join(' · '), 'watcher-meta'));
+    row.append(text('span', 'last ' + (formatTime(w.last_run) || '—') + ' · next ' + (formatTime(w.next_run) || '—'), 'watcher-times'));
+    const detail = w.last_error || w.last_state || '';
+    const tail = text('span', detail.length > 120 ? detail.slice(0, 120) + '…' : detail, 'watcher-state');
+    if (w.last_error) tail.classList.toggle('error', true);
+    row.append(tail);
+    box.append(row);
+  }
+
+  let manifest = view.spec || '';
+  try { manifest = JSON.stringify(JSON.parse(manifest), null, 2); } catch { /* show it raw */ }
+  $('service-manifest-view').textContent = manifest || 'No manifest.';
+}
+
+// ── Create panel ───────────────────────────────────────────
+function starterManifest() {
+  const role = selectedRole() || 'devops';
+  const workspace = serverCwd || '/path/to/workspace';
+  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\nreport_every = "1h"\n# on_change = true\n\n# [[watch]]\n# name = "river-level"\n# kind = "command"\n# every = "60s"\n# cmd = "cat /path/to/state.json"\n# trigger = { kind = "json_number", field = "level", op = ">", value = 3.2 }\n# for = "2m"\n# cooldown = "15m"\n# severity = "high"\n';
+}
+function paintCreateTabs() {
+  for (const mode of ['chat', 'service']) {
+    const tab = $('create-tab-' + mode);
+    tab.setAttribute('aria-selected', String(mode === createMode));
+    tab.classList.toggle('selected', mode === createMode);
+  }
+  $('new-session').hidden = createMode !== 'chat';
+  $('new-service').hidden = createMode !== 'service';
+}
+function openCreate(mode = sessionMode) {
+  createMode = validMode(mode);
+  paintCreateTabs();
+  $('create-panel').hidden = false;
+  if (createMode === 'service') {
+    $('service-manifest').value = starterManifest();
+    $('service-name').focus();
+  } else {
+    if (!$('session-cwd').value) $('session-cwd').value = serverCwd || '';
+    $('session-name').focus();
+  }
+}
+function closeCreate() { $('create-panel').hidden = true; }
+function switchCreateMode(mode) { createMode = validMode(mode); paintCreateTabs(); }
 
 function controls() {
   const ready = !!selected, filled = !!$('message').value.trim();
@@ -845,6 +995,13 @@ function paintConversation() {
 }
 // ── History and session metadata ────────────────────────────
 function sessionMetadata(meta = {}) {
+  // A service is inspected, not chatted with in the usual sense, so the sidebar
+  // mode follows the session's own mode instead of whichever tab was open. A call
+  // without metadata (clearing the workspace) leaves the mode alone.
+  if (typeof meta.mode === 'string' && meta.mode) {
+    const mode = meta.mode === 'service' ? 'service' : 'chat';
+    if (mode !== sessionMode) { sessionMode = mode; applyModeUI(); }
+  }
   modelMetadata(meta.model);
   savedCwd = typeof meta.cwd === 'string' ? meta.cwd : '';
   if (!cwdDirty) $('session-working-dir').value = savedCwd;
@@ -908,7 +1065,7 @@ async function refreshHistory() {
   if (refreshing) { refreshAgain = true; return; }
   refreshing = true;
   try { do { refreshAgain = false; if (selected) await loadHistory(true); } while (refreshAgain); }
-  catch (e) { error(e); } finally { refreshing = false; }
+  catch (e) { error(e); } finally { refreshing = false; if (sessionMode === 'service') scheduleService(); }
 }
 function scheduleHistory() { clearTimeout(refreshTimer); refreshTimer = setTimeout(refreshHistory, 150); }
 // ── Snapshot, prompts, live updates ─────────────────────────
@@ -1507,6 +1664,9 @@ async function select(name, cwd, replaceURL = false) {
   try { await loadHistory(true, true); } catch (e) { if (e.status !== 404) error(e); }
   if (version !== generation) return;
   await loadSnapshot(); if (version === generation) connect();
+  // A service also has a durable view (status, probes, manifest) that the chat
+  // transcript does not carry.
+  if (version === generation) loadService().catch(() => {});
   // Prime the projection whenever the session changes: open, it is the inspector
   // window; closed, its estimate is what the token line can show.
   if (version === generation) loadContext(contextOpen());
@@ -1521,7 +1681,7 @@ function sessionFromURL() {
   try { return decodeURIComponent(match[1]); } catch { return ''; }
 }
 function setSessionURL(name, replace) {
-  const path = name ? '/session/' + encodeURIComponent(name) : '/';
+  const path = name ? '/session/' + encodeURIComponent(name) : dashboardPath(sessionMode);
   if (globalThis.location.pathname === path) return;
   // Read the Window API through globalThis: a top-level declaration in this file
   // replaces the Window property of the same name for the whole script, which is
@@ -1531,35 +1691,74 @@ function setSessionURL(name, replace) {
     else globalThis.history.pushState({name}, '', path);
   } catch { /* an origin that forbids pushState must not break the workspace */ }
 }
+function setDashboardURL(mode, replace) {
+  const path = dashboardPath(mode);
+  if (globalThis.location.pathname === path) return;
+  try {
+    if (replace) globalThis.history.replaceState({mode}, '', path);
+    else globalThis.history.pushState({mode}, '', path);
+  } catch { /* ignore */ }
+}
 // Reopen the session the URL names. The URL is the only authority: a bare "/"
 // leaves the workspace empty instead of silently reopening whatever another tab
 // selected last. A stale name is dropped so a bookmark cannot strand the page.
-function restoreSession(list) {
+// A session URL does not carry the mode, so the lookup falls back to the other
+// sidebar list before declaring the session gone.
+async function findSession(name) {
+  if (!name) return null;
+  const modes = [sessionMode, sessionMode === 'service' ? 'chat' : 'service'];
+  for (const mode of modes) {
+    let list;
+    if (mode === sessionMode) list = await sessions(true);
+    else {
+      try {
+        const page = await api('sessions?offset=0&limit=100&mode=' + mode);
+        list = page.sessions || [];
+      } catch { continue; }
+    }
+    const meta = list.find(m => m.name === name);
+    if (!meta) continue;
+    if (mode !== sessionMode) { sessionMode = mode; applyModeUI(); await sessions(true); }
+    return meta;
+  }
+  return null;
+}
+async function restoreSession(list) {
   if (selected) return;
-  const fromURL = sessionFromURL();
-  if (!fromURL) return;
-  if (list.some(meta => meta.name === fromURL)) {
-    select(fromURL, undefined, true);
+  const route = routeFromURL();
+  if (!route.name) {
+    // A dashboard URL names the sidebar mode; a bare "/" is the chat dashboard.
+    if (route.mode && route.mode !== sessionMode) setMode(route.mode, { url: false, load: true });
+    return;
+  }
+  const meta = list.find(m => m.name === route.name) || await findSession(route.name);
+  if (meta) {
+    await select(route.name, meta.cwd, true);
     return;
   }
   // Clear first: clearWorkspace empties the notice host.
   clearWorkspace();
-  toast('Session "' + fromURL + '" no longer exists.');
+  toast('Session "' + route.name + '" no longer exists.');
 }
 // Back and forward walk session pages, so the browser's history is the session's
 // history rather than a pile of identical workspace entries.
 async function onPopState() {
-  const name = sessionFromURL();
-  if (!name) { clearWorkspace(); return; }
-  if (name === selected) return;
+  const route = routeFromURL();
+  if (!route.name) {
+    setMode(route.mode || 'chat', { url: false, load: false });
+    clearWorkspace();
+    sessions(true).catch(error);
+    return;
+  }
+  if (route.name === selected) return;
   try {
-    const list = await sessions(true);
-    if (!list.some(meta => meta.name === name)) {
-      toast('Session "' + name + '" no longer exists.');
+    const meta = await findSession(route.name);
+    if (!meta) {
+      toast('Session "' + route.name + '" no longer exists.');
       clearWorkspace();
       return;
     }
-    await select(name, undefined, true);
+    await select(route.name, meta.cwd, true);
   } catch (e) { error(e); }
 }
 // Ask whether to snapshot the dropped turns before rewinding. Resolves to true
@@ -1661,12 +1860,11 @@ function clearWorkspace() {
   $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   clearReasoning(); contextEstimate = null; usageSnapshot({});
   reasoningMetadata('');
-  $('title').textContent = 'Select or create a session';
+  $('title').textContent = sessionMode === 'service' ? 'Select or create a service' : 'Select or create a session';
   sessionMetadata();
+  serviceView = null; serviceRequest++; $('service-panel').hidden = true;
   loadContext(contextOpen());
-  const empty = text('div', '', 'empty');
-  empty.append(text('h3', 'Best partner, PAI!'), text('p', 'Open a named session to start working with PAI.'));
-  $('history').append(empty);
+  paintEmpty();
   updateJumpButtons();
   controls();
 }
@@ -1824,10 +2022,33 @@ async function createSession(e) {
   creating = true; $('create-session').disabled = true; $('error').textContent = '';
   try {
     const meta = await api('create', {name, working_dir:cwd, role:selectedRole()});
-    if (version === generation) await select(meta.name, meta.cwd);
+    closeCreate();
+    setMode('chat', {url:false, load:false});
     await sessions(true);
+    if (version === generation) await select(meta.name, meta.cwd);
   } catch (err) { error(err); }
   finally { creating = false; $('create-session').disabled = false; }
+}
+// A service is created from its manifest, the same text `pai service create`
+// reads. The server runs the same validation and refuses scheduled commands
+// unless the approval box was ticked here.
+async function createService(e) {
+  e.preventDefault(); if (creating) return;
+  const name = $('service-name').value.trim();
+  const manifest = $('service-manifest').value;
+  if (!name) { error(new Error('Enter a service name')); return; }
+  if (!manifest.trim()) { error(new Error('Enter a manifest')); return; }
+  const version = generation;
+  creating = true; $('create-service').disabled = true; $('error').textContent = '';
+  try {
+    const view = await api('service', {name, manifest, approve_commands: $('service-approve').checked});
+    closeCreate();
+    setMode('service', {url:false, load:false});
+    await sessions(true);
+    if (version === generation) await select(view.name, view.cwd);
+    await loadService();
+  } catch (err) { error(err); }
+  finally { creating = false; $('create-service').disabled = false; }
 }
 function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
@@ -1847,6 +2068,14 @@ $('session-model').onblur = () => setTimeout(closeModelOptions, 120);
 $('session-model').onkeydown = event => { if (event.key === 'Escape') closeModelOptions(); };
 $('session-role-select').onchange = () => { roleDirty = true; controls(); };
 $('new-session').onsubmit = createSession;
+$('new-service').onsubmit = createService;
+$('open-create').onclick = () => openCreate();
+$('close-create').onclick = closeCreate;
+$('tab-chat').onclick = () => setMode('chat');
+$('tab-service').onclick = () => setMode('service');
+$('create-tab-chat').onclick = () => switchCreateMode('chat');
+$('create-tab-service').onclick = () => switchCreateMode('service');
+$('refresh-service').onclick = () => { loadService().catch(error); };
 $('composer').onsubmit = e => { e.preventDefault(); action('send'); };
 $('steer').onclick = () => action('steer'); $('cancel').onclick = () => action('cancel');
 $('apply-plan').onclick = () => action('send', AUTO_REPLY);
@@ -1889,7 +2118,11 @@ applySessionsCollapsed(storedSessionsCollapsed());
 initPendingDrag();
 initReasoningDrag();
 updateJumpButtons();
-sessions(true).then(list => { showApp(); restoreSession(list); }).catch(bootFailed);
+// The dashboard URL decides the initial sidebar mode before the first list load,
+// so a service bookmark does not briefly show the chat list.
+sessionMode = routeFromURL().mode || 'chat';
+applyModeUI();
+sessions(true).then(list => { showApp(); return restoreSession(list); }).catch(bootFailed);
 roles().catch(bootFailed);
 models().catch(bootFailed);
 loadReasoning();

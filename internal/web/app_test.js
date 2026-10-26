@@ -716,7 +716,7 @@ async function verifyCreate() {
   p.get('session-name').value = ' new '; p.get('session-cwd').value = ' /workspace ';
   p.run("globalThis.calls=[]; api=async (path,body)=>{calls.push([path,body]);return {name:'new',cwd:'/resolved'};}; select=async(name,cwd)=>calls.push(['select',name,cwd]); sessions=async reset=>calls.push(['sessions',reset]);");
   await p.run('createSession({preventDefault(){}})');
-  assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [['create',{name:'new',working_dir:'/workspace',role:'custom'}],['select','new','/resolved'],['sessions',true]]);
+  assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [['create',{name:'new',working_dir:'/workspace',role:'custom'}],['sessions',true],['select','new','/resolved']]);
   assert.equal(p.get('create-session').disabled, false);
   p.run("api=async()=>{throw new Error('not a directory')}");
   await p.run('createSession({preventDefault(){}})');
@@ -1018,26 +1018,27 @@ async function verifySessionURL() {
   // selection is never remembered outside the URL.
   const bare = browser();
   bare.run("location.pathname='/'; localStorage.setItem('pai.session','one')");
-  bare.run('restoreSession([{name:"one",cwd:"/a"}])');
+  await bare.run('restoreSession([{name:"one",cwd:"/a"}])');
   assert.equal(bare.run('selected'), '', 'a bare page opens no session');
 
   // A stale bookmark must not strand the page: the URL is dropped and the empty
   // workspace is shown instead.
   const stale = browser();
   stale.run("location.pathname='/session/ghost'; api=async()=>({}); sessions=async()=>[]");
-  stale.run('restoreSession([{name:"one",cwd:"/a"}])');
+  await stale.run('restoreSession([{name:"one",cwd:"/a"}])');
   assert.equal(stale.run('selected'), '', 'a stale link opens nothing');
-  assert.equal(stale.location.pathname, '/', 'a stale link is dropped from the URL');
+  assert.equal(stale.location.pathname, '/dashboard', 'a stale link is dropped from the URL');
   assert.match(stale.get('error').textContent, /no longer exists/, 'the stale link is reported');
 
-  // Back and forward: the URL is the authority, and clearing goes back to "/".
+  // Back and forward: the URL is the authority, and clearing goes back to the
+  // dashboard, keeping the sidebar mode.
   p.run('location.pathname="/session/two"');
   await p.run('onPopState()');
   assert.equal(p.run('selected'), 'two', 'forward opens the session the URL names');
   p.run('location.pathname="/"');
   await p.run('onPopState()');
   assert.equal(p.run('selected'), '', 'going back to "/" clears the workspace');
-  assert.equal(p.location.pathname, '/', 'the cleared workspace keeps the bare URL');
+  assert.equal(p.location.pathname, '/dashboard', 'the cleared workspace keeps the bare URL');
 }
 
 // Switching sessions empties the pane before the fetch, so it must say the
@@ -1299,4 +1300,51 @@ async function verifyIdentity() {
   assert.equal(p.get('identity').hidden, true, 'an empty identity keeps the line hidden');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+
+// The sidebar has one list with a URL-backed mode filter, and a service shows the
+// durable view (state, last report, probes, manifest) above its transcript.
+async function verifyServiceMode() {
+  const p = browser();
+  p.run("location.pathname='/dashboard/service'");
+  assert.equal(p.run('routeFromURL().mode'), 'service', 'the dashboard path names the mode');
+  p.run("location.pathname='/session/one'");
+  assert.equal(p.run('routeFromURL().name'), 'one', 'a session path names the session');
+
+  p.run("setMode('service',{url:false,load:false})");
+  assert.equal(p.run("$('tab-service').attributes['aria-selected']"), 'true', 'the services tab is selected');
+  assert.equal(p.run("$('tab-chat').attributes['aria-selected']"), 'false');
+  assert.equal(p.get('sessions-heading').textContent, 'Services', 'the heading follows the tab');
+
+  const view = {
+    name: 'river', mode: 'service', state: 'parked', phase: 'parked',
+    next_wake: '2026-10-27T12:00:00Z', status: 'level 3.8 m, above the warning band',
+    spec: '{"goal":"watch the river","role":"devops"}',
+    watchers: [
+      {name: '_report', enabled: true, spec: '{"kind":"timer","every":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
+      {name: 'river', enabled: true, spec: '{"kind":"command","every":"60s"}', last_state: '{"value":"3.8"}', last_error: 'courier failed'},
+    ],
+  };
+  p.run('serviceView=' + JSON.stringify(view) + '; paintService();');
+  assert.equal(p.get('service-panel').hidden, false, 'the service panel appears');
+  assert.equal(p.get('service-state').textContent, 'parked', 'the state is labelled once');
+  assert.match(p.get('service-next').textContent, /next wake/, 'the next wake is shown');
+  assert.match(p.get('service-status').textContent, /level 3\.8/, 'the last report is shown');
+  assert.equal(p.get('service-watchers').children.length, 2, 'every probe is listed');
+  assert.equal(p.get('service-watchers').children[0].children[0].textContent, 'report (heartbeat)', 'the reserved probe is labelled');
+  assert.match(p.get('service-watchers').children[1].children[3].textContent, /courier failed/, 'a probe error is shown');
+  assert.match(p.get('service-manifest-view').textContent, /"goal": "watch the river"/, 'the manifest is pretty-printed');
+
+  // The create panel has one form per mode, and the service form starts from a
+  // manifest skeleton rather than a blank box.
+  p.run("openCreate('service')");
+  assert.equal(p.get('create-panel').hidden, false);
+  assert.equal(p.get('new-service').hidden, false, 'the service form is shown');
+  assert.equal(p.get('new-session').hidden, true, 'the chat form is hidden');
+  assert.match(p.get('service-manifest').value, /\[service\]/, 'the manifest skeleton is prefilled');
+  p.run("switchCreateMode('chat')");
+  assert.equal(p.get('new-session').hidden, false, 'switching tabs shows the chat form');
+  assert.equal(p.get('new-service').hidden, true);
+  p.run('closeCreate()');
+  assert.equal(p.get('create-panel').hidden, true);
+}
