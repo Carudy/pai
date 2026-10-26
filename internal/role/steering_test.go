@@ -72,7 +72,7 @@ func TestSteeringIsInjectedBetweenSteps(t *testing.T) {
 	}
 	cfg := &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}
 
-	if err := loop(context.Background(), cfg, rt, rp, nil, "run the task"); err != nil {
+	if err := runChat(context.Background(), cfg, rt, rp, nil, "run the task"); err != nil {
 		t.Fatalf("loop: %v", err)
 	}
 

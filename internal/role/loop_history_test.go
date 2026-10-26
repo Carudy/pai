@@ -67,7 +67,7 @@ func TestFollowUpSeesTheFinalReply(t *testing.T) {
 		Context:      config.ContextConfig{KeepTurns: 4},
 	}
 
-	if err := loop(context.Background(), cfg, rt, rp, nil, "list the points"); err != nil {
+	if err := runChat(context.Background(), cfg, rt, rp, nil, "list the points"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fp.calls) != 2 {
@@ -113,7 +113,7 @@ func TestFollowUpSeesTheQuestionItAnswers(t *testing.T) {
 		Context:      config.ContextConfig{KeepTurns: 4},
 	}
 
-	if err := loop(context.Background(), cfg, rt, rp, nil, "start the evaluation"); err != nil {
+	if err := runChat(context.Background(), cfg, rt, rp, nil, "start the evaluation"); err != nil {
 		t.Fatal(err)
 	}
 	if len(fp.calls) != 2 {

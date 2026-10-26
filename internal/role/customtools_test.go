@@ -134,7 +134,7 @@ args = ["%%s\n", "{value}"]
 		TrustedTools: []string{"proj"},
 	}
 	rt := &Runtime{Observer: obs, Prompter: prompter, Logger: nopLogger{}, Provider: fp}
-	if err := loop(context.Background(), cfg, rt, rp, nil, "run proj"); err != nil {
+	if err := runChat(context.Background(), cfg, rt, rp, nil, "run proj"); err != nil {
 		t.Fatal(err)
 	}
 	if prompter.confirmed != 1 || len(prompter.untrusted) != 1 || prompter.untrusted[0] != "proj" {
@@ -220,7 +220,7 @@ args = ["%%s\n", "{value}"]
 	}
 	rt := &Runtime{Observer: obs, Prompter: prompter, Logger: nopLogger{}, Provider: fp}
 
-	if err := loop(context.Background(), cfg, rt, rp, nil, "run demo"); err != nil {
+	if err := runChat(context.Background(), cfg, rt, rp, nil, "run demo"); err != nil {
 		t.Fatal(err)
 	}
 	if fp.calls != 2 {
@@ -277,7 +277,7 @@ args = ["%%s\n", "{value}"]
 	trustedCfg := *cfg
 	trustedCfg.TrustedTools = []string{"demo"}
 	rt2 := &Runtime{Observer: obs2, Prompter: prompter2, Logger: nopLogger{}, Provider: fp2}
-	if err := loop(context.Background(), &trustedCfg, rt2, rp, nil, "run demo"); err != nil {
+	if err := runChat(context.Background(), &trustedCfg, rt2, rp, nil, "run demo"); err != nil {
 		t.Fatal(err)
 	}
 	if prompter2.confirmed != 0 {

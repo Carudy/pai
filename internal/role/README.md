@@ -44,19 +44,25 @@ unless it was trusted earlier in the same session: its `Grant.Persistent` and
 session trust-all switch does not skip it. A persistent user-tool grant is
 written by `config.AddTrustedTools`, which the role layer owns.
 
-## Service seam (P0)
+## Two drivers, one loop
 
-`loop` (chat) and `RunService` (resident) share `activate`, the inner
-reason–act–observe episode: steering, compaction, `step`, and separators live
-there once. `step` returns an `outcome` (`continue`, `yield`, `done`, `ask`,
-`terminate`) instead of a bool; the driver decides whether to wait for the user
-or sleep until the next event. `inform` and `yield` both end an activation.
+`loop.go` holds the loop itself: `activate`, the inner reason–act–observe
+episode (steering, compaction, `step`, separators), plus the `Runtime` state it
+needs. The two files around it are waiting policies, not loops:
+
+- `run_chat.go` — `Run`/`runChat`: run an episode, then prompt the user.
+- `run_service.go` — `RunService`: wait for a wake, run one bounded episode, ack
+  the wake, repeat.
+
+`step` returns an `outcome` (`continue`, `yield`, `done`, `ask`, `terminate`)
+instead of a bool, so each driver decides what a terminal outcome means: chat
+waits for the next instruction, a service sleeps until the next event. `inform`
+and `yield` both end an activation.
 
 `RunService` takes a `core.Inbox`, injects each wake's situation as a trailing
-projection (never a recorded turn), and acks or nacks the wake. The scheduler,
-persistence, and production wiring are the next phase; for now a fake inbox is
-enough to exercise the driver. `maxServiceActivationSteps` is a fixed safety
-rail against a non-terminating episode, not a cost budget.
+projection (never a recorded turn), and acks or nacks the wake.
+`maxServiceActivationSteps` is a fixed safety rail against a non-terminating
+episode, not a cost budget.
 
 ## Boundaries
 

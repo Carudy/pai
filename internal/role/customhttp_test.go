@@ -79,7 +79,7 @@ max_bytes = 4096
 		TrustedTools: []string{"search"},
 	}
 	rt := &Runtime{Observer: obs, Prompter: prompter, Logger: nopLogger{}, Provider: fp}
-	if err := loop(context.Background(), cfg, rt, rp, nil, "search"); err != nil {
+	if err := runChat(context.Background(), cfg, rt, rp, nil, "search"); err != nil {
 		t.Fatal(err)
 	}
 
