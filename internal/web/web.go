@@ -390,10 +390,30 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		mode := r.URL.Query().Get("mode")
+		if mode != "" && mode != runner.ModeChat && mode != runner.ModeService {
+			fail(w, 400, "mode must be chat or service")
+			return
+		}
 		list, err := h.manager.List()
 		if err != nil {
 			managerError(w, err)
 			return
+		}
+		// Filter before paginating: the sidebar shows one mode at a time, and a
+		// client-side filter over a page cannot count the other mode correctly.
+		if mode != "" {
+			filtered := make([]runner.Meta, 0, len(list))
+			for _, meta := range list {
+				m := meta.Mode
+				if m == "" {
+					m = runner.ModeChat
+				}
+				if m == mode {
+					filtered = append(filtered, meta)
+				}
+			}
+			list = filtered
 		}
 		total := len(list)
 		if offset > total {
@@ -491,17 +511,43 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respond(w, 200, snapshot)
 	case "/api/service":
-		if !method(w, r, http.MethodGet) {
-			return
+		switch r.Method {
+		case http.MethodGet:
+			// The read side of `pai service show`: the CLI needs the store lock, so a
+			// running server is the only way to inspect a resident session.
+			view, err := h.manager.ServiceView(r.URL.Query().Get("name"))
+			if err != nil {
+				managerError(w, err)
+				return
+			}
+			respond(w, 200, view)
+		case http.MethodPost:
+			var body struct {
+				Name            string `json:"name"`
+				Manifest        string `json:"manifest"`
+				ApproveCommands bool   `json:"approve_commands"`
+			}
+			if !decode(w, r, &body) {
+				return
+			}
+			if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+				fail(w, 400, "service name must contain 1–256 bytes")
+				return
+			}
+			if strings.TrimSpace(body.Manifest) == "" {
+				fail(w, 400, "manifest is required")
+				return
+			}
+			view, err := h.manager.CreateService(body.Name, body.Manifest, body.ApproveCommands)
+			if err != nil {
+				managerError(w, err)
+				return
+			}
+			respond(w, 201, view)
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			fail(w, 405, "method not allowed")
 		}
-		// The read side of `pai service show`: the CLI needs the store lock, so a
-		// running server is the only way to inspect a resident session.
-		view, err := h.manager.ServiceView(r.URL.Query().Get("name"))
-		if err != nil {
-			managerError(w, err)
-			return
-		}
-		respond(w, 200, view)
 	case "/api/events":
 		if !method(w, r, http.MethodGet) {
 			return

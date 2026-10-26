@@ -195,3 +195,60 @@ workspace = "` + workspace + `"
 		t.Fatalf("invalid manifest was accepted: %s", out.String())
 	}
 }
+
+// The HTTP path and `pai service create` share one creation rule set: a command
+// watcher needs approval, and the stored service is immediately inspectable.
+func TestServeBackendCreateService(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	workspace := t.TempDir()
+	manifest := `
+[service]
+goal = "watch the river"
+role = "devops"
+workspace = "` + workspace + `"
+report_every = "1h"
+
+[[watch]]
+name = "level"
+kind = "command"
+every = "60s"
+cmd = "echo 1"
+trigger = { kind = "changed" }
+`
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	backend := &serveBackend{store: store, cwd: workspace}
+
+	if _, err := backend.CreateService("svc", manifest, false); err == nil || !strings.Contains(err.Error(), "approval") {
+		t.Fatalf("unapproved command watcher: %v", err)
+	}
+
+	view, err := backend.CreateService("svc", manifest, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Name != "svc" || view.Mode != session.ModeService || view.NextWake == nil {
+		t.Fatalf("view = %+v", view)
+	}
+	names := map[string]bool{}
+	for _, w := range view.Watchers {
+		names[w.Name] = true
+	}
+	if !names["level"] || !names[config.ReportWatcherName] {
+		t.Fatalf("watchers = %v, want level and %s", names, config.ReportWatcherName)
+	}
+
+	if _, err := backend.CreateService("svc", manifest, true); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("duplicate create: %v", err)
+	}
+
+	got, err := backend.ServiceView("svc")
+	if err != nil || got.Spec == "" || len(got.Watchers) != 2 {
+		t.Fatalf("read back = %+v, %v", got, err)
+	}
+}

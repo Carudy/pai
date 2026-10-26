@@ -181,6 +181,14 @@ type ServiceBackend interface {
 	ServiceView(name string) (ServiceView, error)
 }
 
+// ServiceCreator creates a resident session from a manifest. A backend without
+// it cannot add services to a running server; the CLI writes them directly.
+type ServiceCreator interface {
+	// CreateService validates and stores the manifest, then returns the created
+	// view. approveCommands is the HTTP equivalent of `--yes`.
+	CreateService(name, manifest string, approveCommands bool) (ServiceView, error)
+}
+
 // WorkspaceBackend resolves the immutable workspace when preparing a runtime.
 // The returned Meta carries the session's working directory and its creation time:
 // the runtime pins that birth time into the prompt head, so a fresh runtime

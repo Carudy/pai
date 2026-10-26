@@ -169,6 +169,27 @@ func (m *Manager) sendServiceEvent(name, text string) error {
 	return ErrNotFound
 }
 
+// CreateService delegates creation to the backend and registers the result with
+// the scheduler, so a service added through the UI starts running without a
+// server restart.
+func (m *Manager) CreateService(name, manifest string, approveCommands bool) (ServiceView, error) {
+	backend, ok := m.backend.(ServiceCreator)
+	if !ok {
+		return ServiceView{}, errors.New("this backend cannot create services")
+	}
+	view, err := backend.CreateService(name, manifest, approveCommands)
+	if err != nil {
+		return ServiceView{}, err
+	}
+	m.mu.Lock()
+	m.serviceNames[view.Name] = true
+	m.sessionIDs[view.Name] = view.ID
+	m.serviceSpecs[view.Name] = view.Spec
+	m.mu.Unlock()
+	m.scheduler.Register(view.Name, view.NextWake)
+	return view, nil
+}
+
 // ServiceView reports one resident session: durable state from the store, plus
 // the live phase and last error when the worker is prepared. It is the read side
 // of `pai service show`, available while a server holds the store lock.

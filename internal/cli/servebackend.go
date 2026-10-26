@@ -38,6 +38,7 @@ var _ runner.ServiceEventBackend = (*serveBackend)(nil)
 var _ runner.ServiceWatcherBackend = (*serveBackend)(nil)
 var _ runner.ServiceStateBackend = (*serveBackend)(nil)
 var _ runner.ServiceBackend = (*serveBackend)(nil)
+var _ runner.ServiceCreator = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 	store, ok := b.store.(session.ServiceStore)
@@ -131,6 +132,12 @@ func (b *serveBackend) ServiceSpec(name string) (string, error) {
 func (b *serveBackend) ServiceView(name string) (runner.ServiceView, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.serviceViewLocked(name)
+}
+
+// serviceViewLocked reads a service view with b.mu already held, so creation can
+// return the row it just wrote without re-locking.
+func (b *serveBackend) serviceViewLocked(name string) (runner.ServiceView, error) {
 	store, err := b.serviceStore()
 	if err != nil {
 		return runner.ServiceView{}, err
@@ -152,6 +159,47 @@ func (b *serveBackend) ServiceView(name string) (runner.ServiceView, error) {
 		})
 	}
 	return view, nil
+}
+
+// CreateService validates a manifest exactly like `pai service create`, then
+// writes it through the shared newService helper. Command watchers need explicit
+// approval: a pasted manifest must not be able to start scheduled code silently.
+func (b *serveBackend) CreateService(name, manifestText string, approveCommands bool) (runner.ServiceView, error) {
+	if !session.ValidName(name) {
+		return runner.ServiceView{}, fmt.Errorf("invalid session name %q (allowed: letters, digits, . _ -)", name)
+	}
+	manifest, err := config.ParseServiceManifest([]byte(manifestText))
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	if err := prepareServiceManifest(manifest); err != nil {
+		return runner.ServiceView{}, err
+	}
+	if commands := commandWatchers(manifest); len(commands) > 0 && !approveCommands {
+		return runner.ServiceView{}, fmt.Errorf("command watchers need approval: %s", strings.Join(commands, "; "))
+	}
+	cfg, err := config.LoadUserConfig()
+	if err != nil {
+		return runner.ServiceView{}, fmt.Errorf("load config: %w", err)
+	}
+	if cfg.DefaultModel == "" {
+		return runner.ServiceView{}, errors.New("no default model is configured")
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, err := b.serviceStore(); err != nil {
+		return runner.ServiceView{}, err
+	}
+	if _, err := b.store.Get(name); err == nil {
+		return runner.ServiceView{}, fmt.Errorf("session %q already exists", name)
+	} else if !errors.Is(err, session.ErrNotFound) {
+		return runner.ServiceView{}, err
+	}
+	if _, _, err := newService(b.store, name, manifest, cfg.DefaultModel, time.Now()); err != nil {
+		return runner.ServiceView{}, err
+	}
+	return b.serviceViewLocked(name)
 }
 
 func (b *serveBackend) Watchers(sessionID string) ([]runner.WatcherState, error) {

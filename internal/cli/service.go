@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -216,30 +217,11 @@ func serviceCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error: %v\n", err)
 		return 1
 	}
-	roles := prompts.RoleNames()
-	knownRole := false
-	for _, role := range roles {
-		if role == manifest.Role {
-			knownRole = true
-			break
-		}
-	}
-	if !knownRole {
-		log.Errorf("Error: unknown role %q; available: %s\n", manifest.Role, strings.Join(roles, ", "))
-		return 1
-	}
-	workspace, err := resolveServiceWorkspace(manifest.Workspace)
-	if err != nil {
+	if err := prepareServiceManifest(manifest); err != nil {
 		log.Errorf("Error: %v\n", err)
 		return 1
 	}
-	var commands []string
-	for _, w := range manifest.Watchers {
-		if w.Kind == "command" {
-			commands = append(commands, fmt.Sprintf("%s: %s", w.Name, w.Cmd))
-		}
-	}
-	if len(commands) > 0 && !yes {
+	if commands := commandWatchers(manifest); len(commands) > 0 && !yes {
 		log.Errorf("Error: this manifest defines command watchers, which run persistently on a schedule:\n")
 		for _, c := range commands {
 			log.Errorf("  %s\n", c)
@@ -269,32 +251,75 @@ func serviceCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error: %v\n", err)
 		return 1
 	}
-	created, err := store.Create(session.Meta{
-		Name: name, Role: manifest.Role, Model: cfg.DefaultModel,
-		Cwd: workspace, Mode: session.ModeService,
-	})
+	created, next, err := newService(store, name, manifest, cfg.DefaultModel, time.Now())
 	if err != nil {
 		log.Errorf("Error creating service: %v\n", err)
 		return 1
 	}
+	when := "-"
+	if next != nil {
+		when = next.Format(time.RFC3339)
+	}
+	fmt.Fprintf(stdout, "created service %s (id %s)\n", name, created.ID)
+	fmt.Fprintf(stdout, "workspace: %s\nrole: %s\nnext wake: %s\n", manifest.Workspace, manifest.Role, when)
+	fmt.Fprintln(stdout, "run `pai serve` to start the scheduler")
+	return 0
+}
+
+// prepareServiceManifest applies the checks both entry points share: the role
+// must exist and the workspace must be a real directory. It resolves the
+// workspace in place, so the stored manifest is canonical.
+func prepareServiceManifest(manifest *config.ServiceManifest) error {
+	roles := prompts.RoleNames()
+	if !slices.Contains(roles, manifest.Role) {
+		return fmt.Errorf("unknown role %q; available: %s", manifest.Role, strings.Join(roles, ", "))
+	}
+	workspace, err := resolveServiceWorkspace(manifest.Workspace)
+	if err != nil {
+		return err
+	}
+	manifest.Workspace = workspace
+	return nil
+}
+
+// commandWatchers names the probes that execute code on a schedule. Creation
+// requires explicit approval for these, from --yes or the HTTP form, so a pasted
+// manifest cannot silently start running commands.
+func commandWatchers(manifest *config.ServiceManifest) []string {
+	var out []string
+	for _, w := range manifest.Watchers {
+		if w.Kind == "command" {
+			out = append(out, fmt.Sprintf("%s: %s", w.Name, w.Cmd))
+		}
+	}
+	return out
+}
+
+// newService writes the durable half of a resident session: the row, its
+// manifest, one watcher per probe (plus the reserved report tick), and the
+// initial next wake. Approval and output belong to the entry point, so the CLI
+// and the HTTP API share every rule here.
+func newService(store session.Store, name string, manifest *config.ServiceManifest, model string, now time.Time) (session.Meta, *time.Time, error) {
 	ss, ok := store.(session.ServiceStore)
 	if !ok {
-		log.Errorf("Error: this session store does not expose service state\n")
-		return 1
+		return session.Meta{}, nil, errors.New("this session store does not expose service state")
+	}
+	created, err := store.Create(session.Meta{
+		Name: name, Role: manifest.Role, Model: model, Cwd: manifest.Workspace, Mode: session.ModeService,
+	})
+	if err != nil {
+		return session.Meta{}, nil, err
 	}
 	if err := ss.SetServiceSpec(name, manifest.JSON); err != nil {
-		log.Errorf("Error storing manifest: %v\n", err)
-		return 1
+		return session.Meta{}, nil, fmt.Errorf("store manifest: %w", err)
 	}
-	now := time.Now()
 	for _, w := range manifest.Watchers {
 		next := now.Add(w.Every)
 		if err := ss.PutWatcher(session.Watcher{
 			SessionID: created.Meta.ID, Name: w.Name, Spec: config.MarshalWatcherSpec(w),
 			Enabled: true, ApprovedAt: &now, NextRun: &next,
 		}); err != nil {
-			log.Errorf("Error storing watcher %q: %v\n", w.Name, err)
-			return 1
+			return session.Meta{}, nil, fmt.Errorf("store watcher %q: %w", w.Name, err)
 		}
 	}
 	// report_every is stored as the reserved timer watcher so the heartbeat shares
@@ -309,22 +334,17 @@ func serviceCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 			SessionID: created.Meta.ID, Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
 			Enabled: true, ApprovedAt: &now, NextRun: &next,
 		}); err != nil {
-			log.Errorf("Error storing the report watcher: %v\n", err)
-			return 1
+			return session.Meta{}, nil, fmt.Errorf("store report watcher: %w", err)
 		}
 	}
-	next := "-"
+	var next *time.Time
 	if at, ok := manifest.NextWake(now); ok {
 		if err := ss.SetNextWake(name, &at); err != nil {
-			log.Errorf("Error storing the next wake: %v\n", err)
-			return 1
+			return session.Meta{}, nil, fmt.Errorf("store next wake: %w", err)
 		}
-		next = at.Format(time.RFC3339)
+		next = &at
 	}
-	fmt.Fprintf(stdout, "created service %s (id %s)\n", name, created.Meta.ID)
-	fmt.Fprintf(stdout, "workspace: %s\nrole: %s\nnext wake: %s\n", workspace, manifest.Role, next)
-	fmt.Fprintln(stdout, "run `pai serve` to start the scheduler")
-	return 0
+	return created.Meta, next, nil
 }
 
 func resolveServiceWorkspace(path string) (string, error) {

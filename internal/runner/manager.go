@@ -730,6 +730,14 @@ func (m *Manager) Delete(name string) error {
 	m.clearFailureLocked(name)
 	delete(m.entries, name)
 	delete(m.trustAll, name)
+	// A deleted service must stop being scheduled; otherwise its timer would wake
+	// a session that no longer exists. reserveIdle left m.mu held for this update.
+	if m.serviceNames[name] {
+		delete(m.serviceNames, name)
+		delete(m.sessionIDs, name)
+		delete(m.serviceSpecs, name)
+		m.scheduler.Unregister(name)
+	}
 	return nil
 }
 

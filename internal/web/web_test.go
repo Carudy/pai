@@ -1551,3 +1551,102 @@ func TestServiceViewAPI(t *testing.T) {
 		t.Fatalf("unknown service = %d, want 404", w.Code)
 	}
 }
+
+// modeBackend reports one chat and one service session, so the sidebar filter can
+// be checked without a store.
+type modeBackend struct{ backend }
+
+func (modeBackend) List() ([]runner.Meta, error) {
+	return []runner.Meta{
+		{Name: "chatty", Mode: runner.ModeChat},
+		{Name: "watcher", Mode: runner.ModeService, State: "suspended"},
+		{Name: "legacy"},
+	}, nil
+}
+
+func TestSessionsModeFilter(t *testing.T) {
+	m := runner.New(context.Background(), modeBackend{}, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+
+	names := func(query string) []string {
+		t.Helper()
+		w := request(h, http.MethodGet, "/api/sessions?offset=0&limit=10"+query, "", nil, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", query, w.Code, w.Body.String())
+		}
+		var page struct {
+			Sessions []runner.Meta `json:"sessions"`
+			Total    int           `json:"total"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+			t.Fatal(err)
+		}
+		if page.Total != len(page.Sessions) {
+			t.Fatalf("%s: total = %d, sessions = %d", query, page.Total, len(page.Sessions))
+		}
+		out := make([]string, 0, len(page.Sessions))
+		for _, meta := range page.Sessions {
+			out = append(out, meta.Name)
+		}
+		return out
+	}
+
+	if got := names(""); len(got) != 3 {
+		t.Fatalf("unfiltered = %v", got)
+	}
+	// A session stored before the mode column counts as chat.
+	if got := names("&mode=chat"); strings.Join(got, ",") != "chatty,legacy" {
+		t.Fatalf("chat = %v", got)
+	}
+	if got := names("&mode=service"); strings.Join(got, ",") != "watcher" {
+		t.Fatalf("service = %v", got)
+	}
+	if w := request(h, http.MethodGet, "/api/sessions?mode=bogus", "", nil, ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad mode = %d, want 400", w.Code)
+	}
+}
+
+// serviceCreateBackend records the create request and returns a view, so the
+// handler's validation and status code can be pinned without a store.
+type serviceCreateBackend struct {
+	backend
+	created string
+	approve bool
+}
+
+func (b *serviceCreateBackend) CreateService(name, manifest string, approve bool) (runner.ServiceView, error) {
+	b.created, b.approve = manifest, approve
+	return runner.ServiceView{
+		Meta:   runner.Meta{Name: name, ID: "sid-new", Mode: runner.ModeService},
+		Status: "",
+		Spec:   `{"goal":"g"}`,
+	}, nil
+}
+
+func TestServiceCreateAPI(t *testing.T) {
+	b := &serviceCreateBackend{}
+	m := runner.New(context.Background(), b, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+
+	body := `{"name":"river","manifest":"[service]\ngoal = \"watch\"\n","approve_commands":true}`
+	w := request(h, http.MethodPost, "/api/service", body, nil, "http://pai.test")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	if b.created == "" || !b.approve {
+		t.Fatalf("backend saw manifest=%q approve=%v", b.created, b.approve)
+	}
+	var view runner.ServiceView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil || view.Name != "river" || view.Mode != runner.ModeService {
+		t.Fatalf("view = %+v, %v", view, err)
+	}
+
+	if w := request(h, http.MethodPost, "/api/service", `{"manifest":"x"}`, nil, "http://pai.test"); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing name = %d, want 400", w.Code)
+	}
+	if w := request(h, http.MethodPost, "/api/service", `{"name":"river"}`, nil, "http://pai.test"); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing manifest = %d, want 400", w.Code)
+	}
+}
