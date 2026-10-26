@@ -13,7 +13,14 @@ See the [module map](../organization.md) for the surrounding layers.
   `config.UserConfig` is still taken directly for streaming, reasoning, and the
   context budget — see the note below.)
 - `RolePrompt` keeps a stable prompt head; `OutputGuide` supplies the JSON
-  response contract after history on each request.
+  response contract after history on each request. `ActionSet` is the
+  capability-gated vocabulary: `ChatActions` is the interactive set and
+  `ServiceActions` adds `inform` and `yield`. Parsing recognizes every known
+  action; `Response.ValidateFor` rejects one the current mode does not allow.
+- `RolePrompt.MessagesWithSituation` (or `WithSituation`) inserts a bounded,
+  per-activation situation block after history and before the tail. It is a
+  projection, never a recorded turn, and the head stays byte-identical so the
+  prefix cache still matches.
 - `ChatStr` uses `Ports` for provider calls, observation, and logging,
   respecting configured streaming and reporting token usage. A stream that fails
   is retried once **only** when nothing had been rendered yet (a stall that

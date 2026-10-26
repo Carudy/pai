@@ -3,11 +3,13 @@ package chat
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Carudy/pai/internal/hostinfo"
+	"github.com/Carudy/pai/internal/provider"
 )
 
 // testHostInfo stands in for the probed host block, so head composition is
@@ -264,5 +266,36 @@ func TestApplyIntroAppendsOnly(t *testing.T) {
 	}
 	if got, want := applyIntro("base", "  extra  "), "base\n\n[User:]\nextra"; got != want {
 		t.Errorf("applyIntro = %q, want %q", got, want)
+	}
+}
+
+// A situation block is a per-activation projection after history, never a
+// recorded turn, and it shares the frozen head.
+func TestMessagesWithSituation(t *testing.T) {
+	rp := &RolePrompt{head: "HEAD", Actions: ChatActions()}
+	history := []provider.Message{{Role: provider.RoleUser, Content: "go"}}
+
+	base := rp.Messages(history)
+	if got := rp.MessagesWithSituation(history, "  "); !reflect.DeepEqual(got, base) {
+		t.Fatalf("empty situation changed the list: %#v", got)
+	}
+
+	got := rp.MessagesWithSituation(history, "SITUATION")
+	if len(got) != len(base)+1 {
+		t.Fatalf("message count = %d, want %d", len(got), len(base)+1)
+	}
+	if got[0].Content != "HEAD" || got[1].Content != "go" || got[2].Content != "SITUATION" {
+		t.Fatalf("situation was not inserted after history: %#v", got)
+	}
+	if got[len(got)-1].Content != base[len(base)-1].Content {
+		t.Fatal("the tail must stay last")
+	}
+	if rp.situation != "" {
+		t.Fatal("MessagesWithSituation mutated the prompt")
+	}
+
+	copy := rp.WithSituation("x")
+	if copy == rp || copy.Head() != rp.Head() || copy.situation != "x" || rp.situation != "" {
+		t.Fatal("WithSituation must return a copy with the same head")
 	}
 }

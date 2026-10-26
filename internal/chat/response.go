@@ -62,12 +62,23 @@ func (r *Response) GetPayload() string {
 	return string(b)
 }
 
-// Validate checks the response conforms to the agent schema.
+// Validate checks the response conforms to the chat schema.
 func (r *Response) Validate() error {
-	if !isValidAction(r.Action) {
-		valid := ActionEnum()
+	return r.ValidateFor(ChatActions())
+}
+
+// ValidateFor checks the response against a mode's action set. Parsing accepts
+// every known action so a service reply is not mistaken for junk; this is the
+// capability boundary that rejects an action the current mode does not allow.
+func (r *Response) ValidateFor(actions ActionSet) error {
+	set := actions.orChat()
+	if !set.Has(r.Action) {
+		valid := set.Enum()
 		if r.Action == "" {
 			return fmt.Errorf(`missing "action" field; must be one of: %s`, valid)
+		}
+		if isKnownAction(r.Action) {
+			return fmt.Errorf(`action %q is not available in this mode; must be one of: %s`, r.Action, valid)
 		}
 		return fmt.Errorf(`invalid action %q; must be one of: %s`, r.Action, valid)
 	}
@@ -106,7 +117,7 @@ func ParseResponse(content string) (*Response, error) {
 			lastErr = err
 			continue
 		}
-		if isValidAction(resp.Action) {
+		if isKnownAction(resp.Action) {
 			return &resp, nil
 		}
 		if fallback == nil {
@@ -138,7 +149,7 @@ func ParseResponseWithRetry(
 	for attempt := 0; attempt < maxFormatRetries; attempt++ {
 		resp, err = ParseResponse(content)
 		if err == nil {
-			err = resp.Validate()
+			err = resp.ValidateFor(rp.actionSet())
 		}
 		if err == nil {
 			return resp, history, nil

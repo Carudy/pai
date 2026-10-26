@@ -56,12 +56,12 @@ func TestStepRecordsTheTokenEstimatePair(t *testing.T) {
 	cfg := &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}
 	history := []provider.Message{{Role: provider.RoleUser, Kind: core.KindInput, Content: "hi"}}
 
-	next, _, err := step(context.Background(), cfg, rt, rp, history)
+	out, _, err := step(context.Background(), cfg, rt, rp, history)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if next {
-		t.Fatal("a done action should end the step")
+	if out != outcomeDone {
+		t.Fatalf("outcome = %v, want done", out)
 	}
 	if !rec.set {
 		t.Fatal("the step did not record the usage pair")

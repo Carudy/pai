@@ -49,12 +49,12 @@ func (w *worker) run() {
 	defer func() {
 		w.cancel()
 		w.m.mu.Lock()
-		w.state = "stopped"
+		w.state = StateStopped
 		w.phase = "stopped"
 		w.activeTool = nil
 		w.latestTool = nil
 		w.pending = nil
-		w.emitLocked("stopped", nil)
+		w.emitLocked(StateStopped, nil)
 		for ch := range w.subs {
 			delete(w.subs, ch)
 			close(ch)
@@ -100,8 +100,8 @@ func (w *worker) run() {
 		w.model = copyCfg.DefaultModel
 		w.workingDir = cwd
 		w.contextTokens = copyCfg.Context.SummarizeAfterTokens
-		if w.state != "stopped" {
-			w.state = "busy"
+		if w.state != StateStopped {
+			w.state = StateBusy
 			w.phase = "waiting_model"
 		}
 		w.m.mu.Unlock()
@@ -168,10 +168,10 @@ func (w *worker) Awaiting() {
 	w.activeTool = nil
 	w.phase = "awaiting"
 	w.abortPrompts = false
-	if w.state != "stopped" {
-		w.state = "awaiting"
+	if w.state != StateStopped {
+		w.state = StateAwaiting
 	}
-	w.emitLocked("awaiting", nil)
+	w.emitLocked(StateAwaiting, nil)
 }
 func (w *worker) Ask(title string) (string, error) {
 	w.m.mu.Lock()
@@ -194,10 +194,10 @@ func (w *worker) Ask(title string) (string, error) {
 	if w.ctx.Err() != nil {
 		return "", core.ErrAborted
 	}
-	w.state = "busy"
+	w.state = StateBusy
 	w.phase = "waiting_model"
 	w.activeTool = nil
-	w.emitLocked("busy", nil)
+	w.emitLocked(StateBusy, nil)
 	return text, nil
 }
 func (w *worker) prompt(kind, title string, untrusted []string, target string, persist bool) (answer, error) {

@@ -1,0 +1,134 @@
+package role
+
+import (
+	"context"
+	"io"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Carudy/pai/internal/chat"
+	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/core"
+	"github.com/Carudy/pai/internal/provider"
+)
+
+// fakeInbox yields a fixed sequence of wakes, then io.EOF. It records the ack
+// (and nack) for each wake.
+type fakeInbox struct {
+	wakes []core.Wake
+	acks  []error
+}
+
+func (f *fakeInbox) Next(context.Context) (core.Wake, error) {
+	if len(f.wakes) == 0 {
+		return core.Wake{}, io.EOF
+	}
+	w := f.wakes[0]
+	f.wakes = f.wakes[1:]
+	return w, nil
+}
+
+func (f *fakeInbox) Poll() (core.Wake, bool) { return core.Wake{}, false }
+func (f *fakeInbox) Done(_ core.Wake, err error) error {
+	f.acks = append(f.acks, err)
+	return nil
+}
+
+// A service wakes, runs one activation, and acks. The situation is a projection:
+// it reaches the model but is never recorded as a turn, and the prompt keeps its
+// frozen head.
+func TestRunServiceAcksWakesAndInjectsSituation(t *testing.T) {
+	rp, err := chat.LoadRolePromptForSession("devops", "", nil, nil, "", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalHead := rp.Head()
+	if !strings.Contains(originalHead, `"action"  one of tool|ask|done|terminate`) {
+		t.Fatalf("chat prompt does not advertise the chat set:\n%s", originalHead)
+	}
+	if rp.Actions.Has(chat.ActionYield) {
+		t.Fatal("the prepared chat prompt advertises a service action")
+	}
+
+	fp := &sequenceProvider{replies: []string{
+		`{"action":"done","payload":"first task complete","reason":"done"}`,
+		`{"action":"yield","payload":{"until":"2026-10-24T12:05:00Z"},"reason":"waiting for the next sample"}`,
+		`{"action":"inform","payload":"level 3.8 m, above the warning band","reason":"crossed the threshold"}`,
+	}}
+	obs := &fakeObserver{}
+	inbox := &fakeInbox{wakes: []core.Wake{
+		{Situation: "wake: first timer", Reason: "timer"},
+		{Situation: "wake: second timer", Reason: "timer"},
+		{Situation: "wake: third timer", Reason: "timer"},
+	}}
+	cfg := &config.UserConfig{
+		DefaultRole:  "devops",
+		DefaultModel: "test:model",
+		Context:      config.ContextConfig{KeepTurns: 4, ExecLimit: 8000, HeadLines: 80, TailLines: 40},
+	}
+	rt := &Runtime{Observer: obs, Logger: nopLogger{}, Provider: fp}
+
+	if err := RunService(context.Background(), cfg, rt, rp, inbox, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	if fp.calls != 3 {
+		t.Fatalf("provider calls = %d, want 3", fp.calls)
+	}
+	if len(inbox.acks) != 3 {
+		t.Fatalf("acks = %v, want 3", inbox.acks)
+	}
+	for i, ack := range inbox.acks {
+		if ack != nil {
+			t.Fatalf("ack %d = %v, want nil", i, ack)
+		}
+	}
+
+	// The service prompt adds inform/yield to the advertised contract; the
+	// caller's prepared prompt is untouched.
+	if !strings.Contains(fp.seen[0][0].Content, `"action"  one of tool|ask|inform|yield|done|terminate`) {
+		t.Fatalf("service head does not advertise inform/yield:\n%s", fp.seen[0][0].Content)
+	}
+	if rp.Actions.Has(chat.ActionYield) || rp.Head() != originalHead {
+		t.Fatal("RunService mutated the caller's chat prompt")
+	}
+
+	// Each request carries its own situation, and no wake became a user turn.
+	for i, want := range []string{"wake: first timer", "wake: second timer", "wake: third timer"} {
+		if !slices.ContainsFunc(fp.seen[i], func(m provider.Message) bool { return m.Content == want }) {
+			t.Fatalf("request %d is missing situation %q:\n%s", i, want, transcript(fp.seen[i]))
+		}
+	}
+	for i := 0; i < fp.calls; i++ {
+		for _, m := range fp.seen[i] {
+			if m.Role == provider.RoleUser {
+				t.Fatalf("request %d contains a wake as a user turn: %s", i, m.Content)
+			}
+		}
+	}
+	if len(rt.transcript) != 3 {
+		t.Fatalf("transcript = %#v, want three assistant turns", rt.transcript)
+	}
+	for _, turn := range rt.transcript {
+		if turn.Role != "assistant" {
+			t.Fatalf("wake was recorded as a turn: %#v", turn)
+		}
+	}
+	if !slices.Contains(obs.outputs, "level 3.8 m, above the warning band") {
+		t.Fatalf("inform did not surface the status: %v", obs.outputs)
+	}
+}
+
+func TestOutcomeNames(t *testing.T) {
+	cases := map[outcome]string{
+		outcomeContinue: "continue", outcomeYield: "yield", outcomeDone: "done",
+		outcomeAsk: "ask", outcomeTerminate: "terminate",
+	}
+	for o, want := range cases {
+		if got := o.String(); got != want {
+			t.Errorf("outcome %d = %q, want %q", o, got, want)
+		}
+	}
+}

@@ -15,6 +15,9 @@ See the [module map](../organization.md) for the ports-and-adapters architecture
 - `Sessions` exposes storage actions needed by in-session commands.
 - `Turn`, `ToolCall`, `ToolResult`, and `Usage` are shared values;
   `ErrAborted` distinguishes prompt cancellation from failure.
+- `Event`, `EventClass`, `Wake`, and `Inbox` are the resident-session seam:
+  typed, prioritized input with coalescing (`PrepareEvents`) and an ack/nack
+  contract. `EventTelemetry` never wakes the model or enters its context.
 - `WriterFunc` adapts streamed tool output; `Version` supports release injection.
 
 ## Boundaries

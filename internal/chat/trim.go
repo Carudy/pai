@@ -39,7 +39,7 @@ func TrimToAction(content string) (string, int) {
 	}
 
 	var first Response
-	if err := json.Unmarshal([]byte(content[start:end+1]), &first); err != nil || !isValidAction(first.Action) {
+	if err := json.Unmarshal([]byte(content[start:end+1]), &first); err != nil || !isKnownAction(first.Action) {
 		return content, 0
 	}
 	kept := content[:end+1]

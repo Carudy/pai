@@ -233,7 +233,7 @@ type Snapshot struct {
 	TrustedTools []string       `json:"trusted_tools,omitempty"`
 	Name         string         `json:"name"`
 	Model        string         `json:"model"`
-	State        string         `json:"state"` // starting, busy, awaiting, stopped
+	State        string         `json:"state"` // starting, busy, awaiting, suspended, parked, stopped
 	Phase        string         `json:"phase"`
 	ActiveTool   *core.ToolCall `json:"active_tool,omitempty"`
 	Queued       int            `json:"queued"`

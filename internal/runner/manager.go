@@ -462,7 +462,7 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 			return ErrBusy
 		}
 		if w := m.entries[name]; w != nil {
-			if w.state == "stopped" {
+			if w.state == StateStopped {
 				done := w.done
 				m.mu.Unlock()
 				<-done
@@ -476,8 +476,8 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 			case w.tasks <- text:
 				m.clearFailureLocked(name)
 				// The worker may dequeue before reacquiring mu; reserve busy now.
-				if w.state == "awaiting" {
-					w.state = "busy"
+				if w.state == StateAwaiting {
+					w.state = StateBusy
 				}
 				w.emitLocked("queued", nil)
 				m.mu.Unlock()
@@ -490,7 +490,7 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 		if len(m.entries) >= m.max {
 			var idle *worker
 			for _, w := range m.entries {
-				if w.state == "awaiting" && len(w.tasks) == 0 && len(w.steering) == 0 {
+				if w.state == StateAwaiting && len(w.tasks) == 0 && len(w.steering) == 0 {
 					idle = w
 					break
 				}
@@ -499,7 +499,7 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 				m.mu.Unlock()
 				return ErrCapacity
 			}
-			idle.state = "stopped"
+			idle.state = StateStopped
 			idle.cancel()
 			done := idle.done
 			m.mu.Unlock()
@@ -507,7 +507,7 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 			continue
 		}
 		ctx, cancel := context.WithCancel(m.ctx)
-		w := &worker{m: m, name: name, workingDir: cwd, ctx: ctx, cancel: cancel, done: make(chan struct{}), tasks: make(chan string, queueLimit), steering: make(chan string, queueLimit), state: "starting", phase: "starting", subs: make(map[chan Event]struct{})}
+		w := &worker{m: m, name: name, workingDir: cwd, ctx: ctx, cancel: cancel, done: make(chan struct{}), tasks: make(chan string, queueLimit), steering: make(chan string, queueLimit), state: StateStarting, phase: "starting", subs: make(map[chan Event]struct{})}
 		w.tasks <- text
 		m.clearFailureLocked(name)
 		m.entries[name] = w
@@ -534,17 +534,17 @@ func (m *Manager) Steer(name, text string) error {
 	if w == nil {
 		return ErrNotFound
 	}
-	if w.state == "stopped" {
+	if w.state == StateStopped {
 		return ErrNotFound
 	}
 	ch := w.steering
-	if w.state == "awaiting" {
+	if w.state == StateAwaiting {
 		ch = w.tasks
 	}
 	select {
 	case ch <- text:
-		if w.state == "awaiting" {
-			w.state = "busy"
+		if w.state == StateAwaiting {
+			w.state = StateBusy
 		}
 		w.emitLocked("queued", nil)
 		return nil
@@ -563,7 +563,7 @@ func (m *Manager) Cancel(name string) error {
 		return ErrNotFound
 	}
 	w.latestTool = nil
-	if w.state != "awaiting" {
+	if w.state != StateAwaiting {
 		w.abortPrompts = true
 		if w.rt != nil {
 			w.rt.Interrupt()
@@ -828,7 +828,7 @@ func (m *Manager) reserveIdle(name string) (func(), error) {
 		return nil, ErrBusy
 	}
 	w := m.entries[name]
-	if w != nil && (w.state != "awaiting" || w.pending != nil || len(w.tasks) != 0 || len(w.steering) != 0) {
+	if w != nil && (w.state != StateAwaiting || w.pending != nil || len(w.tasks) != 0 || len(w.steering) != 0) {
 		m.mu.Unlock()
 		return nil, ErrBusy
 	}
@@ -837,7 +837,7 @@ func (m *Manager) reserveIdle(name string) (func(), error) {
 	}
 	m.changing[name] = true
 	if w != nil {
-		w.state = "stopped"
+		w.state = StateStopped
 		w.cancel()
 		m.mu.Unlock()
 		<-w.done

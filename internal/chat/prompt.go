@@ -49,24 +49,71 @@ type RolePrompt struct {
 	ProjectContext string
 	ContextSource  string
 
+	// Actions is the response contract this prompt advertises. The zero value
+	// means ChatActions, so existing callers and hand-built prompts are unchanged.
+	// A service session sets ServiceActions, which also adds inform and yield to
+	// response validation.
+	Actions ActionSet
+
+	// situation is an optional, per-activation projection inserted after history
+	// and before the tail. It is never recorded as a turn.
+	situation string
+
 	workingDir string
+	hostInfo   string
 	head       string
 }
 
 // Messages renders the per-request message list:
 //
-//	[system: head] + history + [system: tail]
+//	[system: head] + history + [system: situation] + [system: tail]
 //
 // The head carries the full output contract, frozen with the role. The tail is a
 // short per-turn nudge (the reminder plus the role's tools) placed after the
 // history so it is the last thing the model reads. history holds only
-// conversation turns.
+// conversation turns; a situation block, when present, is a host-rendered
+// projection of the events that caused this wake.
 func (rp *RolePrompt) Messages(history []provider.Message) []provider.Message {
-	msgs := make([]provider.Message, 0, len(history)+2)
+	msgs := make([]provider.Message, 0, len(history)+3)
 	msgs = append(msgs, provider.Message{Role: provider.RoleSystem, Content: rp.head})
 	msgs = append(msgs, history...)
+	if rp.situation != "" {
+		msgs = append(msgs, provider.Message{Role: provider.RoleSystem, Content: rp.situation})
+	}
 	msgs = append(msgs, provider.Message{Role: provider.RoleSystem, Content: rp.tail()})
 	return msgs
+}
+
+// MessagesWithSituation renders the same list with one situation block inserted
+// before the tail. An empty situation is exactly Messages.
+func (rp *RolePrompt) MessagesWithSituation(history []provider.Message, situation string) []provider.Message {
+	return rp.WithSituation(situation).Messages(history)
+}
+
+// WithSituation returns a copy carrying situation for one activation. It shares
+// the frozen head, so the prefix stays cacheable; only the trailing projection
+// changes.
+func (rp *RolePrompt) WithSituation(situation string) *RolePrompt {
+	if strings.TrimSpace(situation) == "" {
+		return rp
+	}
+	copy := *rp
+	copy.situation = situation
+	return &copy
+}
+
+// actionSet is the mode's response contract, defaulting to chat.
+func (rp *RolePrompt) actionSet() ActionSet {
+	return rp.Actions.orChat()
+}
+
+// SetActions narrows or widens the response contract before the head is composed.
+// It returns the prompt so a service driver can prepare a session in one
+// expression. Callers must set it before the first request.
+func (rp *RolePrompt) SetActions(actions ActionSet) *RolePrompt {
+	rp.Actions = actions
+	rp.head = composeHead(rp, rp.hostInfo)
+	return rp
 }
 
 // Head returns the prompt head sent before the history. It is byte-identical from
@@ -155,7 +202,7 @@ func composeHead(rp *RolePrompt, hostInfo string) string {
 	// The output contract closes the head: it is the rule the tools are used
 	// under, and keeping it byte-stable with the head preserves prefix caching.
 	b.WriteString("\n\n")
-	b.WriteString(OutputGuide())
+	b.WriteString(OutputGuideFor(rp.actionSet()))
 	return b.String()
 }
 
@@ -227,12 +274,14 @@ func LoadRolePromptForSession(name, extra string, extraTools, trustedProjects []
 		Intro:       applyIntro(role.Intro, extra),
 		Tools:       specs,
 		Resolved:    set,
+		Actions:     ChatActions(),
 		workingDir:  workingDir,
+		hostInfo:    hostinfo.Describe(workingDir, born),
 	}
 	if len(role.ContextFiles) > 0 && workingDir != "" {
 		rp.ProjectContext, rp.ContextSource = findContextFile(workingDir, role.ContextFiles)
 	}
-	rp.head = composeHead(rp, hostinfo.Describe(workingDir, born))
+	rp.head = composeHead(rp, rp.hostInfo)
 	return rp, nil
 }
 
