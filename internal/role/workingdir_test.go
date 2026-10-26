@@ -61,17 +61,17 @@ func TestRuntimeWorkspaceFiles(t *testing.T) {
 }
 
 func TestRoleSwitchUsesRuntimeWorkspace(t *testing.T) {
-	cc, rt, _ := newTestCtx(t)
+	conv, rt, _ := newTestCtx(t)
 	rt.WorkingDir = t.TempDir()
 	path := filepath.Join(rt.WorkingDir, "AGENTS.md")
 	if err := os.WriteFile(path, []byte("runtime instructions"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	runRole(cc, []string{"coder"})
-	if cc.rp.ContextSource != path || cc.rp.ProjectContext != "runtime instructions" {
-		t.Fatalf("wrong role context: %+v", cc.rp)
+	runRole(conv, []string{"coder"})
+	if conv.rp.ContextSource != path || conv.rp.ProjectContext != "runtime instructions" {
+		t.Fatalf("wrong role context: %+v", conv.rp)
 	}
-	if !strings.Contains(cc.rp.Messages(nil)[0].Content, "Working Dir: "+rt.WorkingDir+"\n") {
+	if !strings.Contains(conv.rp.Messages(nil)[0].Content, "Working Dir: "+rt.WorkingDir+"\n") {
 		t.Fatal("role switch lost workspace")
 	}
 }

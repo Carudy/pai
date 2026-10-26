@@ -153,7 +153,7 @@ func (rt *Runtime) closeTurn(err error) {
 // steps. It returns when the episode reaches a terminal outcome, is interrupted,
 // or exceeds maxSteps (0 means unlimited, which is chat's current behaviour).
 // The driver decides what to do next: wait for the user, or sleep until an event.
-func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdCtx, maxSteps int) (activationResult, error) {
+func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, conv *conversation, maxSteps int) (activationResult, error) {
 	for steps := 0; ; steps++ {
 		if err := ctx.Err(); err != nil {
 			return activationResult{}, err
@@ -170,7 +170,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdC
 			if msg, ok := s.Steer(); ok {
 				rt.Observer.User(msg)
 				rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: msg})
-				cc.history = append(cc.history, provider.Message{
+				conv.history = append(conv.history, provider.Message{
 					Role:    provider.RoleUser,
 					Kind:    core.KindInput,
 					Content: steeringMessage(msg),
@@ -181,7 +181,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdC
 		// First compression layer: deterministic elision of old observations. It is
 		// silent on the wire, so surface its footprint in the context log once per
 		// change (a turn aging out of the verbatim window), not every request.
-		if note := chat.DescribeCompaction(cc.history, cfg.Context); note != rt.compactionNote {
+		if note := chat.DescribeCompaction(conv.history, cfg.Context); note != rt.compactionNote {
 			rt.compactionNote = note
 			if note != "" {
 				rt.Observer.Output(note)
@@ -192,7 +192,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdC
 		// the oldest turns with a model-written summary. The next step reports
 		// fresh usage, so at most one attempt happens per iteration.
 		if chat.ShouldSummarize(cfg.Context, rt.promptTokens) {
-			if ok, err := compactHistory(ctx, rt, cfg, cc); err != nil {
+			if ok, err := compactHistory(ctx, rt, cfg, conv); err != nil {
 				rt.Logger.Errorf("compacting conversation: %v\n", err)
 			} else if ok {
 				rt.Observer.Output("compacted older turns into a summary to stay within the context window")
@@ -202,7 +202,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdC
 
 		// Each step gets its own context so Ctrl+C can cancel just this step.
 		stepCtx, endStep := rt.beginStep(ctx)
-		out, newHistory, err := step(stepCtx, cfg, rt, cc.rp, cc.history)
+		out, newHistory, err := step(stepCtx, cfg, rt, conv.rp, conv.history)
 		interrupted := stepCtx.Err() != nil
 		endStep()
 
@@ -213,7 +213,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdC
 			// A step can finish just as the cancel arrives; keep the turn it
 			// produced so an interactive session can refer to it after the wait.
 			if newHistory != nil {
-				cc.history = newHistory
+				conv.history = newHistory
 			}
 			return activationResult{outcome: outcomeYield, interrupted: true}, nil
 
@@ -221,7 +221,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdC
 			return activationResult{}, err
 
 		case out == outcomeContinue:
-			cc.history = newHistory
+			conv.history = newHistory
 			rt.Observer.Separator()
 
 		default:
@@ -229,7 +229,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdC
 			// control back. It ends with the model's own reply, and a follow-up that
 			// refers to it is unanswerable without it.
 			if newHistory != nil {
-				cc.history = newHistory
+				conv.history = newHistory
 			}
 			return activationResult{outcome: out}, nil
 		}
@@ -237,14 +237,14 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, cc *cmdC
 }
 
 // compactHistory replaces the oldest turns with a model-written summary, keeping
-// the last Context.KeepTurns user turns verbatim. It mutates cc.history; the
+// the last Context.KeepTurns user turns verbatim. It mutates conv.history; the
 // recorded transcript and any stored session are untouched. It reports whether
 // anything was compacted.
-func compactHistory(ctx context.Context, rt *Runtime, cfg *config.UserConfig, cc *cmdCtx) (bool, error) {
+func compactHistory(ctx context.Context, rt *Runtime, cfg *config.UserConfig, conv *conversation) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	span, recent := chat.SplitForSummary(cc.history, cfg.Context.KeepTurns)
+	span, recent := chat.SplitForSummary(conv.history, cfg.Context.KeepTurns)
 	if len(span) == 0 {
 		return false, nil
 	}
@@ -267,7 +267,7 @@ func compactHistory(ctx context.Context, rt *Runtime, cfg *config.UserConfig, cc
 	}
 
 	msg := chat.SummaryMessage(summary)
-	cc.history = append([]provider.Message{msg}, recent...)
+	conv.history = append([]provider.Message{msg}, recent...)
 
 	// Persist a checkpoint after the turns it stands in for. On attach the replay
 	// starts at the last summary, so summarized turns are not replayed (and not

@@ -1,7 +1,6 @@
 package role
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -9,7 +8,6 @@ import (
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/prompts"
-	"github.com/Carudy/pai/internal/provider"
 )
 
 // cmdOutcome is what a line of user input turned out to be.
@@ -21,24 +19,6 @@ const (
 	cmdExit                      // end the session
 )
 
-// cmdCtx is the state an in-session command may read or change. The loop owns
-// the pointed-to value and re-reads it after each command, so /role and /new can
-// swap the prompt and clear the conversation.
-type cmdCtx struct {
-	rt      *Runtime
-	cfg     *config.UserConfig
-	rp      *chat.RolePrompt
-	history []provider.Message
-	session string          // "" = ephemeral
-	ctx     context.Context // the run's context, for commands that call the model
-}
-
-func (c *cmdCtx) output(text string) { c.rt.Observer.Output(text) }
-
-func (c *cmdCtx) notice(format string, a ...any) {
-	c.rt.Observer.Notice(fmt.Sprintf(format, a...))
-}
-
 // cmdSpec describes one in-session command.
 type cmdSpec struct {
 	name    string
@@ -48,7 +28,7 @@ type cmdSpec struct {
 	minArgs int
 	maxArgs int                  // -1 = unbounded
 	check   func([]string) error // extra argument validation, beyond arity
-	run     func(*cmdCtx, []string) (cmdOutcome, string)
+	run     func(*conversation, []string) (cmdOutcome, string)
 }
 
 // commandSpecs is the single source of truth for dispatch and /help, so the two
@@ -63,7 +43,7 @@ func init() {
 			name: "help", aliases: []string{"h", "?"},
 			usage:   "/help",
 			summary: "List the available commands",
-			run: func(c *cmdCtx, _ []string) (cmdOutcome, string) {
+			run: func(c *conversation, _ []string) (cmdOutcome, string) {
 				c.output(helpText())
 				return cmdHandled, ""
 			},
@@ -72,7 +52,7 @@ func init() {
 			name: "exit", aliases: []string{"quit", "q"},
 			usage:   "/exit",
 			summary: "End this session",
-			run: func(*cmdCtx, []string) (cmdOutcome, string) {
+			run: func(*conversation, []string) (cmdOutcome, string) {
 				return cmdExit, ""
 			},
 		},
@@ -159,7 +139,7 @@ func splitCommand(line string) (name string, args []string, isCmd bool) {
 // dispatch interprets one line of input. It returns a message for the model, or
 // an outcome telling the loop to keep prompting or to stop. Bad grammar is
 // reported and treated as handled, never forwarded to the model.
-func dispatch(c *cmdCtx, line string) (cmdOutcome, string) {
+func dispatch(c *conversation, line string) (cmdOutcome, string) {
 	line = strings.TrimSpace(line)
 	// "//text" sends a literal leading slash to the model.
 	if strings.HasPrefix(line, "//") {
@@ -206,13 +186,13 @@ func helpText() string {
 
 // ─── commands ────────────────────────────────────────────────────────────────
 
-func runInfo(c *cmdCtx, _ []string) (cmdOutcome, string) {
+func runInfo(c *conversation, _ []string) (cmdOutcome, string) {
 	c.output(fmt.Sprintf("session: %s\nrole:    %s\nmodel:   %s\nturns:   %d",
 		sessionName(c.session), c.cfg.DefaultRole, c.cfg.DefaultModel, len(c.rt.transcript)))
 	return cmdHandled, ""
 }
 
-func runTools(c *cmdCtx, _ []string) (cmdOutcome, string) {
+func runTools(c *conversation, _ []string) (cmdOutcome, string) {
 	if len(c.rp.Tools) == 0 {
 		c.output("this role has no tools")
 		return cmdHandled, ""
@@ -226,7 +206,7 @@ func runTools(c *cmdCtx, _ []string) (cmdOutcome, string) {
 	return cmdHandled, ""
 }
 
-func runTrusted(c *cmdCtx, _ []string) (cmdOutcome, string) {
+func runTrusted(c *conversation, _ []string) (cmdOutcome, string) {
 	list := func(items []string) string {
 		if len(items) == 0 {
 			return "(none)"
@@ -251,7 +231,7 @@ func checkRoleName(args []string) error {
 	return fmt.Errorf("unknown role %q; available: %s", args[0], strings.Join(prompts.RoleNames(), ", "))
 }
 
-func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
+func runRole(c *conversation, args []string) (cmdOutcome, string) {
 	if len(args) == 0 {
 		c.output(fmt.Sprintf("role: %s\n%s", c.cfg.DefaultRole, c.rp.Description))
 		return cmdHandled, ""
@@ -297,7 +277,7 @@ func runRole(c *cmdCtx, args []string) (cmdOutcome, string) {
 	return cmdHandled, ""
 }
 
-func runNew(c *cmdCtx, args []string) (cmdOutcome, string) {
+func runNew(c *conversation, args []string) (cmdOutcome, string) {
 	name := ""
 	if len(args) == 1 {
 		name = args[0]
@@ -334,7 +314,7 @@ func runNew(c *cmdCtx, args []string) (cmdOutcome, string) {
 	return cmdHandled, ""
 }
 
-func runRename(c *cmdCtx, args []string) (cmdOutcome, string) {
+func runRename(c *conversation, args []string) (cmdOutcome, string) {
 	name := args[0]
 	if name == c.session {
 		c.output(fmt.Sprintf("this conversation is already named %q", name))
@@ -366,7 +346,7 @@ func sessionName(name string) string {
 	return name
 }
 
-func runCompact(c *cmdCtx, _ []string) (cmdOutcome, string) {
+func runCompact(c *conversation, _ []string) (cmdOutcome, string) {
 	before := len(c.history)
 	ok, err := compactHistory(c.ctx, c.rt, c.cfg, c)
 	if err != nil {

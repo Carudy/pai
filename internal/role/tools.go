@@ -18,7 +18,7 @@ import (
 )
 
 // confirmTitle annotates a confirmation with how many commands it covers, so a
-// long "aa && bb && cc" is obvious at the moment of approving it.
+// long "aa && bb && conv" is obvious at the moment of approving it.
 func confirmTitle(verb, cmd string) string {
 	if n := len(tool.SplitSegments(cmd)); n > 1 {
 		return fmt.Sprintf("%s (%d commands)", verb, n)
@@ -61,8 +61,8 @@ func segmentTexts(cmd string) []string {
 // that could not be limited.
 func confirmCommand(rt *Runtime, title string, untrusted []string) (core.TrustChoice, error) {
 	if len(untrusted) > 0 {
-		if cc, ok := rt.Prompter.(core.CommandConfirmer); ok {
-			return cc.ConfirmCommand(title, untrusted)
+		if conv, ok := rt.Prompter.(core.CommandConfirmer); ok {
+			return conv.ConfirmCommand(title, untrusted)
 		}
 	}
 	ok, err := rt.Prompter.Confirm(title)

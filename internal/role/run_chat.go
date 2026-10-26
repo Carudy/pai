@@ -39,13 +39,13 @@ func (rt *Runtime) readInstruction() (string, bool) {
 
 // nextInstruction reads until the user supplies something for the model, running
 // any in-session commands along the way. ok=false ends the session.
-func (rt *Runtime) nextInstruction(cc *cmdCtx) (string, bool) {
+func (rt *Runtime) nextInstruction(conv *conversation) (string, bool) {
 	for {
 		line, ok := rt.readInstruction()
 		if !ok {
 			return "", false
 		}
-		switch outcome, msg := dispatch(cc, line); outcome {
+		switch outcome, msg := dispatch(conv, line); outcome {
 		case cmdExit:
 			return "", false
 		case cmdHandled:
@@ -109,16 +109,16 @@ func Run(ctx context.Context, cfg *config.UserConfig, rt *Runtime, history []pro
 func runChat(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.RolePrompt, resumed []provider.Message, userInput string) error {
 	rt.Logger.Debugf("Role: %s\nIntro:\n%s\n", rp.Name, rp.Intro)
 
-	// cc owns the conversation so that in-session commands can replace the role
-	// prompt (/role) or clear the history (/new). history holds only conversation
-	// turns; the role prompt is composed around it on every request.
-	cc := &cmdCtx{rt: rt, cfg: cfg, rp: rp, session: rt.SessionName, ctx: ctx}
-	cc.history = make([]provider.Message, 0, len(resumed)+1)
-	cc.history = append(cc.history, resumed...)
+	// One value owns the conversation so that in-session commands can replace the
+	// role prompt (/role) or clear the history (/new). history holds only
+	// conversation turns; the role prompt is composed around it on every request.
+	conv := &conversation{rt: rt, cfg: cfg, rp: rp, session: rt.SessionName, ctx: ctx}
+	conv.history = make([]provider.Message, 0, len(resumed)+1)
+	conv.history = append(conv.history, resumed...)
 
 	// The instruction given on the command line may itself be a command.
 	if userInput != "" {
-		switch outcome, msg := dispatch(cc, userInput); outcome {
+		switch outcome, msg := dispatch(conv, userInput); outcome {
 		case cmdExit:
 			return nil
 		case cmdHandled:
@@ -131,7 +131,7 @@ func runChat(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.
 		}
 	}
 	if userInput != "" {
-		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: userInput, Kind: core.KindInput})
+		conv.history = append(conv.history, provider.Message{Role: provider.RoleUser, Content: userInput, Kind: core.KindInput})
 		rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: userInput})
 	}
 
@@ -140,12 +140,12 @@ func runChat(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.
 	// "terminate"), must wait for the user first: otherwise attaching re-runs the
 	// last step and burns a model call on a redundant reply. History that ends on
 	// a user turn (a tool result from an interrupted step, say) still continues.
-	if rt.Interactive && !historyEndsWithUser(cc.history) {
-		input, ok := rt.nextInstruction(cc)
+	if rt.Interactive && !conv.endsWithUser() {
+		input, ok := rt.nextInstruction(conv)
 		if !ok {
 			return nil
 		}
-		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: input, Kind: core.KindInput})
+		conv.history = append(conv.history, provider.Message{Role: provider.RoleUser, Content: input, Kind: core.KindInput})
 	}
 
 	// Seed the budget check for a resumed session, before any real usage is known.
@@ -153,10 +153,10 @@ func runChat(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.
 	// sent — the over-run cut and elision included — so the budget starts from the
 	// request rather than from text that will not leave the machine. The scale turns the
 	// estimate into the provider's accounting, which is the unit the budget is stated in.
-	rt.promptTokens = chat.ScaleTokens(chat.EstimateTokens(cc.rp.Messages(chat.ServedHistory(cc.history, cfg.Context))), rt.TokenScale)
+	rt.promptTokens = chat.ScaleTokens(chat.EstimateTokens(conv.rp.Messages(chat.ServedHistory(conv.history, cfg.Context))), rt.TokenScale)
 
 	for {
-		result, err := activate(ctx, cfg, rt, cc, 0)
+		result, err := activate(ctx, cfg, rt, conv, 0)
 		switch {
 		case err != nil:
 			return err
@@ -168,18 +168,11 @@ func runChat(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *chat.
 
 		// done/terminate/ask, a yield, or an interactive interrupt: wait for the
 		// next instruction. activate already adopted the step's final history.
-		input, ok := rt.nextInstruction(cc)
+		input, ok := rt.nextInstruction(conv)
 		if !ok {
 			return nil
 		}
-		cc.history = append(cc.history, provider.Message{Role: provider.RoleUser, Content: input, Kind: core.KindInput})
+		conv.history = append(conv.history, provider.Message{Role: provider.RoleUser, Content: input, Kind: core.KindInput})
 		rt.Observer.Separator()
 	}
-}
-
-// historyEndsWithUser reports whether the composed conversation's last message
-// awaits a reply from the model.
-func historyEndsWithUser(history []provider.Message) bool {
-	n := len(history)
-	return n > 0 && history[n-1].Role == provider.RoleUser
 }

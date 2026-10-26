@@ -77,7 +77,7 @@ func (s *fakeSessions) SetRole(role string) error {
 
 // newTestCtx builds a command context against the real built-in devops role,
 // with the user's config directory isolated so nothing leaks in.
-func newTestCtx(t *testing.T) (*cmdCtx, *Runtime, *fakeObserver) {
+func newTestCtx(t *testing.T) (*conversation, *Runtime, *fakeObserver) {
 	t.Helper()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -88,8 +88,8 @@ func newTestCtx(t *testing.T) (*cmdCtx, *Runtime, *fakeObserver) {
 	obs := &fakeObserver{}
 	rt := &Runtime{Observer: obs}
 	cfg := &config.UserConfig{DefaultRole: "devops", DefaultModel: "test:model"}
-	cc := &cmdCtx{rt: rt, cfg: cfg, rp: rp, ctx: context.Background()}
-	return cc, rt, obs
+	conv := &conversation{rt: rt, cfg: cfg, rp: rp, ctx: context.Background()}
+	return conv, rt, obs
 }
 
 // fakeProvider stands in for the model in commands that call it (e.g. /compact).
@@ -113,12 +113,12 @@ func (f *fakeProvider) CompletionStream(context.Context, provider.CompletionPara
 
 // /compact summarizes the older turns and keeps the recent ones verbatim.
 func TestCompactCommandSummarizesOldTurns(t *testing.T) {
-	cc, rt, obs := newTestCtx(t)
+	conv, rt, obs := newTestCtx(t)
 	fp := &fakeProvider{reply: "ran df -h; disk is fine"}
 	rt.Provider = fp
-	cc.cfg.Context.KeepTurns = 1
+	conv.cfg.Context.KeepTurns = 1
 
-	cc.history = []provider.Message{
+	conv.history = []provider.Message{
 		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"},
 		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: `{"action":"tool","toolname":"execute","payload":"df -h","reason":"r"}`},
 		{Role: provider.RoleUser, Kind: core.KindToolResult, Content: "[exec result]: exit code 0\nok"},
@@ -126,7 +126,7 @@ func TestCompactCommandSummarizesOldTurns(t *testing.T) {
 		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: `{"action":"done","payload":"ok","reason":"r"}`},
 	}
 
-	if outcome, _ := dispatch(cc, "/compact"); outcome != cmdHandled {
+	if outcome, _ := dispatch(conv, "/compact"); outcome != cmdHandled {
 		t.Fatalf("outcome = %v", outcome)
 	}
 	if fp.calls != 1 {
@@ -136,19 +136,19 @@ func TestCompactCommandSummarizesOldTurns(t *testing.T) {
 	if obs.compacting != 1 {
 		t.Errorf("compacting events = %d, want 1", obs.compacting)
 	}
-	if len(cc.history) != 3 {
-		t.Fatalf("history = %d messages, want summary + 2 kept", len(cc.history))
+	if len(conv.history) != 3 {
+		t.Fatalf("history = %d messages, want summary + 2 kept", len(conv.history))
 	}
-	if cc.history[0].Kind != core.KindSummary {
-		t.Errorf("first message kind = %q, want summary", cc.history[0].Kind)
+	if conv.history[0].Kind != core.KindSummary {
+		t.Errorf("first message kind = %q, want summary", conv.history[0].Kind)
 	}
-	if !strings.Contains(cc.history[0].Content, "disk is fine") {
-		t.Errorf("summary text missing: %q", cc.history[0].Content)
+	if !strings.Contains(conv.history[0].Content, "disk is fine") {
+		t.Errorf("summary text missing: %q", conv.history[0].Content)
 	}
 	// The last whole turn (a user instruction plus its reply) is kept, not a
 	// message count.
-	if cc.history[1].Kind != core.KindInput || cc.history[1].Content != "now do more" {
-		t.Errorf("the most recent turn was not kept verbatim: %+v", cc.history[1])
+	if conv.history[1].Kind != core.KindInput || conv.history[1].Content != "now do more" {
+		t.Errorf("the most recent turn was not kept verbatim: %+v", conv.history[1])
 	}
 	if obs.lastOutput() == "" {
 		t.Error("expected a confirmation line")
@@ -172,13 +172,13 @@ func TestCompactCommandSummarizesOldTurns(t *testing.T) {
 
 // With nothing old enough, /compact says so instead of calling the model.
 func TestCompactCommandNothingToDo(t *testing.T) {
-	cc, rt, obs := newTestCtx(t)
+	conv, rt, obs := newTestCtx(t)
 	fp := &fakeProvider{reply: "unused"}
 	rt.Provider = fp
-	cc.cfg.Context.KeepTurns = 5
-	cc.history = []provider.Message{{Role: provider.RoleUser, Kind: core.KindInput, Content: "hi"}}
+	conv.cfg.Context.KeepTurns = 5
+	conv.history = []provider.Message{{Role: provider.RoleUser, Kind: core.KindInput, Content: "hi"}}
 
-	if outcome, _ := dispatch(cc, "/compact"); outcome != cmdHandled {
+	if outcome, _ := dispatch(conv, "/compact"); outcome != cmdHandled {
 		t.Fatalf("outcome = %v", outcome)
 	}
 	if fp.calls != 0 {
@@ -225,15 +225,15 @@ func TestSplitCommand(t *testing.T) {
 }
 
 func TestDispatchMessage(t *testing.T) {
-	cc, _, _ := newTestCtx(t)
+	conv, _, _ := newTestCtx(t)
 
-	outcome, msg := dispatch(cc, "  run df -h  ")
+	outcome, msg := dispatch(conv, "  run df -h  ")
 	if outcome != cmdMessage || msg != "run df -h" {
 		t.Errorf("got (%v, %q), want a plain message", outcome, msg)
 	}
 
 	// A doubled slash escapes a literal leading slash.
-	outcome, msg = dispatch(cc, "//not a command")
+	outcome, msg = dispatch(conv, "//not a command")
 	if outcome != cmdMessage || msg != "/not a command" {
 		t.Errorf("escape: got (%v, %q), want (/not a command)", outcome, msg)
 	}
@@ -253,8 +253,8 @@ func TestDispatchErrorsAreHandledNotSent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cc, _, obs := newTestCtx(t)
-			outcome, msg := dispatch(cc, tc.line)
+			conv, _, obs := newTestCtx(t)
+			outcome, msg := dispatch(conv, tc.line)
 			if outcome != cmdHandled || msg != "" {
 				t.Fatalf("got (%v, %q), want (cmdHandled, \"\")", outcome, msg)
 			}
@@ -266,16 +266,16 @@ func TestDispatchErrorsAreHandledNotSent(t *testing.T) {
 }
 
 func TestExitAndHelp(t *testing.T) {
-	cc, _, obs := newTestCtx(t)
+	conv, _, obs := newTestCtx(t)
 
-	if outcome, _ := dispatch(cc, "/exit"); outcome != cmdExit {
+	if outcome, _ := dispatch(conv, "/exit"); outcome != cmdExit {
 		t.Errorf("/exit = %v, want cmdExit", outcome)
 	}
-	if outcome, _ := dispatch(cc, "/quit"); outcome != cmdExit {
+	if outcome, _ := dispatch(conv, "/quit"); outcome != cmdExit {
 		t.Errorf("/quit alias = %v, want cmdExit", outcome)
 	}
 
-	if outcome, _ := dispatch(cc, "/help"); outcome != cmdHandled {
+	if outcome, _ := dispatch(conv, "/help"); outcome != cmdHandled {
 		t.Errorf("/help = %v, want cmdHandled", outcome)
 	}
 	// /help is generated from the table, so every command must appear.
@@ -288,12 +288,12 @@ func TestExitAndHelp(t *testing.T) {
 
 // /trusted reports both the run-only list and the config list.
 func TestTrustedCommand(t *testing.T) {
-	cc, rt, obs := newTestCtx(t)
+	conv, rt, obs := newTestCtx(t)
 	rt.TrustedCmds = []string{"make"}
 	rt.TrustedPaths = []string{"/srv/run"}
-	cc.cfg.TrustedCmds = []string{"ls"}
-	cc.cfg.TrustedPaths = []string{"/srv/cfg"}
-	if outcome, _ := dispatch(cc, "/trusted"); outcome != cmdHandled {
+	conv.cfg.TrustedCmds = []string{"ls"}
+	conv.cfg.TrustedPaths = []string{"/srv/cfg"}
+	if outcome, _ := dispatch(conv, "/trusted"); outcome != cmdHandled {
 		t.Fatalf("outcome = %v", outcome)
 	}
 	out := obs.lastOutput()
@@ -305,19 +305,19 @@ func TestTrustedCommand(t *testing.T) {
 }
 
 func TestRoleSwitch(t *testing.T) {
-	cc, _, obs := newTestCtx(t)
+	conv, _, obs := newTestCtx(t)
 
-	dispatch(cc, "/role")
+	dispatch(conv, "/role")
 	if !strings.Contains(obs.lastOutput(), "role: devops") {
 		t.Errorf("/role output = %q", obs.lastOutput())
 	}
 
-	dispatch(cc, "/role coder")
-	if cc.cfg.DefaultRole != "coder" || cc.rp.Name != "coder" {
-		t.Errorf("role not switched: cfg=%q rp=%q", cc.cfg.DefaultRole, cc.rp.Name)
+	dispatch(conv, "/role coder")
+	if conv.cfg.DefaultRole != "coder" || conv.rp.Name != "coder" {
+		t.Errorf("role not switched: cfg=%q rp=%q", conv.cfg.DefaultRole, conv.rp.Name)
 	}
 	// coder has no remote tool; the switch must apply the role's capability set.
-	for _, tl := range cc.rp.Tools {
+	for _, tl := range conv.rp.Tools {
 		if tl.Name == "remote" {
 			t.Error("coder should not have the remote tool")
 		}
@@ -326,49 +326,49 @@ func TestRoleSwitch(t *testing.T) {
 
 // Switching role saves it to the session so a later attach keeps it.
 func TestRoleSwitchSavesRole(t *testing.T) {
-	cc, rt, _ := newTestCtx(t)
+	conv, rt, _ := newTestCtx(t)
 	sessions := &fakeSessions{}
 	rt.Sessions = sessions
 
-	dispatch(cc, "/role coder")
+	dispatch(conv, "/role coder")
 	if len(sessions.roles) != 1 || sessions.roles[0] != "coder" {
 		t.Fatalf("saved roles = %v, want [coder]", sessions.roles)
 	}
 }
 
 func TestNewWithoutSessionsClearsLocally(t *testing.T) {
-	cc, rt, obs := newTestCtx(t)
-	cc.history = []provider.Message{{Role: "user", Content: "hi"}}
+	conv, rt, obs := newTestCtx(t)
+	conv.history = []provider.Message{{Role: "user", Content: "hi"}}
 	rt.transcript = []core.Turn{{Role: "user", Kind: "input", Content: "hi"}}
 
-	if outcome, _ := dispatch(cc, "/new"); outcome != cmdHandled {
+	if outcome, _ := dispatch(conv, "/new"); outcome != cmdHandled {
 		t.Fatalf("outcome = %v", outcome)
 	}
-	if len(cc.history) != 0 || len(rt.transcript) != 0 {
-		t.Errorf("conversation not cleared: history=%d transcript=%d", len(cc.history), len(rt.transcript))
+	if len(conv.history) != 0 || len(rt.transcript) != 0 {
+		t.Errorf("conversation not cleared: history=%d transcript=%d", len(conv.history), len(rt.transcript))
 	}
 	if len(obs.sessions) != 1 || obs.sessions[0] != "" {
 		t.Errorf("session events = %v, want a single empty name", obs.sessions)
 	}
 
 	// Naming a session needs storage.
-	dispatch(cc, "/new work")
+	dispatch(conv, "/new work")
 	if !strings.Contains(obs.lastNotice(), "unavailable") {
 		t.Errorf("notice = %q, want it to mention unavailable storage", obs.lastNotice())
 	}
 }
 
 func TestNewWithSessions(t *testing.T) {
-	cc, rt, obs := newTestCtx(t)
+	conv, rt, obs := newTestCtx(t)
 	sessions := &fakeSessions{}
 	rt.Sessions = sessions
 
-	dispatch(cc, "/new work")
+	dispatch(conv, "/new work")
 	if len(sessions.created) != 1 || sessions.created[0] != "work" {
 		t.Errorf("created = %v, want [work]", sessions.created)
 	}
-	if cc.session != "work" {
-		t.Errorf("session = %q, want work", cc.session)
+	if conv.session != "work" {
+		t.Errorf("session = %q, want work", conv.session)
 	}
 	if len(obs.sessions) != 1 || obs.sessions[0] != "work" {
 		t.Errorf("session events = %v", obs.sessions)
@@ -376,7 +376,7 @@ func TestNewWithSessions(t *testing.T) {
 }
 
 func TestRenamePersistsTranscript(t *testing.T) {
-	cc, rt, obs := newTestCtx(t)
+	conv, rt, obs := newTestCtx(t)
 	sessions := &fakeSessions{}
 	rt.Sessions = sessions
 	rt.transcript = []core.Turn{
@@ -384,7 +384,7 @@ func TestRenamePersistsTranscript(t *testing.T) {
 		{Role: "assistant", Kind: "output", Content: "b"},
 	}
 
-	dispatch(cc, "/rename my-session")
+	dispatch(conv, "/rename my-session")
 
 	if len(sessions.persisted) != 1 || sessions.persisted[0] != "my-session" {
 		t.Errorf("persisted = %v, want [my-session]", sessions.persisted)
@@ -392,23 +392,23 @@ func TestRenamePersistsTranscript(t *testing.T) {
 	if sessions.turns != 2 {
 		t.Errorf("backfilled %d turns, want 2", sessions.turns)
 	}
-	if cc.session != "my-session" {
-		t.Errorf("session = %q", cc.session)
+	if conv.session != "my-session" {
+		t.Errorf("session = %q", conv.session)
 	}
 	if len(obs.sessions) != 1 || obs.sessions[0] != "my-session" {
 		t.Errorf("session events = %v", obs.sessions)
 	}
 
 	// Renaming to the current name is a no-op, not an error.
-	dispatch(cc, "/rename my-session")
+	dispatch(conv, "/rename my-session")
 	if !strings.Contains(obs.lastOutput(), "already named") {
 		t.Errorf("output = %q", obs.lastOutput())
 	}
 }
 
 func TestRenameWithoutSessions(t *testing.T) {
-	cc, _, obs := newTestCtx(t)
-	dispatch(cc, "/rename work")
+	conv, _, obs := newTestCtx(t)
+	dispatch(conv, "/rename work")
 	if !strings.Contains(obs.lastNotice(), "unavailable") {
 		t.Errorf("notice = %q", obs.lastNotice())
 	}

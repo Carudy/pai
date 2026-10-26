@@ -48,7 +48,11 @@ written by `config.AddTrustedTools`, which the role layer owns.
 
 `loop.go` holds the loop itself: `activate`, the inner reason–act–observe
 episode (steering, compaction, `step`, separators), plus the `Runtime` state it
-needs. The two files around it are waiting policies, not loops:
+needs. `conversation.go` holds the conversation value `activate` mutates: the
+role prompt in force and the turns sent to the model. In-session commands are a
+second mutator of it (`/role` swaps the prompt, `/new` clears history), so it
+belongs to the loop, not to `command.go`. The two files around them are waiting
+policies, not loops:
 
 - `run_chat.go` — `Run`/`runChat`: run an episode, then prompt the user.
 - `run_service.go` — `RunService`: wait for a wake, run one bounded episode, ack

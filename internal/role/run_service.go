@@ -42,9 +42,9 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 	prepared.SetActions(chat.ServiceActions())
 	rp = &prepared
 
-	cc := &cmdCtx{rt: rt, cfg: cfg, rp: rp, session: rt.SessionName, ctx: ctx}
-	cc.history = append([]provider.Message(nil), history...)
-	rt.promptTokens = chat.ScaleTokens(chat.EstimateTokens(rp.Messages(chat.ServedHistory(cc.history, cfg.Context))), rt.TokenScale)
+	conv := &conversation{rt: rt, cfg: cfg, rp: rp, session: rt.SessionName, ctx: ctx}
+	conv.history = append([]provider.Message(nil), history...)
+	rt.promptTokens = chat.ScaleTokens(chat.EstimateTokens(rp.Messages(chat.ServedHistory(conv.history, cfg.Context))), rt.TokenScale)
 
 	for {
 		wake, err := inbox.Next(ctx)
@@ -57,9 +57,9 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 
 		// One situation per activation; the frozen head and the stored history
 		// are shared across wakes.
-		cc.rp = rp.WithSituation(wake.Situation)
+		conv.rp = rp.WithSituation(wake.Situation)
 
-		result, actErr := activate(ctx, cfg, rt, cc, maxServiceActivationSteps)
+		result, actErr := activate(ctx, cfg, rt, conv, maxServiceActivationSteps)
 		if result.interrupted && ctx.Err() == nil {
 			// A user abort ended this episode, not the session: acknowledge the
 			// wake as a yield and keep waiting for the next one.
