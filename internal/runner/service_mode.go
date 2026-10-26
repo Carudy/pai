@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -71,6 +72,10 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 		return nil, err
 	}
 	now := time.Now()
+	m.mu.Lock()
+	w.lastUsed = now
+	m.mu.Unlock()
+	m.enforceResidentLimit(name)
 
 	probeEvents, probeNext := m.probeDue(ctx, w, now)
 	wake.Events = mergeEvents(wake.Events, append(m.dueEvents(w, now), probeEvents...))
@@ -191,6 +196,50 @@ func (m *Manager) ServiceView(name string) (ServiceView, error) {
 	}
 	m.mu.Unlock()
 	return view, nil
+}
+
+// SetMaxResident bounds how many service runtimes stay prepared. Zero means
+// unbounded. The bound is applied on the next activation, which retires the
+// least recently used idle worker: its state and transcript are persisted, so
+// the next wake re-prepares it.
+func (m *Manager) SetMaxResident(n int) {
+	m.mu.Lock()
+	m.maxResident = n
+	m.mu.Unlock()
+}
+
+// enforceResidentLimit retires idle service workers beyond the bound. keep is
+// the worker the current activation is using, so it is never a victim. A busy,
+// awaiting, or starting worker is skipped: eviction only ever cancels a worker
+// that is blocked in the inbox.
+func (m *Manager) enforceResidentLimit(keep string) {
+	m.mu.Lock()
+	limit := m.maxResident
+	if limit <= 0 {
+		m.mu.Unlock()
+		return
+	}
+	residents := 0
+	var idle []*worker
+	for name, w := range m.entries {
+		if w.mode != ModeService {
+			continue
+		}
+		residents++
+		if name == keep || w.state == StateBusy || w.state == StateAwaiting || w.state == StateStarting {
+			continue
+		}
+		idle = append(idle, w)
+	}
+	excess := residents - limit
+	m.mu.Unlock()
+	if excess <= 0 {
+		return
+	}
+	sort.Slice(idle, func(i, j int) bool { return idle[i].lastUsed.Before(idle[j].lastUsed) })
+	for i := 0; i < excess && i < len(idle); i++ {
+		idle[i].cancel()
+	}
 }
 
 // serviceWorker returns the resident worker for a service, starting it on first

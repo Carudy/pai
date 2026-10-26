@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
+	"github.com/Carudy/pai/internal/provider"
 )
 
 func skipWithoutPOSIXShell(t *testing.T) {
@@ -312,4 +314,113 @@ func TestServicePersistsReportAsStatus(t *testing.T) {
 	if !strings.Contains(status, "level 3.8") {
 		t.Fatalf("status = %q, want the report payload", status)
 	}
+}
+
+// multiServiceBackend serves several resident sessions from one process, which
+// the eviction test needs.
+type multiServiceBackend struct {
+	mu       sync.Mutex
+	metas    []Meta
+	provider provider.Provider
+	events   int
+}
+
+func (b *multiServiceBackend) List() ([]Meta, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]Meta(nil), b.metas...), nil
+}
+
+func (b *multiServiceBackend) metaFor(name string) Meta {
+	for _, m := range b.metas {
+		if m.Name == name {
+			return m
+		}
+	}
+	return Meta{Name: name}
+}
+
+func (b *multiServiceBackend) History(name string, _, _ int) (History, error) {
+	return History{Meta: b.metaFor(name)}, nil
+}
+
+func (b *multiServiceBackend) Prepare(name string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), error) {
+	cfg, p, rec, history, cleanup, _, err := b.PrepareWorkspace(name, "")
+	return cfg, p, rec, history, cleanup, err
+}
+
+func (b *multiServiceBackend) PrepareWorkspace(name, _ string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), Meta, error) {
+	cfg := &config.UserConfig{
+		DefaultRole:  "devops",
+		DefaultModel: "test:model",
+		Context:      config.ContextConfig{KeepTurns: 4, ExecLimit: 8000, HeadLines: 80, TailLines: 40},
+	}
+	return cfg, b.provider, nil, nil, nil, b.metaFor(name), nil
+}
+
+func (b *multiServiceBackend) AppendEvent(_ string, _ core.Event) (int64, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.events++
+	return int64(b.events), nil
+}
+
+func (b *multiServiceBackend) AckEvents(string, []int64) error      { return nil }
+func (b *multiServiceBackend) NackEvent(string, int64, error) error { return nil }
+func (b *multiServiceBackend) DueEvents(string, time.Time, int) ([]core.Event, error) {
+	return nil, nil
+}
+func (b *multiServiceBackend) SetNextWake(string, *time.Time) error { return nil }
+
+// The resident bound retires the least recently used idle worker, and a later
+// wake re-prepares it: eviction costs a runtime, never a conversation.
+func TestServiceEvictsLeastRecentlyUsedResident(t *testing.T) {
+	dir := t.TempDir()
+	fp := &serviceTestProvider{
+		replies: []string{
+			`{"action":"done","payload":"one","reason":"done"}`,
+			`{"action":"done","payload":"two","reason":"done"}`,
+			`{"action":"done","payload":"one again","reason":"done"}`,
+		},
+		done: make(chan int, 4),
+	}
+	backend := &multiServiceBackend{
+		metas: []Meta{
+			{Name: "one", ID: "sid-1", Mode: ModeService, Cwd: dir, CreatedAt: time.Now()},
+			{Name: "two", ID: "sid-2", Mode: ModeService, Cwd: dir, CreatedAt: time.Now()},
+		},
+		provider: fp,
+	}
+	m := New(context.Background(), backend, 2)
+	m.SetMaxResident(1)
+	t.Cleanup(m.Close)
+	if err := m.StartServices(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	userWake := core.Wake{Reason: "user", Events: []core.Event{{ID: 1, Class: core.EventUser, Kind: "user_input"}}}
+
+	if _, err := m.Activate(ctx, "one", userWake); err != nil {
+		t.Fatalf("activate one: %v", err)
+	}
+	if _, err := m.Activate(ctx, "two", userWake); err != nil {
+		t.Fatalf("activate two: %v", err)
+	}
+	waitFor(t, "the first worker to be retired", func() bool {
+		_, err := m.Snapshot("one")
+		return errors.Is(err, ErrNotFound)
+	})
+
+	if _, err := m.Activate(ctx, "one", userWake); err != nil {
+		t.Fatalf("activate one again: %v", err)
+	}
+	if fp.CallCount() != 3 {
+		t.Fatalf("model calls = %d, want the re-prepared worker to run", fp.CallCount())
+	}
+	waitFor(t, "the second worker to be retired", func() bool {
+		_, err := m.Snapshot("two")
+		return errors.Is(err, ErrNotFound)
+	})
 }

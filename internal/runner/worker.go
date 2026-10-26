@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
@@ -21,6 +22,7 @@ type worker struct {
 	name          string
 	workingDir    string
 	model         string
+	lastUsed      time.Time
 	ctx           context.Context
 	cancel        context.CancelFunc
 	done          chan struct{}

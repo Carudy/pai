@@ -67,6 +67,9 @@ type Manager struct {
 	serviceNames map[string]bool
 	sessionIDs   map[string]string
 	serviceSpecs map[string]string
+	// maxResident bounds prepared service runtimes; 0 leaves it unbounded. Chat
+	// workers are not counted: they retire after each instruction anyway.
+	maxResident int
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {

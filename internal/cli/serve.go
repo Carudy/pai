@@ -25,6 +25,7 @@ func serveHelp() string {
   --ip, -ip <IP>                 Bind IP (default 127.0.0.1; no hostnames)
   --port, -p <port>              Bind port (default 9384)
   --max-active-sessions <n>      Maximum live workers (default 2)
+  --max-resident <n>             Prepared service runtimes, LRU-evicted (default 4, 0 = unbounded)
   --activity-log                Log tool calls/lifecycle to stdout (default false)
   --token-file <path>            Token file; overrides PAI_SERVE_TOKEN
   --public-origin <origin>       Browser origin, e.g. https://pai.example.com
@@ -53,13 +54,15 @@ func (r *repeatedFlag) Set(value string) error {
 }
 
 type serveFlags struct {
-	ip              string
-	port, maxActive int
-	tokenFile       string
-	publicOrigin    string
-	allowOrigins    repeatedFlag
-	help            bool
-	activityLog     bool
+	ip           string
+	port         int
+	maxActive    int
+	maxResident  int
+	tokenFile    string
+	publicOrigin string
+	allowOrigins repeatedFlag
+	help         bool
+	activityLog  bool
 }
 
 func parseServeFlags(args []string) (serveFlags, error) {
@@ -70,6 +73,7 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	fs.IntVar(&f.port, "port", 9384, "bind port")
 	fs.IntVar(&f.port, "p", 9384, "bind port")
 	fs.IntVar(&f.maxActive, "max-active-sessions", 2, "maximum live workers")
+	fs.IntVar(&f.maxResident, "max-resident", 4, "prepared service runtimes (0 = unbounded)")
 	fs.StringVar(&f.tokenFile, "token-file", "", "token file")
 	fs.StringVar(&f.publicOrigin, "public-origin", "", "canonical browser origin")
 	fs.Var(&f.allowOrigins, "allow-origin", "extra browser origin to accept (repeatable)")
@@ -93,6 +97,9 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	}
 	if f.maxActive < 1 {
 		return f, errors.New("max-active-sessions must be positive")
+	}
+	if f.maxResident < 0 {
+		return f, errors.New("max-resident must not be negative")
 	}
 	publicOriginSet := false
 	fs.Visit(func(f *flag.Flag) {
@@ -163,6 +170,7 @@ func runServe(ctx context.Context, args []string, stdout io.Writer, log *tui.Log
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	manager := runner.New(runCtx, &serveBackend{store: store, cwd: cwd}, f.maxActive)
+	manager.SetMaxResident(f.maxResident)
 	defer manager.Close()
 	if err := manager.StartServices(); err != nil {
 		log.Errorf("start services: %v\n", err)

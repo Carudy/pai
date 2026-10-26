@@ -51,11 +51,11 @@ func TestServeModelsIncludePresets(t *testing.T) {
 func TestServeFlags(t *testing.T) {
 	for _, args := range [][]string{{}, {"--ip", "127.0.0.1", "--port", "9384", "--max-active-sessions", "2"}, {"-ip", "127.0.0.1", "-p", "9384"}} {
 		f, err := parseServeFlags(args)
-		if err != nil || f.ip != "127.0.0.1" || f.port != 9384 || f.maxActive != 2 || f.activityLog {
+		if err != nil || f.ip != "127.0.0.1" || f.port != 9384 || f.maxActive != 2 || f.maxResident != 4 || f.activityLog {
 			t.Fatalf("%v: %+v %v", args, f, err)
 		}
 	}
-	for _, args := range [][]string{{"--ip", "localhost"}, {"-p", "0"}, {"--port", "65536"}, {"--max-active-sessions", "0"}, {"extra"}, {"--unknown"}} {
+	for _, args := range [][]string{{"--ip", "localhost"}, {"-p", "0"}, {"--port", "65536"}, {"--max-active-sessions", "0"}, {"--max-resident", "-1"}, {"extra"}, {"--unknown"}} {
 		if _, err := parseServeFlags(args); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
