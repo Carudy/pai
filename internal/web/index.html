@@ -173,6 +173,7 @@
                             ><span class="config-caret" aria-hidden="true">▸</span> Details</button>
                             <span id="service-state" class="service-badge"></span>
                             <span id="service-next" class="service-next"></span>
+                            <button id="service-edit" type="button" title="Edit this manifest (stopped services only)" hidden>✎ Edit</button>
                             <button id="service-toggle" type="button" hidden></button>
                             <button id="refresh-service" type="button" title="Reload this service view">↻</button>
                         </div>
@@ -185,18 +186,6 @@
                             <details id="service-manifest-box">
                                 <summary>Manifest</summary>
                                 <pre id="service-manifest-view"></pre>
-                            </details>
-                            <details id="service-edit-box" hidden>
-                                <summary>Edit manifest</summary>
-                                <textarea id="service-manifest-edit" rows="14" spellcheck="false"></textarea>
-                                <label class="check" for="service-approve-edit">
-                                    <input id="service-approve-edit" type="checkbox" />
-                                    Pre-approve command watchers (otherwise the first run asks for confirmation)
-                                </label>
-                                <div class="service-edit-actions">
-                                    <button id="service-save" type="button" class="primary">Save manifest</button>
-                                    <span class="muted">Editing is only allowed while the service is stopped; the session history is kept.</span>
-                                </div>
                             </details>
                         </div>
                     </section>
@@ -279,15 +268,20 @@
                     </form>
                 </div>
             </main>
-            <aside id="activity" aria-label="Context">
+            <aside id="activity" aria-label="Context and logs" data-pane="context">
                 <header>
-                    <h2>Context</h2>
+                    <div id="activity-tabs" class="session-tabs" role="tablist" aria-label="Right panel">
+                        <button id="activity-tab-context" type="button" role="tab" aria-selected="true">Context</button
+                        ><button id="activity-tab-logs" type="button" role="tab" aria-selected="false">Logs</button>
+                    </div>
                     <label class="switch" for="show-context" title="Inspect the messages that will be sent">
                         <input id="show-context" type="checkbox" role="switch" aria-controls="context-view" />
                         <span class="switch-track" aria-hidden="true"></span>
                         <span class="switch-text">Inspect</span>
                     </label>
-                    <p>Reasoning, compaction & context</p>
+                </header>
+                <div id="context-pane" class="context-pane">
+                    <p>Reasoning, compaction &amp; context</p>
                     <div id="context-usage" class="context-usage">
                         <p id="context-size"></p>
                         <p id="context-detail"></p>
@@ -301,11 +295,32 @@
                             Compress now
                         </button>
                     </div>
-                </header>
+                </div>
                 <div id="events" role="log" aria-label="Activities">
                     <div id="live-progress"></div>
                 </div>
             </aside>
+        </div>
+        <div id="edit-panel" class="panel-overlay" hidden>
+            <div class="panel-card" role="dialog" aria-modal="true" aria-labelledby="edit-title">
+                <header>
+                    <h2 id="edit-title">Edit manifest</h2>
+                    <button id="close-edit" type="button" title="Close" aria-label="Close">✕</button>
+                </header>
+                <form id="edit-service" class="create-form">
+                    <p class="muted">Editing is only allowed while the service is stopped; the session history is kept.</p>
+                    <label for="service-manifest-edit">Manifest (TOML)</label>
+                    <textarea id="service-manifest-edit" rows="18" spellcheck="false"></textarea>
+                    <label class="check" for="service-approve-edit">
+                        <input id="service-approve-edit" type="checkbox" />
+                        Pre-approve command watchers (otherwise the first run asks for confirmation)
+                    </label>
+                    <div class="edit-actions">
+                        <button id="service-save" class="primary" type="submit">Save manifest</button>
+                        <button id="cancel-edit" type="button">Cancel</button>
+                    </div>
+                </form>
+            </div>
         </div>
         <div id="create-panel" class="panel-overlay" hidden>
             <div class="panel-card" role="dialog" aria-modal="true" aria-labelledby="create-title">
@@ -322,6 +337,16 @@
                     <input id="session-name" maxlength="256" placeholder="Session name" required />
                     <label for="session-cwd">Working DIR</label>
                     <input id="session-cwd" placeholder="Defaults to the server directory" aria-describedby="cwd-hint" />
+                    <label for="create-model">Model</label>
+                    <input
+                        id="create-model"
+                        list="create-model-options"
+                        placeholder="Defaults to the configured model"
+                        autocomplete="off"
+                    />
+                    <datalist id="create-model-options"></datalist>
+                    <label for="create-reasoning">Reasoning</label>
+                    <select id="create-reasoning" title="Extended thinking effort for the new session"></select>
                     <fieldset id="role-fieldset" class="role-fieldset">
                         <legend>Role</legend>
                         <div

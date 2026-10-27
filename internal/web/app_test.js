@@ -733,10 +733,30 @@ async function verifyCreate() {
   p.run('setSelectedRole("custom")');
   await p.run('roles()');
   assert.equal(p.run('selectedRole()'), 'custom', 'a rerender keeps the unsent pick');
+  p.run("api=async()=>({models:['test:a','test:b'],default_model:'test:a'})");
+  await p.run('models()');
+  assert.deepEqual(p.get('create-model-options').children.map(node => node.value), ['test:a', 'test:b'], 'the create form suggests the configured models');
+  assert.equal(p.get('create-model').value, '', 'the create form leaves the model to the configured default');
+  p.run("api=async()=>({reasoning:'medium',options:['none','low','medium','high']})");
+  await p.run('loadReasoning()');
+  assert.deepEqual(p.get('create-reasoning').children.map(node => node.value), ['none', 'low', 'medium', 'high'], 'the create form offers the same efforts');
+  assert.equal(p.get('create-reasoning').value, 'medium', 'the create form starts from the configured effort');
+  p.run("$('create-reasoning').value=''");
   p.get('session-name').value = ' new '; p.get('session-cwd').value = ' /workspace ';
   p.run("globalThis.calls=[]; api=async (path,body)=>{calls.push([path,body]);return {name:'new',cwd:'/resolved'};}; select=async(name,cwd)=>calls.push(['select',name,cwd]); sessions=async reset=>calls.push(['sessions',reset]);");
   await p.run('createSession({preventDefault(){}})');
   assert.deepEqual(JSON.parse(p.run('JSON.stringify(calls)')), [['create',{name:'new',working_dir:'/workspace',role:'custom'}],['sessions',true],['select','new','/resolved']]);
+  // A chosen model is normalized, and a chosen effort rides along; unset fields
+  // are omitted so the server keeps its configured defaults.
+  p.get('create-model').value = ' test : custom '; p.get('create-reasoning').value = 'high'; p.run('calls=[]');
+  await p.run('createSession({preventDefault(){}})');
+  assert.equal(p.run('calls[0][1].model'), 'test:custom', 'the model is normalized');
+  assert.equal(p.run('calls[0][1].reasoning'), 'high', 'the reasoning effort is sent');
+  p.get('create-model').value = ''; p.get('create-reasoning').value = '';
+  p.run('calls=[]');
+  await p.run('createSession({preventDefault(){}})');
+  assert.equal('model' in p.run('calls[0][1]'), false, 'an untouched model is omitted');
+  assert.equal('reasoning' in p.run('calls[0][1]'), false, 'an untouched effort is omitted');
   assert.equal(p.get('create-session').disabled, false);
   p.run("api=async()=>{throw new Error('not a directory')}");
   await p.run('createSession({preventDefault(){}})');
@@ -975,6 +995,15 @@ async function verifyWorkingDir() {
 // the newest page, and pulling in the page above it keeps the reader's place.
 async function verifyContext() {
   const p = browser();
+  // The right panel is two views, and the tab is a per-browser preference.
+  p.run("applyActivityPane('logs')");
+  assert.equal(p.get('activity').dataset.pane, 'logs');
+  assert.equal(p.get('activity-tab-logs').attributes['aria-selected'], 'true');
+  assert.equal(p.get('activity-tab-context').attributes['aria-selected'], 'false');
+  p.run("applyActivityPane('context')");
+  assert.equal(p.get('activity').dataset.pane, 'context');
+  assert.equal(p.get('activity-tab-context').attributes['aria-selected'], 'true');
+  assert.equal(p.run("localStorage.getItem('pai.activity-pane')"), 'context', 'the choice is remembered');
   p.run(`selected='one'; $('app').classList.toggle('context-open', true);
     globalThis.turns = Array.from({length: 70}, (_, i) => ({seq: i+1, role:'user', kind:'input', original:'m'+(i+1), sent:'m'+(i+1), state:'sent'}));
     globalThis.calls = [];
@@ -1372,6 +1401,22 @@ async function verifyServiceMode() {
   assert.match(p.run('humanizeWatcherState({last_state:\'{"fired":1793000000,"handled":1793000060,"reported":true,"acknowledged":true}\'})'),
     /^handled · fired .* · handled /, 'a handled fire reads as handled');
   assert.equal(p.run('humanizeWatcherState({last_state:"{}"})'), '', 'an ended episode says nothing');
+
+  // Editing is offered only while stopped, and it opens a dialog instead of a
+  // second inline copy of the manifest.
+  assert.equal(p.get('service-edit').hidden, true, 'a parked service cannot be edited');
+  p.run("serviceView={...serviceView,state:'stopped',manifest_toml:'[service]\\ngoal = \"watch\"\\n'}; paintService()");
+  assert.equal(p.get('service-edit').hidden, false, 'a stopped service offers the editor');
+  p.run('openServiceEdit()');
+  assert.equal(p.get('edit-panel').hidden, false, 'the editor opens as a dialog');
+  assert.match(p.get('service-manifest-edit').value, /\[service\]/, 'the dialog seeds the canonical TOML');
+  p.run('closeServiceEdit()');
+  assert.equal(p.get('edit-panel').hidden, true, 'Cancel closes the dialog');
+  p.run('openServiceEdit()');
+  p.run("serviceView={...serviceView,state:'busy'}; paintService()");
+  assert.equal(p.get('edit-panel').hidden, true, 'a service that resumes closes the editor');
+  assert.equal(p.get('service-edit').hidden, true);
+  p.run("serviceView={...serviceView,state:'parked'}; paintService()");
 
 
 

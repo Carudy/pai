@@ -657,8 +657,9 @@ pai service edit demo --file river.toml --yes
 pai service start demo
 ```
 
-The web panel offers the same under **Details → Edit manifest** when the service
-is stopped. The session's identity, history, queued events, and model are kept;
+The web panel offers the same through the service bar's **✎ Edit** button when
+the service is stopped; it opens the manifest in a dialog rather than a second
+inline copy. The session's identity, history, queued events, and model are kept;
 role, workspace, spec, and the watcher set are replaced. A probe whose spec did
 not change keeps its latched state and its grant; a changed command starts clean
 and needs a new approval (see above).

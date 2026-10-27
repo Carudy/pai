@@ -918,6 +918,62 @@ func TestRolesAPI(t *testing.T) {
 	}
 }
 
+// settingsBackend creates sessions and remembers the model a create request
+// applied, so the create-with-settings path can be observed end to end.
+type settingsBackend struct {
+	creationBackend
+	model   string
+	removed []string
+}
+
+func (*settingsBackend) Models() ([]string, string, error) {
+	return []string{"test:custom"}, "test:custom", nil
+}
+func (b *settingsBackend) SetModel(name, model string) error {
+	if model != "test:custom" {
+		return errors.New("unknown provider")
+	}
+	b.model = model
+	return nil
+}
+func (b *settingsBackend) Delete(name string) error {
+	b.removed = append(b.removed, name)
+	return nil
+}
+
+func TestCreateWithSettingsAPI(t *testing.T) {
+	b := &settingsBackend{}
+	m := runner.New(context.Background(), b, 1)
+	defer m.Close()
+	h := New(m, Options{})
+	dir := t.TempDir()
+	body, _ := json.Marshal(map[string]string{
+		"name": "fresh", "working_dir": dir, "model": "test:custom", "reasoning": "high",
+	})
+	if w := request(h, "POST", "/api/create", string(body), nil, "http://pai.test"); w.Code != 201 {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	if b.model != "test:custom" {
+		t.Fatalf("model = %q, want test:custom", b.model)
+	}
+	if effort, err := m.Reasoning("fresh"); err != nil || effort != "high" {
+		t.Fatalf("reasoning = %q, %v", effort, err)
+	}
+
+	// A rejected model rolls the fresh session back, so a retry is not blocked by
+	// a half-created session.
+	body, _ = json.Marshal(map[string]string{
+		"name": "rejected", "working_dir": dir, "model": "other:model",
+	})
+	w := request(h, "POST", "/api/create", string(body), nil, "http://pai.test")
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "unknown provider") {
+		t.Fatalf("rejected model: %d %s", w.Code, w.Body.String())
+	}
+	if len(b.removed) != 1 || b.removed[0] != "rejected" {
+		t.Fatalf("rollback = %v, want [rejected]", b.removed)
+	}
+}
+
 func TestCreateAPI(t *testing.T) {
 	m := runner.New(context.Background(), creationBackend{}, 1)
 	defer m.Close()
@@ -1112,7 +1168,8 @@ func TestPageLayoutNesting(t *testing.T) {
 		"apply-model": "model-form", "reasoning-preview": "conversation-wrapper", "prev-input": "conversation-wrapper",
 		"to-bottom": "conversation-wrapper", "session-role": "role-fieldset",
 		"session-title-row": "header", "token-usage": "session-config", "state": "status-row",
-		"toggle-config": "session-config", "context-usage": "header", "context-detail": "context-usage", "compress-now": "context-usage",
+		"toggle-config": "session-config", "context-pane": "activity", "context-usage": "context-pane", "context-detail": "context-usage", "compress-now": "context-usage",
+		"activity-tabs": "header", "events": "activity",
 	} {
 		if parents[child] != parent {
 			t.Errorf("%s parent = %q, want %q", child, parents[child], parent)

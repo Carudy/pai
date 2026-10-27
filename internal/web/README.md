@@ -312,10 +312,13 @@ rejected; there is no URL authentication.
   that session's failure. Returns 404 when neither live nor retained state exists.
 - `GET /api/events?name=...`: SSE `data: <runner.Event>` frames, default message
   event; heartbeat comments. No Last-Event-ID replay. 404 for no live worker.
-- `POST /api/create`: `{ "name": "...", "working_dir": "/path" }`; 201 with
+- `POST /api/create`: `{ "name": "...", "working_dir": "/path", "role": "...",
+  "model": "provider:model", "reasoning": "none|low|medium|high" }`; 201 with
   direct metadata fields `name`, `role`, `model`, `cwd`, `updated_at`. Saves an
   empty session before any message; it starts no runtime and constructs no
-  provider.
+  provider. `role`, `model`, and `reasoning` are optional. A rejected model or
+  effort rolls the fresh session back (it has no history yet), so 201 always
+  means the requested settings were accepted.
 - `POST /api/send`: `{ "name": "...", "text": "...", "working_dir": "..." }`.
   Omit `working_dir` to use the saved directory; a first send can also create the
   session. A supplied directory must exist, is normalized to an absolute path,
@@ -378,15 +381,17 @@ bounded live event pane, renders assistant JSON readably, displays tool-call
 Diff previews and reply cards, and replaces history on state refresh rather
 than treating transient SSE output as durable turns. Turn cards show their
 `turn.At` timestamp, and token counts are compacted to `k`/`M`. The right-hand
-**Context** panel logs only context-lifecycle events — finished reasoning blocks
-and context notices such as compaction — never tools or run progress, so the
+panel has two tabs: **Context** holds the context figure and **Compress now**;
+**Logs** holds the bounded activity feed. Switching to Logs scrolls it to the
+latest event, and the choice is remembered per browser (`pai.activity-pane`).
+The log records only context-lifecycle events — finished reasoning blocks and
+context notices such as compaction — never tools or run progress, so the
 context's evolution stays legible. Switching sessions shows a loading placeholder
 in the conversation until the transcript arrives, rather than an empty pane.
 A chained command in a card is numbered at its operators (as the CLI prints it),
 so the piece that failed is identifiable at a glance. A `read` card carries its
-line range on the path (`main.go 84:97`) instead of a separate labelled row. That
-panel's header carries the context figure and a **Compress now** button. The
-figure is the projection's estimated prompt size measured against the
+line range on the path (`main.go 84:97`) instead of a separate labelled row. The
+context figure is the projection's estimated prompt size measured against the
 `summarize_after_tokens` budget and marked `estimated`, never the provider's own
 count: the projection is recomputed from the stored turns, so it moves the moment
 a compaction or a card edit lands, whereas a reported prompt size only changes on
@@ -406,17 +411,22 @@ named in the URL: `/dashboard` and `/dashboard/service`. The URL remains the
 only authority, so a reload or bookmark keeps the tab, and a session URL
 (`/session/<name>`) switches the tab to that session's own mode. Creating is one
 flow with two forms behind **+ New session**: chat asks for a name, workspace,
-and role; service asks for a name and a manifest (TOML, prefilled), because
-the manifest has an exact textual form and a half-built form would hide it. Ticking
+model, reasoning, and role; service asks for a name and a manifest (TOML,
+prefilled), because the manifest has an exact textual form and a half-built form
+would hide it. The chat form's model is free text with the configured models as
+suggestions, and an empty field means the configured default; reasoning offers
+the same efforts as the header. Ticking
 the command-watcher box is the form's `--yes`: it pre-approves the probes. Without
 it the manifest is still saved, and the first probe asks through the ordinary
 confirmation card.
 
 Opening a service shows a **stable bar above the transcript**, collapsed to one
 line by default: **Details** expands the state, last report, a table of watchers
-(name, schedule, last/next run, humanized latch state), the stored manifest, and —
-while the service is stopped — an **Edit manifest** box, and the choice is
-remembered per browser. The bar shows the shared state
+(name, schedule, last/next run, humanized latch state), and the stored manifest.
+While the service is stopped the bar also carries **✎ Edit**, which opens the
+manifest in a dialog rather than a second inline copy of the text; saving keeps
+the service stopped and the session history. The expanded state is remembered per
+browser. The bar shows the shared state
 word (`Idle`, `Parked`, `Working`, `Stopped`), the next wake to the second, and
 **Stop** / **Start**; it never disappears on a failed refresh. The sidebar's
 service rows use the same vocabulary in two lines: name, then a state dot with the

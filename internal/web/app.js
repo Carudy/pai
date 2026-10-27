@@ -18,8 +18,8 @@ let selectedMode = '';
 // slow refresh from painting over a newer one. serviceError keeps the bar stable
 // when a view cannot be loaded instead of hiding it.
 let serviceView = null, serviceRequest = 0, serviceTimer = null, serviceError = '';
-let serviceEditFor = '', serviceEditDirty = false;
 const SERVICE_EXPANDED_KEY = 'pai.service-expanded';
+const ACTIVITY_PANE_KEY = 'pai.activity-pane';
 let serviceExpanded = false;
 let serverCwd = '';
 let createMode = 'chat';
@@ -75,6 +75,13 @@ async function models() {
   modelList = Array.isArray(data.models) ? data.models.slice() : [];
   renderModelOptions('');
   if (!modelDirty) $('session-model').value = liveModel || savedModel || defaultModel;
+  // The create form leaves the field empty so the configured default applies;
+  // a datalist shows the configured models while still accepting free text.
+  $('create-model-options').replaceChildren(...modelList.map(model => {
+    const option = text('option', model);
+    option.value = model;
+    return option;
+  }));
   modelControls();
 }
 // A datalist filters its suggestions by the field's current value, which hides
@@ -499,6 +506,22 @@ function applyServiceExpanded(expanded) {
   }
   try { localStorage.setItem(SERVICE_EXPANDED_KEY, serviceExpanded ? '1' : '0'); } catch (_) {}
 }
+// The right panel shows one of two views of the same session: the projection of
+// what would be sent (Context) or the run's activity feed (Logs). They used to
+// share the panel, which pushed the log under a growing header; a tab makes the
+// choice explicit, and switching to Logs follows the latest event.
+function storedActivityPane() { try { return localStorage.getItem(ACTIVITY_PANE_KEY) === 'logs' ? 'logs' : 'context'; } catch (_) { return 'context'; } }
+function applyActivityPane(pane) {
+  const value = pane === 'logs' ? 'logs' : 'context';
+  $('activity').dataset.pane = value;
+  for (const name of ['context', 'logs']) {
+    const tab = $('activity-tab-' + name);
+    tab.setAttribute('aria-selected', String(name === value));
+    tab.classList.toggle('selected', name === value);
+  }
+  try { localStorage.setItem(ACTIVITY_PANE_KEY, value); } catch (_) {}
+  activityScroll();
+}
 async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -645,7 +668,8 @@ function scheduleService() { clearTimeout(serviceTimer); serviceTimer = setTimeo
 // the live runtime.
 // Save a stopped service's manifest. The server re-validates and reconciles the
 // watcher set; the page only refreshes what it read back.
-async function saveServiceManifest() {
+async function saveServiceManifest(e) {
+  if (e) e.preventDefault();
   if (!selected) return;
   const name = selected, manifest = $('service-manifest-edit').value;
   if (!manifest.trim()) { error(new Error('The manifest is empty')); return; }
@@ -653,15 +677,26 @@ async function saveServiceManifest() {
     const view = await api('service/edit', {name, manifest, approve_commands: $('service-approve-edit').checked});
     if (selected !== name) return;
     serviceView = view;
-    serviceEditFor = '';
-    serviceEditDirty = false;
+    closeServiceEdit();
     paintService();
     toast('manifest saved; start the service to apply it');
     await sessions(true).catch(() => {});
-  } catch (e) {
-    error(e);
+  } catch (err) {
+    error(err);
   }
 }
+// Editing is a dialog rather than an inline box: the manifest is one text, so a
+// second copy in the panel duplicated the display and left it ambiguous which
+// copy Save read. The dialog seeds from the canonical TOML on open.
+function openServiceEdit() {
+  const view = serviceView;
+  if (!view || String(view.state || '') !== 'stopped') return;
+  $('service-manifest-edit').value = view.manifest_toml || '';
+  $('service-approve-edit').checked = false;
+  $('edit-panel').hidden = false;
+  $('service-manifest-edit').focus();
+}
+function closeServiceEdit() { $('edit-panel').hidden = true; }
 
 async function serviceControl(kind) {
   if (!selected) return;
@@ -720,6 +755,8 @@ function paintService() {
     $('service-watchers').replaceChildren();
     $('service-manifest-view').textContent = '';
     if (toggle) toggle.hidden = true;
+    $('service-edit').hidden = true;
+    closeServiceEdit();
     return;
   }
 
@@ -778,24 +815,10 @@ function paintService() {
   $('service-manifest-view').textContent = manifest || 'No manifest.';
 
   // The manifest is editable only while stopped: a live service would race its
-  // next activation. Unsaved text survives a periodic refresh; a service switch
-  // or a successful save reloads the canonical TOML.
-  const editBox = $('service-edit-box');
-  if (editBox) {
-    const stopped = state === 'stopped';
-    editBox.hidden = !stopped;
-    if (stopped) {
-      if (serviceEditFor !== view.name || !serviceEditDirty) {
-        const area = $('service-manifest-edit');
-        if (area) area.value = view.manifest_toml || '';
-        serviceEditFor = view.name;
-        serviceEditDirty = false;
-      }
-    } else {
-      serviceEditFor = '';
-      serviceEditDirty = false;
-    }
-  }
+  // next activation. An open dialog closes if the service starts underneath it.
+  const stopped = state === 'stopped';
+  $('service-edit').hidden = !stopped || !view.manifest_toml;
+  if (!stopped) closeServiceEdit();
 }
 
 // ── Create panel ───────────────────────────────────────────
@@ -916,6 +939,15 @@ function reasoningControls() {
   select.disabled = disabled;
   $('apply-reasoning').disabled = disabled || !select.value || select.value === savedReasoning;
 }
+// The create form's reasoning default follows the configured default, but a
+// choice already made in the form wins: the same list serves both controls.
+function createReasoningOptions(options, current) {
+  const select = $('create-reasoning');
+  if (!select) return;
+  const keep = select.value;
+  select.replaceChildren(...options.map(value => { const option = text('option', value); option.value = value; return option; }));
+  select.value = options.includes(keep) ? keep : (current || options[0] || 'none');
+}
 function reasoningMetadata(value) {
   savedReasoning = typeof value === 'string' ? value.trim() : '';
   if (!reasoningDirty) $('reasoning-select').value = savedReasoning || 'none';
@@ -929,6 +961,7 @@ async function loadReasoning() {
     const select = $('reasoning-select');
     const options = Array.isArray(data.options) && data.options.length ? data.options : ['none','low','medium','high'];
     if (!select.children.length) select.replaceChildren(...options.map(value => { const option = text('option', value); option.value = value; return option; }));
+    createReasoningOptions(options, data.reasoning);
     reasoningMetadata(data.reasoning);
   } catch (_) { if (version === generation && selected === name) reasoningControls(); }
 }
@@ -1871,7 +1904,7 @@ async function select(name, cwd, replaceURL = false) {
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
   serviceView = null; serviceError = ''; paintService();
-  serviceEditFor = ''; serviceEditDirty = false;
+  closeServiceEdit();
   $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   updateJumpButtons();
   $('conversation').scrollTop = 0; autoScroll = false; lastScrollTop = 0; followTail = true; controls();
@@ -2236,10 +2269,16 @@ async function createSession(e) {
   const name = $('session-name').value.trim(), cwd = $('session-cwd').value.trim();
   if (!name) { error(new Error('Enter a session name')); return; }
   if (/[\x00-\x1f\x7f]/.test(cwd)) { error(new Error('Working directory must not contain control characters')); return; }
+  const model = normalizeModel($('create-model').value), reasoning = $('create-reasoning').value;
+  // Omit unset settings so the request stays the older {name, working_dir, role}
+  // shape and the server keeps its configured defaults.
+  const body = {name, working_dir:cwd, role:selectedRole()};
+  if (model) body.model = model;
+  if (reasoning) body.reasoning = reasoning;
   const version = generation;
   creating = true; $('create-session').disabled = true; $('error').textContent = '';
   try {
-    const meta = await api('create', {name, working_dir:cwd, role:selectedRole()});
+    const meta = await api('create', body);
     closeCreate();
     setMode('chat', {url:false, load:false});
     await sessions(true);
@@ -2295,8 +2334,12 @@ $('create-tab-chat').onclick = () => switchCreateMode('chat');
 $('create-tab-service').onclick = () => switchCreateMode('service');
 $('refresh-service').onclick = () => { loadService().catch(error); };
 $('service-collapse').onclick = () => applyServiceExpanded(!serviceExpanded);
-$('service-save').onclick = saveServiceManifest;
-$('service-manifest-edit').oninput = () => { serviceEditDirty = true; };
+$('service-edit').onclick = openServiceEdit;
+$('close-edit').onclick = closeServiceEdit;
+$('cancel-edit').onclick = closeServiceEdit;
+$('edit-service').onsubmit = saveServiceManifest;
+$('activity-tab-context').onclick = () => applyActivityPane('context');
+$('activity-tab-logs').onclick = () => applyActivityPane('logs');
 $('service-toggle').onclick = () => {
   const actionName = $('service-toggle').dataset.action;
   if (selected && actionName) serviceControl(actionName);
@@ -2341,6 +2384,7 @@ applyTheme(initialTheme());
 applyConfigCollapsed(storedConfigCollapsed());
 applySessionsCollapsed(storedSessionsCollapsed());
 applyServiceExpanded(storedServiceExpanded());
+applyActivityPane(storedActivityPane());
 initPendingDrag();
 initReasoningDrag();
 updateJumpButtons();

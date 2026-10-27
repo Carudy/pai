@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -618,6 +619,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Name       string `json:"name"`
 			WorkingDir string `json:"working_dir"`
 			Role       string `json:"role"`
+			Model      string `json:"model"`
+			Reasoning  string `json:"reasoning"`
 		}
 		if !decode(w, r, &body) {
 			return
@@ -629,6 +632,15 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		meta, err := h.manager.CreateWithRole(body.Name, body.WorkingDir, body.Role)
 		if err != nil {
 			managerError(w, err)
+			return
+		}
+		// Settings are applied to the saved session after creation. A rejected
+		// model or effort rolls the fresh session back, so 201 always means the
+		// requested settings were accepted; nothing has been written to it yet,
+		// so there is no history to lose.
+		if err := applyCreateSettings(h.manager, meta.Name, body.Model, body.Reasoning); err != nil {
+			_ = h.manager.Delete(meta.Name)
+			fail(w, 400, err.Error())
 			return
 		}
 		respond(w, http.StatusCreated, meta)
@@ -954,6 +966,23 @@ func respond(w http.ResponseWriter, status int, v any) {
 }
 func fail(w http.ResponseWriter, status int, message string) {
 	respond(w, status, map[string]string{"error": message})
+}
+
+// applyCreateSettings gives a newly saved session the model and reasoning the
+// reader chose at creation. Both are optional: an empty value keeps the
+// provider/model and `[app] reasoning` defaults.
+func applyCreateSettings(m *runner.Manager, name, model, reasoning string) error {
+	if model = strings.TrimSpace(model); model != "" {
+		if err := m.SetModel(name, model); err != nil {
+			return fmt.Errorf("model: %w", err)
+		}
+	}
+	if reasoning = strings.TrimSpace(reasoning); reasoning != "" {
+		if err := m.SetReasoning(name, reasoning); err != nil {
+			return fmt.Errorf("reasoning: %w", err)
+		}
+	}
+	return nil
 }
 func managerError(w http.ResponseWriter, err error) {
 	status := 400

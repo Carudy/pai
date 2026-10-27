@@ -202,8 +202,7 @@ main > header {
     background: var(--panel);
 }
 
-main > header h2,
-#activity > header h2 {
+main > header h2 {
     font-size: 20px;
     font-weight: 750;
 }
@@ -1577,15 +1576,36 @@ header p {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 4px 8px;
-    padding: 20px 16px;
+    gap: 8px;
+    padding: 20px 16px 12px;
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 
-#activity > header p {
-    flex: 1 1 100%;
-    margin: 2px 0 0;
+/* The panel is two views of one session: what would be sent, and what happened.
+   The tabs mirror the sidebar's, so the same gesture reads the same way. */
+#activity-tabs {
+    flex: 1 1 auto;
+    margin: 0;
+}
+
+#context-pane {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 16px;
+}
+
+#context-pane > p {
+    margin: 0;
+}
+
+#activity[data-pane='context'] #events,
+#activity[data-pane='logs'] #context-pane {
+    display: none;
 }
 
 /* The panel owns the context figure. It is the projection of what the next
@@ -1593,7 +1613,6 @@ header p {
    recomputed from the stored turns, so it moves the moment a compaction or a card
    edit lands, while a reported prompt size goes stale. */
 .context-usage {
-    flex: 1 1 100%;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -1937,7 +1956,9 @@ header p {
     top: 8px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 10;
+    /* Above the dialog overlay (50), so a failure from a dialog's action is not
+       dimmed behind it. */
+    z-index: 60;
     max-width: 90vw;
     display: flex;
     flex-direction: column;
@@ -2414,14 +2435,15 @@ header p {
     overflow-x: auto;
 }
 
-#service-edit-box textarea {
+#edit-service textarea {
     width: 100%;
-    min-height: 180px;
+    min-height: 220px;
+    max-height: 60vh;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 12px;
 }
 
-.service-edit-actions {
+.edit-actions {
     display: flex;
     align-items: center;
     gap: 10px;
