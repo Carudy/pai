@@ -82,10 +82,10 @@ first closes a fire, the second reads whether one is still open.
 ## Boundaries
 
 This package knows no sessions, scheduling, or model. It imports `config` for the
-spec and `tool` only to run the bounded command. The command is **not** confirmed
-at probe time: a resident check cannot wait for a human, so the grant must exist
-before the probe runs. The runner enforces that — a probe with no grant is
-skipped and the host presents it as outstanding work — and treats a command
-name the session already trusts as a grant.
+spec and `tool` only to run the bounded command. A probe is **not** confirmed
+here: the runner asks first, with the same confirmation card a chat tool call
+uses, and only calls `Probe` for an approved or already-trusted command. Waiting
+for a human therefore lives in the runner, next to the scheduler and the
+confirmation port; this package stays a pure decision.
 
 Suggested validation from the repository root: `go test ./internal/watcher`.

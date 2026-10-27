@@ -71,19 +71,6 @@ func (b *watchTestBackend) SetWatcherState(id string, lastRun, nextRun *time.Tim
 	return fmt.Errorf("unknown watcher %q", id)
 }
 
-func (b *watchTestBackend) SetWatcherApproval(id string, at time.Time, nextRun *time.Time) error {
-	b.wmu.Lock()
-	defer b.wmu.Unlock()
-	for i, w := range b.watchers {
-		if w.ID != id {
-			continue
-		}
-		b.watchers[i].ApprovedAt, b.watchers[i].NextRun = &at, nextRun
-		return nil
-	}
-	return fmt.Errorf("unknown watcher %q", id)
-}
-
 func (b *watchTestBackend) DueEvents(string, time.Time, int) ([]core.Event, error) {
 	b.wmu.Lock()
 	defer b.wmu.Unlock()
@@ -225,10 +212,10 @@ func TestServiceProbeWakesOnChange(t *testing.T) {
 	}
 }
 
-// A due command probe without a grant does not run: scheduled code needs an
-// explicit decision. It keeps its cadence and is not recorded as run, so the row
-// stays visible as "awaiting approval" instead of looking broken.
-func TestServiceProbeWaitsForApproval(t *testing.T) {
+// A probe whose command is untrusted asks with the same confirmation card a chat
+// tool call uses. Nothing runs before the answer; deny skips the pass, and a
+// later "once" runs it without leaving a standing grant.
+func TestServiceProbeAsksForApproval(t *testing.T) {
 	skipWithoutPOSIXShell(t)
 	past := time.Now().Add(-time.Minute)
 	spec := config.WatcherSpec{
@@ -244,29 +231,38 @@ func TestServiceProbeWaitsForApproval(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	next, err := m.Activate(ctx, "svc", clockWake())
-	if err != nil {
+	done := make(chan error, 1)
+	go func() { _, err := m.Activate(ctx, "svc", clockWake()); done <- err }()
+
+	s := waitSnapshot(t, m, "svc", func(s Snapshot) bool { return s.Pending != nil })
+	if s.Pending.TrustTarget != "command" || s.Pending.Tool == nil || s.Pending.Tool.Detail != spec.Command {
+		t.Fatalf("prompt = %+v", s.Pending)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a probe ran before the operator answered")
+	}
+	if err := m.Reply("svc", s.Pending.ID, "", core.TrustDeny); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
 		t.Fatalf("Activate: %v", err)
 	}
 	if _, err := os.Stat(marker); err == nil {
-		t.Fatal("an unapproved probe ran")
+		t.Fatal("a denied probe ran")
 	}
-	if fp.CallCount() != 0 {
-		t.Fatalf("model calls = %d, want none", fp.CallCount())
-	}
-	w := backend.watcher(t, spec.Name)
-	if w.ApprovedAt != nil || w.LastRun != nil {
-		t.Fatalf("watcher = %+v, want neither a grant nor a run", w)
-	}
-	if next == nil || !next.After(time.Now()) {
-		t.Fatalf("next wake = %v, want the retry cadence", next)
+	if w := backend.watcher(t, spec.Name); w.LastRun != nil {
+		t.Fatalf("a denied probe was recorded as run: %+v", w)
 	}
 
-	// The grant is the only thing that changes the outcome.
-	if err := backend.SetWatcherApproval(w.ID, time.Now(), &past); err != nil {
+	// A later "once" runs it, without recording a standing grant.
+	backend.dueNow(t, spec.Name)
+	done = make(chan error, 1)
+	go func() { _, err := m.Activate(ctx, "svc", clockWake()); done <- err }()
+	s = waitSnapshot(t, m, "svc", func(s Snapshot) bool { return s.Pending != nil })
+	if err := m.Reply("svc", s.Pending.ID, "", core.TrustOnce); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Activate(ctx, "svc", clockWake()); err != nil {
+	if err := <-done; err != nil {
 		t.Fatalf("Activate (approved): %v", err)
 	}
 	if _, err := os.Stat(marker); err != nil {
@@ -274,8 +270,8 @@ func TestServiceProbeWaitsForApproval(t *testing.T) {
 	}
 }
 
-// A command name the session already trusts is a grant: the probe runs and the
-// grant is recorded once instead of asking again on every pass.
+// A command name the session already trusts is a grant: the probe runs without
+// asking, and no per-watcher approval is written.
 func TestServiceProbeRunsWhenTheNameIsTrusted(t *testing.T) {
 	skipWithoutPOSIXShell(t)
 	past := time.Now().Add(-time.Minute)
@@ -301,8 +297,8 @@ func TestServiceProbeRunsWhenTheNameIsTrusted(t *testing.T) {
 	if w.LastRun == nil {
 		t.Fatal("a trusted probe did not run")
 	}
-	if w.ApprovedAt == nil {
-		t.Fatal("the trust-based grant was not recorded")
+	if w.ApprovedAt != nil {
+		t.Fatal("a trust-based run wrote a per-watcher approval")
 	}
 }
 

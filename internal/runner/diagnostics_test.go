@@ -32,14 +32,13 @@ func findDiagnostic(list []Diagnostic, match func(Diagnostic) bool) *Diagnostic 
 	return nil
 }
 
-// Every probe reports its verdict, fired or not, and the three ways a probe can
-// fail to run are named rather than silent.
+// Every probe reports its verdict, fired or not, and the ways a probe can stay
+// quiet are named rather than silent.
 func TestProbeDiagnosticsCoverEveryVerdict(t *testing.T) {
 	skipWithoutPOSIXShell(t)
 	past := time.Now().Add(-time.Minute)
 	fire := config.WatcherSpec{Name: "river", Command: `printf '1 level=9\n'`, Interval: time.Minute, Timeout: 5 * time.Second}
 	quiet := config.WatcherSpec{Name: "tide", Command: "echo 0", Interval: time.Minute, Timeout: 5 * time.Second}
-	gate := config.WatcherSpec{Name: "gate", Command: "echo 1", Interval: time.Minute, Timeout: 5 * time.Second}
 	latched := config.WatcherSpec{Name: "latched", Command: "echo 1", Interval: time.Minute, Timeout: 5 * time.Second}
 	fp := &serviceTestProvider{
 		replies: []string{`{"action":"done","payload":"reported","reason":"done"}`},
@@ -48,8 +47,6 @@ func TestProbeDiagnosticsCoverEveryVerdict(t *testing.T) {
 	m, _ := newWatchService(t, fp,
 		WatcherState{ID: "w1", SessionID: "sid-w", Name: fire.Name, Spec: config.MarshalWatcherSpec(fire), Enabled: true, ApprovedAt: &past, NextRun: &past},
 		WatcherState{ID: "w2", SessionID: "sid-w", Name: quiet.Name, Spec: config.MarshalWatcherSpec(quiet), Enabled: true, ApprovedAt: &past, NextRun: &past},
-		// No grant and no trust: this one must be reported, not run.
-		WatcherState{ID: "w3", SessionID: "sid-w", Name: gate.Name, Spec: config.MarshalWatcherSpec(gate), Enabled: true, NextRun: &past},
 		// Already reported in this episode, so the latch suppresses the wake.
 		WatcherState{ID: "w4", SessionID: "sid-w", Name: latched.Name, Spec: config.MarshalWatcherSpec(latched), Enabled: true, ApprovedAt: &past, NextRun: &past, LastState: `{"fired":1,"reported":true}`},
 	)
@@ -81,10 +78,6 @@ func TestProbeDiagnosticsCoverEveryVerdict(t *testing.T) {
 	quietDiag := findDiagnostic(got, func(d Diagnostic) bool { return d.Subject == "tide" })
 	if quietDiag == nil || quietDiag.Outcome != "quiet" || quietDiag.Detail != "0" {
 		t.Fatalf("a quiet probe must still report its result: %+v", quietDiag)
-	}
-	waiting := findDiagnostic(got, func(d Diagnostic) bool { return d.Subject == "gate" })
-	if waiting == nil || waiting.Outcome != "awaiting approval" || waiting.Detail != "echo 1" {
-		t.Fatalf("an unapproved probe must say so: %+v", waiting)
 	}
 	held := findDiagnostic(got, func(d Diagnostic) bool { return d.Subject == "latched" })
 	if held == nil || held.Outcome != "held" || held.Reason != "already reported this episode" {

@@ -260,12 +260,6 @@ func (s *sqliteStore) SetWatcherState(id string, lastRun, nextRun *time.Time, la
 	return err
 }
 
-func (s *sqliteStore) SetWatcherApproval(id string, at time.Time, nextRun *time.Time) error {
-	_, err := s.db.Exec(`UPDATE watchers SET approved_at = ?, next_run = ? WHERE id = ?`,
-		at.Unix(), timeArg(nextRun), id)
-	return err
-}
-
 func (s *sqliteStore) DeleteWatcher(id string) error {
 	_, err := s.db.Exec(`DELETE FROM watchers WHERE id = ?`, id)
 	return err

@@ -49,15 +49,7 @@ func serveDiagnosticLine(d runner.Diagnostic) string {
 		b.WriteString(serveActivityText(d.Kind))
 		if d.Subject != "" {
 			b.WriteString(" ")
-			// A service fact may name a watcher; angle brackets keep it apart from
-			// the surrounding words without looking like a quoted value.
-			if d.Kind == "service" {
-				b.WriteString("<")
-				b.WriteString(serveActivityText(d.Subject))
-				b.WriteString(">")
-			} else {
-				b.WriteString(serveActivityText(d.Subject))
-			}
+			b.WriteString(serveActivityText(d.Subject))
 		}
 		if d.Outcome != "" {
 			b.WriteString(" ")

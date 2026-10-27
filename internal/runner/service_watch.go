@@ -93,32 +93,50 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 			continue
 		}
 
-		if spec.Command != "" && ws.ApprovedAt == nil {
-			if !m.probeTrusted(w, spec.Command) {
-				// Scheduled code never runs on its own authority. Keeping the cadence
-				// leaves the row visible as "awaiting approval" and ready to run the
-				// moment it is granted, without spinning the scheduler.
+		probeNow := now
+		if spec.Command != "" && ws.ApprovedAt == nil && !m.probeTrusted(w, spec.Command) {
+			// No pre-approval and no trust: ask with the same card a chat tool call
+			// uses. This blocks the activation until the operator answers; Stop or
+			// Cancel releases it and leaves the probe due for the next pass.
+			choice, err := m.confirmProbe(w, spec)
+			if err != nil {
+				// Cancel or Stop aborted the prompt. Retry on the normal cadence rather
+				// than keeping it due: an immediate re-ask would spin while the operator
+				// has just said "not now".
 				nextRun := now.Add(spec.Interval)
 				if err := wb.SetWatcherState(ws.ID, ws.LastRun, &nextRun, ws.LastState, ws.LastError); err != nil {
 					w.emit("error", fmt.Sprintf("could not reschedule watcher %q: %v", ws.Name, err))
 				}
 				next = earlier(next, &nextRun)
-				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "awaiting approval",
+				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "deferred",
+					Detail: "approval cancelled; retries on the next interval", Next: nextRun})
+				continue
+			}
+			if choice == core.TrustDeny {
+				nextRun := now.Add(spec.Interval)
+				if err := wb.SetWatcherState(ws.ID, ws.LastRun, &nextRun, ws.LastState, ws.LastError); err != nil {
+					w.emit("error", fmt.Sprintf("could not reschedule watcher %q: %v", ws.Name, err))
+				}
+				next = earlier(next, &nextRun)
+				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "denied",
 					Detail: spec.Command, Next: nextRun})
 				continue
 			}
-			// A name the session already trusts is a grant; record it instead of
-			// re-deriving it on every probe.
-			if err := wb.SetWatcherApproval(ws.ID, now, ws.NextRun); err != nil {
-				w.emit("error", fmt.Sprintf("could not approve watcher %q: %v", ws.Name, err))
-			} else {
-				m.diag(Diagnostic{Session: name, Kind: "service", Subject: ws.Name, Outcome: "granted",
-					Detail: "trusted command: " + spec.Command})
-			}
+			// The wait was the operator's, not the probe's: run from now so neither
+			// the next run nor the episode timestamps are backdated by it.
+			probeNow = time.Now()
 		}
 
-		res := watcher.Probe(probeCtx, spec, dir, ws.LastState, now)
-		if probeCtx.Err() != nil {
+		runCtx := probeCtx
+		if runCtx.Err() != nil {
+			// The pass budget may have expired while waiting for the answer; an
+			// approved probe deserves a fresh one instead of failing on that clock.
+			var cancel context.CancelFunc
+			runCtx, cancel = context.WithTimeout(ctx, maxProbeBudget)
+			defer cancel()
+		}
+		res := watcher.Probe(runCtx, spec, dir, ws.LastState, probeNow)
+		if runCtx.Err() != nil {
 			// The budget cut this probe short; that is not a probe failure.
 			next = earlier(next, &now)
 			m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "deferred",
@@ -126,7 +144,7 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 			continue
 		}
 		nextRun := res.NextRun
-		if err := wb.SetWatcherState(ws.ID, &now, &nextRun, res.State, errorText(res.Err)); err != nil {
+		if err := wb.SetWatcherState(ws.ID, &probeNow, &nextRun, res.State, errorText(res.Err)); err != nil {
 			w.emit("error", fmt.Sprintf("could not persist watcher %q: %v", ws.Name, err))
 		}
 		next = earlier(next, &nextRun)
@@ -320,10 +338,45 @@ type openItem struct {
 func (m *Manager) probeTrusted(w *worker, command string) bool {
 	m.mu.Lock()
 	trustAll := m.trustAll[w.name]
-	trusted := append([]string(nil), w.cfgTrusted...)
-	trusted = append(trusted, commandTrustNames(m.commandTrust[w.name])...)
 	m.mu.Unlock()
-	return trustAll || tool.IsTrusted(command, trusted)
+	return trustAll || tool.IsTrusted(command, m.probeTrustedList(w))
+}
+
+// probeTrustedList is the merge of the config allowlist and the session's own
+// grants, as of now: a "trust session" answer from the confirmation card must
+// apply to the next probe without re-preparing the runtime.
+func (m *Manager) probeTrustedList(w *worker) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	trusted := append([]string(nil), w.cfgTrusted...)
+	return append(trusted, commandTrustNames(m.commandTrust[w.name])...)
+}
+
+// confirmProbe asks whether one command probe may run, using the same card and
+// trust choices as a chat tool call: once runs it now, session/always record the
+// grant, deny skips it. The probe pass runs on the scheduler's goroutine, so this
+// holds that activation until the operator answers; Stop or Cancel releases it.
+func (m *Manager) confirmProbe(w *worker, spec config.WatcherSpec) (core.TrustChoice, error) {
+	names := tool.UntrustedNames(spec.Command, m.probeTrustedList(w))
+	m.diag(Diagnostic{Session: w.name, Kind: "watcher", Subject: spec.Name, Outcome: "approval required",
+		Detail: spec.Command})
+	// The prompt card shows the tool that is about to run; a probe is the execute
+	// tool driven by the scheduler instead of by the model.
+	m.mu.Lock()
+	w.latestTool = &core.ToolCall{Name: "execute", Target: tool.Shell(), Detail: spec.Command, Reason: "scheduled probe"}
+	m.mu.Unlock()
+	choice, err := w.ConfirmCommand(fmt.Sprintf("Run the scheduled probe %q?", spec.Name), names)
+	if err != nil {
+		return core.TrustDeny, err
+	}
+	if choice == core.TrustPersist && len(names) > 0 {
+		// The chat loop persists "always" in the role layer; a probe has no loop,
+		// so it performs the same write here.
+		if err := config.AddTrustedCmds(names...); err != nil {
+			w.emit("error", "could not save trusted commands: "+err.Error())
+		}
+	}
+	return choice, nil
 }
 
 // openWatchers lists outstanding watcher work for the situation. It is a

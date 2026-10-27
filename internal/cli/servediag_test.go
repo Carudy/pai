@@ -32,9 +32,9 @@ func TestServeDiagnosticLines(t *testing.T) {
 			"2026-10-27T14:30:00 [demo] watcher <level>: result \"1 level=6.4\", not triggered (already reported this episode), next 14:30:30\n",
 		},
 		{
-			"awaiting approval",
-			runner.Diagnostic{Time: at, Session: "demo", Kind: "watcher", Subject: "gate", Outcome: "awaiting approval", Detail: "python3 gate.py", Next: next},
-			"2026-10-27T14:30:00 [demo] watcher <gate>: awaiting approval: python3 gate.py, next 14:30:30\n",
+			"approval required",
+			runner.Diagnostic{Time: at, Session: "demo", Kind: "watcher", Subject: "gate", Outcome: "approval required", Detail: "python3 gate.py"},
+			"2026-10-27T14:30:00 [demo] watcher <gate>: approval required: python3 gate.py\n",
 		},
 		{
 			"failed",
@@ -60,11 +60,6 @@ func TestServeDiagnosticLines(t *testing.T) {
 			"prompt",
 			runner.Diagnostic{Time: at, Session: "demo", Kind: "prompt", Outcome: "confirm", Detail: "execute sh"},
 			"2026-10-27T14:30:00 [demo] prompt confirm: execute sh\n",
-		},
-		{
-			"service grant",
-			runner.Diagnostic{Time: at, Session: "demo", Kind: "service", Subject: "level", Outcome: "granted", Detail: "trusted command: echo 0"},
-			"2026-10-27T14:30:00 [demo] service <level> granted: trusted command: echo 0\n",
 		},
 	}
 	for _, tc := range cases {

@@ -606,21 +606,21 @@ output when the probe fires. The built-in `_report` heartbeat created by
 
 ### Approving a command probe
 
-A command watcher runs code on a schedule, so it needs a grant. The manifest is
-stored either way; without `--yes` (or the form's checkbox) the probe is saved
-unapproved and does not run:
+A command watcher runs code on a schedule, so an untrusted probe asks first — with
+the **same confirmation card as a chat tool call**: once, trust session, always,
+or decline. Nothing runs before the answer, and the service waits as it would for
+any other approval.
 
-- the web service panel shows the row as **awaiting approval · approve**; the
-  button grants that one probe and it runs on the next tick;
-- `pai service show` prints `awaiting approval`, and re-applying the manifest
-  with `--yes` grants every command watcher it defines;
+- `--yes` (or the form's checkbox) **pre-approves** the manifest's command
+  watchers, so a reviewed service can start probing without a first prompt;
 - a command name already trusted for the session — the trust-all switch, a
-  **Trust session** answer, or `trusted_cmds` — counts as a grant and is recorded
-  once. A probe built from a construct or a redirection has no command name, so
-  it always needs the explicit grant.
+  **Trust session** answer, or `trusted_cmds` — is a grant and never asks;
+- a probe built from a construct or a redirection has no command name, so its card
+  offers only once/decline, and it asks again on the next run. Give it a named
+  command, or trust the session, if that is too chatty.
 
-A grant belongs to the probe's command: editing it clears the grant, so an
-approval never silently covers code you have not seen. A timer needs none.
+A pre-approval belongs to the probe's command: editing it clears the pre-approval,
+so it can never silently cover code you have not seen. A timer needs none.
 
 ### Stop and start
 
@@ -860,7 +860,7 @@ It is independent of `--activity-log`, so either or both can be on.
 ```text
 2026-10-27T14:30:00 [river] watcher <level>: result "1 level=6.4 mode=danger", triggered, next 14:30:30
 2026-10-27T14:30:30 [river] watcher <level>: result "1 level=6.4 mode=danger", not triggered (already reported this episode), next 14:31:00
-2026-10-27T14:31:00 [river] watcher <gate>: awaiting approval: python3 gate.py, next 14:31:30
+2026-10-27T14:31:00 [river] watcher <gate>: approval required: python3 gate.py
 2026-10-27T14:31:00 [river] watcher <gate>: failed: exit 3: boom, next 14:32:00
 2026-10-27T14:31:00 [river] activation skipped: nothing substantive to report, next 14:31:30
 2026-10-27T14:31:00 [tick] activation start: timer: 1 event(s)
@@ -874,14 +874,13 @@ What it covers:
 
 - **watcher**: every probe's verdict — `fired`, `quiet` (condition false), `held`
   (true but the latch or reminder window suppressed the wake), `failed`, `deferred`
-  (out of the shared probe budget), `awaiting approval` — with the probe's raw
-  output and its next run;
+  (out of the shared probe budget), `approval required`, `denied` — with the
+  probe's raw output and its next run;
 - **activation**: `start`, `skipped` (a clock tick that spent no model call), and
   the end — the model's outcome, whether its events were acked or nacked, and the
   bounded status;
 - **event**: pending events recovered from the store after a restart;
-- **service**: created, edited, a watcher granted by trust or by the operator,
-  stopped, started;
+- **service**: created, edited, stopped, started;
 - **model**: reported prompt/completion/cached tokens per call;
 - **prompt**: a pending approval, which is the commonest reason a resident session
   looks alive but does nothing;

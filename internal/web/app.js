@@ -699,22 +699,9 @@ function humanizeWatcherState(w) {
   }
   return parts.join(' · ') || (Object.keys(st).length ? raw : '');
 }
-// A command probe runs only after it is granted. The manifest saved without one,
-// so the grant is requested here — at the point the probe would run — rather
-// than refusing to store a perfectly valid manifest.
-function needsWatcherApproval(w) {
-  return Boolean(specOf(w).command) && !w.approved_at;
-}
-async function approveWatcher(watcher) {
-  if (!selected) return;
-  try {
-    serviceView = await api('service/approve', {name: selected, watcher});
-    paintService();
-    await sessions(true).catch(() => {});
-  } catch (e) {
-    error(e);
-  }
-}
+// A command probe runs only after it is granted. When the manifest was not
+// pre-approved and the command name is not trusted, the probe asks with the same
+// confirmation card a chat tool call uses; there is no separate panel grant.
 function paintService() {
   const panel = $('service-panel');
   // The bar exists only for a selected service. It is never hidden by a failed
@@ -778,18 +765,11 @@ function paintService() {
     const nextNode = text('span', next || '—', 'watcher-times');
     if (next) nextNode.title = 'Next run: ' + next;
     row.append(nextNode);
-    if (needsWatcherApproval(w)) {
-      const grant = text('button', 'awaiting approval · approve', 'watcher-approve');
-      grant.title = 'Run this probe from now on; it does not run on its own';
-      grant.onclick = () => approveWatcher(w.name).catch(error);
-      row.append(grant);
-    } else {
-      const detail = humanizeWatcherState(w);
-      const tail = text('span', detail || '—', 'watcher-state');
-      if (detail.length > 160) tail.title = detail;
-      if (w.last_error) tail.classList.toggle('error', true);
-      row.append(tail);
-    }
+    const detail = humanizeWatcherState(w);
+    const tail = text('span', detail || '—', 'watcher-state');
+    if (detail.length > 160) tail.title = detail;
+    if (w.last_error) tail.classList.toggle('error', true);
+    row.append(tail);
     box.append(row);
   }
 

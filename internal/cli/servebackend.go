@@ -39,7 +39,6 @@ var _ runner.ServiceWatcherBackend = (*serveBackend)(nil)
 var _ runner.ServiceStateBackend = (*serveBackend)(nil)
 var _ runner.ServiceBackend = (*serveBackend)(nil)
 var _ runner.ServiceCreator = (*serveBackend)(nil)
-var _ runner.ServiceApprover = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 	store, ok := b.store.(session.ServiceStore)
@@ -240,51 +239,6 @@ func (b *serveBackend) EditService(name, manifestText string, approveCommands bo
 	return b.serviceViewLocked(name)
 }
 
-// ApproveWatcher grants one command probe and brings its next run forward, so a
-// grant made while the service is idle is visible at the next tick instead of
-// after a full interval. It is a targeted write: a concurrent probe may be
-// updating the same row's observation.
-func (b *serveBackend) ApproveWatcher(name, watcher string) (runner.ServiceView, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	store, err := b.serviceStore()
-	if err != nil {
-		return runner.ServiceView{}, err
-	}
-	if _, err := b.store.Get(name); err != nil {
-		if errors.Is(err, session.ErrNotFound) {
-			return runner.ServiceView{}, fmt.Errorf("%w: %s", runner.ErrNotFound, name)
-		}
-		return runner.ServiceView{}, err
-	}
-	info, err := store.ServiceInfo(name)
-	if err != nil {
-		return runner.ServiceView{}, err
-	}
-	stored, err := store.Watchers(info.ID)
-	if err != nil {
-		return runner.ServiceView{}, err
-	}
-	for _, w := range stored {
-		if w.Name != watcher {
-			continue
-		}
-		spec, err := config.ParseWatcherSpec(w.Spec)
-		if err != nil {
-			return runner.ServiceView{}, err
-		}
-		if spec.Command == "" {
-			return runner.ServiceView{}, fmt.Errorf("watcher %q is a timer: it runs no command and needs no approval", watcher)
-		}
-		now := time.Now()
-		if err := store.SetWatcherApproval(w.ID, now, &now); err != nil {
-			return runner.ServiceView{}, err
-		}
-		return b.serviceViewLocked(name)
-	}
-	return runner.ServiceView{}, fmt.Errorf("%w: watcher %q", runner.ErrNotFound, watcher)
-}
-
 func (b *serveBackend) Watchers(sessionID string) ([]runner.WatcherState, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -329,16 +283,6 @@ func (b *serveBackend) SetWatcherState(id string, lastRun, nextRun *time.Time, l
 		return err
 	}
 	return store.SetWatcherState(id, lastRun, nextRun, lastState, lastErr)
-}
-
-func (b *serveBackend) SetWatcherApproval(id string, at time.Time, nextRun *time.Time) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	store, err := b.serviceStore()
-	if err != nil {
-		return err
-	}
-	return store.SetWatcherApproval(id, at, nextRun)
 }
 
 func (b *serveBackend) List() ([]runner.Meta, error) {

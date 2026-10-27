@@ -67,14 +67,11 @@ type ServiceStore interface {
 	ResetLeases() error
 
 	// PutWatcher inserts or replaces a watcher by (session_id, name). It replaces
-	// the spec, schedule, observation and grant; last_run survives as history.
+	// the spec, schedule, observation and pre-approval; last_run survives as
+	// history.
 	PutWatcher(w Watcher) error
 	Watchers(sessionID string) ([]Watcher, error)
 	SetWatcherState(id string, lastRun, nextRun *time.Time, lastState, lastErr string) error
-	// SetWatcherApproval grants one probe and, optionally, brings its next run
-	// forward. It is a targeted update so approving cannot clobber an observation
-	// a concurrent probe just wrote.
-	SetWatcherApproval(id string, at time.Time, nextRun *time.Time) error
 	DeleteWatcher(id string) error
 }
 

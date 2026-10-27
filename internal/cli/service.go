@@ -35,9 +35,9 @@ func serviceHelp() string {
 A service is a resident session. ` + "`pai serve`" + ` starts the scheduler and registers
 every service it finds; this command only creates, inspects, and edits the durable
 state. A manifest that defines command watchers is saved as written: --yes
-pre-approves them, and without it each probe waits for a grant (the web service
-panel's Approve button, or a later edit --yes), so scheduled code never starts
-silently. A command name already trusted for the session counts as a grant.
+pre-approves them, and otherwise the first run asks for confirmation with the same
+card a chat tool call uses (once / trust session / always). A command name already
+trusted for the session counts as a grant.
 A manifest edit is only allowed while the service is stopped; the role, workspace,
 spec, and watcher set are replaced, while the session's history and queued events
 are kept. report_interval is stored as the reserved timer watcher _report and
@@ -230,27 +230,13 @@ func serviceShow(name string, stdout io.Writer, log *tui.Logger) int {
 	fmt.Fprintln(tw, "  NAME\tENABLED\tLAST RUN\tNEXT RUN\tSTATE\tERROR")
 	for _, w := range watchers {
 		fmt.Fprintf(tw, "  %s\t%v\t%s\t%s\t%s\t%s\n",
-			w.Name, w.Enabled, formatWake(w.LastRun), formatWake(w.NextRun), watcherStateText(w), w.LastError)
+			w.Name, w.Enabled, formatWake(w.LastRun), formatWake(w.NextRun), emptyOr(w.LastState, "-"), w.LastError)
 	}
 	if err := tw.Flush(); err != nil {
 		log.Errorf("Error writing watchers: %v\n", err)
 		return 1
 	}
-	if len(pendingApprovals(store, name)) > 0 {
-		fmt.Fprintln(stdout, "\ncommand watchers are awaiting approval; they do not run until approved")
-	}
 	return 0
-}
-
-// watcherStateText names a probe that cannot run yet. Without it an unapproved
-// command watcher is indistinguishable from one that simply has not fired.
-func watcherStateText(w session.Watcher) string {
-	if w.ApprovedAt == nil {
-		if spec, err := config.ParseWatcherSpec(w.Spec); err == nil && spec.Command != "" {
-			return "awaiting approval"
-		}
-	}
-	return emptyOr(w.LastState, "-")
 }
 
 // serviceSetState stops or resumes a service in the durable store. It requires
@@ -384,7 +370,7 @@ func serviceCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 	}
 	fmt.Fprintf(stdout, "created service %s (id %s)\n", name, created.ID)
 	fmt.Fprintf(stdout, "workspace: %s\nrole: %s\nnext wake: %s\n", manifest.Workspace, manifest.Role, when)
-	printPendingApprovals(stdout, store, name)
+	printConfirmationHint(stdout, manifest, yes)
 	fmt.Fprintln(stdout, "run `pai serve` to start the scheduler")
 	return 0
 }
@@ -447,7 +433,7 @@ func serviceEdit(args []string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error updating service: %v\n", err)
 		return 1
 	}
-	printPendingApprovals(stdout, store, name)
+	printConfirmationHint(stdout, manifest, yes)
 	fmt.Fprintf(stdout, "updated service %s; start it to apply the new manifest\n", name)
 	return 0
 }
@@ -468,50 +454,38 @@ func prepareServiceManifest(manifest *config.ServiceManifest) error {
 	return nil
 }
 
-// pendingApprovals names the command probes that still need a grant, as
-// "name: command". A manifest saves without one; the probe simply does not run
-// until it is approved, so the entry points must say so rather than let a
-// correctly stored service look broken.
-func pendingApprovals(store session.Store, name string) []string {
-	ss, ok := store.(session.ServiceStore)
-	if !ok {
-		return nil
-	}
-	info, err := ss.ServiceInfo(name)
-	if err != nil {
-		return nil
-	}
-	watchers, err := ss.Watchers(info.ID)
-	if err != nil {
-		return nil
-	}
+// commandWatchers names the probes that execute code on a schedule. Without
+// pre-approval their first run asks for confirmation, so the entry point says so
+// instead of letting a correctly stored service look idle.
+func commandWatchers(manifest *config.ServiceManifest) []string {
 	var out []string
-	for _, w := range watchers {
-		spec, err := config.ParseWatcherSpec(w.Spec)
-		if err != nil || spec.Command == "" || w.ApprovedAt != nil {
-			continue
+	for _, w := range manifest.Watchers {
+		if w.Command != "" {
+			out = append(out, fmt.Sprintf("%s: %s", w.Name, w.Command))
 		}
-		out = append(out, fmt.Sprintf("%s: %s", w.Name, spec.Command))
 	}
 	return out
 }
 
-func printPendingApprovals(stdout io.Writer, store session.Store, name string) {
-	pending := pendingApprovals(store, name)
-	if len(pending) == 0 {
+func printConfirmationHint(stdout io.Writer, manifest *config.ServiceManifest, approveCommands bool) {
+	if approveCommands {
 		return
 	}
-	fmt.Fprintln(stdout, "command watchers awaiting approval (they do not run until approved):")
-	for _, p := range pending {
-		fmt.Fprintln(stdout, "  "+p)
+	commands := commandWatchers(manifest)
+	if len(commands) == 0 {
+		return
 	}
-	fmt.Fprintln(stdout, "approve them in the web service panel, or re-apply the manifest with --yes")
+	fmt.Fprintln(stdout, "command watchers are not pre-approved; their first run asks for confirmation:")
+	for _, c := range commands {
+		fmt.Fprintln(stdout, "  "+c)
+	}
+	fmt.Fprintln(stdout, "answer it in the web UI or `pai conn` (once / trust session / always)")
 }
 
 // newService writes the durable half of a resident session: the row, its
 // manifest, one watcher per probe (plus the reserved report tick), and the
 // initial next wake. approveCommands is the entry point's "pre-approve now";
-// without it a command probe is stored unapproved and waits for its grant.
+// without it the first probe asks for confirmation.
 func newService(store session.Store, name string, manifest *config.ServiceManifest, model string, now time.Time, approveCommands bool) (session.Meta, *time.Time, error) {
 	ss, ok := store.(session.ServiceStore)
 	if !ok {
@@ -555,9 +529,10 @@ func reportWatcherSpec(every time.Duration) config.WatcherSpec {
 // the service is stopped, so the next run is left unset and the first start
 // probes at once.
 //
-// A command probe is approved only by approveCommands or by an existing grant on
-// an unchanged spec. A changed command needs a new grant: the old approval was
-// about code that no longer runs.
+// A command probe is pre-approved only by approveCommands or by an existing
+// pre-approval on an unchanged spec. A changed command needs a new decision: the
+// old one was about code that no longer runs. Without a pre-approval the first
+// run asks through the ordinary confirmation card.
 func reconcileWatchers(ss session.ServiceStore, sessionID string, manifest *config.ServiceManifest, now time.Time, existing []session.Watcher, dueNow, approveCommands bool) error {
 	specs := append([]config.WatcherSpec(nil), manifest.Watchers...)
 	if manifest.ReportInterval > 0 {

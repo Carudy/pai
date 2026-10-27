@@ -128,9 +128,9 @@ interval = "45s"
 	}
 }
 
-// A command watcher no longer blocks the write: the manifest is stored, the
-// probe is left unapproved, and the operator is told. `--yes` is the
-// pre-approval switch; the panel (or `pai service edit --yes`) can grant later.
+// A command watcher no longer blocks the write and no longer needs a panel
+// grant: the manifest is stored, the first probe asks for confirmation, and
+// `--yes` (or the form's box) pre-approves it instead.
 func TestServiceCreateDefersCommandApproval(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", home)
@@ -153,8 +153,8 @@ command = "true"
 	if code := runServiceCmd(context.Background(), []string{"create", "probe", "--file", path}, &out, log); code != 0 {
 		t.Fatalf("create without --yes: %s", out.String())
 	}
-	if !strings.Contains(out.String(), "awaiting approval") {
-		t.Fatalf("the pending grant is not reported: %q", out.String())
+	if !strings.Contains(out.String(), "first run asks for confirmation") {
+		t.Fatalf("the confirmation hint is missing: %q", out.String())
 	}
 	checkApproval := func(name string, want bool) {
 		t.Helper()
@@ -189,7 +189,7 @@ command = "true"
 	checkApproval("probe", false)
 
 	// A never-started service is idle enough to edit, so --yes is the documented
-	// way to grant the probes it already stored.
+	// way to pre-approve the probes it already stored.
 	out.Reset()
 	if code := runServiceCmd(context.Background(), []string{"edit", "probe", "--file", path, "--yes"}, &out, log); code != 0 {
 		t.Fatalf("edit with --yes: %s", out.String())
@@ -200,8 +200,8 @@ command = "true"
 	if code := runServiceCmd(context.Background(), []string{"create", "granted", "--file", path, "--yes"}, &out, log); code != 0 {
 		t.Fatalf("create with --yes: %s", out.String())
 	}
-	if strings.Contains(out.String(), "awaiting approval") {
-		t.Fatalf("--yes still left a pending grant: %q", out.String())
+	if strings.Contains(out.String(), "first run asks for confirmation") {
+		t.Fatalf("--yes still left a pending confirmation: %q", out.String())
 	}
 	checkApproval("granted", true)
 }
@@ -505,31 +505,19 @@ command = "echo 1"
 	defer store.Close()
 	backend := &serveBackend{store: store, cwd: workspace}
 
-	// Without pre-approval the service is saved anyway; the probe is the thing
-	// that waits.
+	// Without pre-approval the service is saved anyway; the first probe is what
+	// asks. A timer runs no code, so it is never gated.
 	pending, err := backend.CreateService("pending", manifest, false)
 	if err != nil {
 		t.Fatalf("create without approval: %v", err)
 	}
 	for _, w := range pending.Watchers {
 		if w.Name == "level" && w.ApprovedAt != nil {
-			t.Fatal("a command watcher was approved without being asked")
+			t.Fatal("a command watcher was pre-approved without being asked")
 		}
 		if w.Name == config.ReportWatcherName && w.ApprovedAt == nil {
 			t.Fatal("a timer runs no command, so it must not wait for a grant")
 		}
-	}
-	approved, err := backend.ApproveWatcher("pending", "level")
-	if err != nil {
-		t.Fatalf("ApproveWatcher: %v", err)
-	}
-	for _, w := range approved.Watchers {
-		if w.Name == "level" && w.ApprovedAt == nil {
-			t.Fatal("approval was not stored")
-		}
-	}
-	if _, err := backend.ApproveWatcher("pending", config.ReportWatcherName); err == nil || !strings.Contains(err.Error(), "timer") {
-		t.Fatalf("approving a timer: %v", err)
 	}
 
 	view, err := backend.CreateService("svc", manifest, true)

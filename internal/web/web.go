@@ -575,29 +575,6 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, 200, view)
-	case "/api/service/approve":
-		if !method(w, r, http.MethodPost) {
-			return
-		}
-		var body struct {
-			Name    string `json:"name"`
-			Watcher string `json:"watcher"`
-		}
-		if !decode(w, r, &body) {
-			return
-		}
-		if strings.TrimSpace(body.Name) == "" || strings.TrimSpace(body.Watcher) == "" {
-			fail(w, 400, "service name and watcher are required")
-			return
-		}
-		// The grant a saved manifest deferred: scheduled code still needs a
-		// decision, it just no longer has to happen before the manifest is stored.
-		view, err := h.manager.ApproveWatcher(body.Name, body.Watcher)
-		if err != nil {
-			managerError(w, err)
-			return
-		}
-		respond(w, 200, view)
 	case "/api/service/stop", "/api/service/start":
 		if !method(w, r, http.MethodPost) {
 			return
