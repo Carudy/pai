@@ -1418,6 +1418,8 @@ async function verifyServiceMode() {
   p.run("selected='one'; sessionMetadata({name:'one', mode:'chat'})");
   assert.equal(p.run('sessionMode'), 'service', 'a history refresh keeps the chosen tab');
   assert.equal(p.run('selectedMode'), 'chat', 'the open session keeps its own kind');
+  p.run('paintService()');
+  assert.equal(p.get('service-panel').hidden, true, 'a chat session never gets a service bar, even under the Services tab');
   p.run("selected=''");
 
   const view = {
@@ -1429,7 +1431,7 @@ async function verifyServiceMode() {
       {name: 'river', enabled: true, approved_at: '2026-10-27T10:00:00Z', spec: '{"command":"cat state.json","interval":"60s"}', last_state: '{"fired":1793000000,"reported":true}', last_error: 'courier failed'},
     ],
   };
-  p.run("selected='river'; serviceView=" + JSON.stringify(view) + '; paintService();');
+  p.run("selected='river'; selectedMode='service'; serviceView=" + JSON.stringify(view) + '; paintService();');
   assert.equal(p.get('service-panel').hidden, false, 'the service panel appears');
   assert.equal(p.get('service-state').textContent, 'Parked', 'the state is labelled once, in the shared vocabulary');
   assert.match(p.get('service-next').textContent, /next wake/, 'the next wake is shown');

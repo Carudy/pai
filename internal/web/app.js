@@ -746,7 +746,9 @@ function paintService() {
   const panel = $('service-panel');
   // The bar exists only for a selected service. It is never hidden by a failed
   // refresh: a stable bar with an explanation beats one that blinks in and out.
-  if (sessionMode !== 'service' || !selected) { panel.hidden = true; return; }
+  // The tab may disagree with the open session (browsing Services while a chat
+  // is selected), and the bar is about the session, so both must agree.
+  if (sessionMode !== 'service' || selectedMode !== 'service' || !selected) { panel.hidden = true; return; }
   panel.hidden = false;
 
   const badge = $('service-state');
