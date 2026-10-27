@@ -398,6 +398,15 @@ func (w *worker) Usage(u core.Usage) {
 	if w.activeTool == nil {
 		w.phase = "waiting_model"
 	}
+	if u.Prompt != 0 || u.Completion != 0 || u.Total != 0 {
+		// One line per reported call: the operator can audit model spend without
+		// reading the transcript. A provider that reports nothing stays silent.
+		detail := fmt.Sprintf("in %d, out %d", u.Prompt, u.Completion)
+		if u.Cached > 0 {
+			detail += fmt.Sprintf(" (cached %d)", u.Cached)
+		}
+		w.m.diagLocked(Diagnostic{Session: w.name, Kind: "model", Subject: w.model, Outcome: "usage", Detail: detail})
+	}
 	w.emitLocked("usage", u)
 }
 func (w *worker) ToolCall(c core.ToolCall) {

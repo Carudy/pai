@@ -58,6 +58,7 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 	type observation struct {
 		spec config.WatcherSpec
 		res  watcher.Result
+		next time.Time
 	}
 	var fired []observation
 	var next *time.Time
@@ -76,6 +77,8 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 			// Leave it unscheduled: a corrupt row is a config error the user sees
 			// in last_error, not a reason to spin or to kill the service.
 			_ = wb.SetWatcherState(ws.ID, ws.LastRun, nil, ws.LastState, "invalid watcher spec: "+err.Error())
+			m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "failed",
+				Detail: "invalid spec: " + err.Error()})
 			continue
 		}
 		if ws.NextRun != nil && ws.NextRun.After(now) {
@@ -85,6 +88,8 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 		if probeCtx.Err() != nil {
 			// Out of budget: keep it due so the next activation retries it.
 			next = earlier(next, &now)
+			m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "deferred",
+				Detail: "probe budget exhausted; retries on the next activation"})
 			continue
 		}
 
@@ -98,12 +103,17 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 					w.emit("error", fmt.Sprintf("could not reschedule watcher %q: %v", ws.Name, err))
 				}
 				next = earlier(next, &nextRun)
+				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "awaiting approval",
+					Detail: spec.Command, Next: nextRun})
 				continue
 			}
 			// A name the session already trusts is a grant; record it instead of
 			// re-deriving it on every probe.
 			if err := wb.SetWatcherApproval(ws.ID, now, ws.NextRun); err != nil {
 				w.emit("error", fmt.Sprintf("could not approve watcher %q: %v", ws.Name, err))
+			} else {
+				m.diag(Diagnostic{Session: name, Kind: "service", Subject: ws.Name, Outcome: "granted",
+					Detail: "trusted command: " + spec.Command})
 			}
 		}
 
@@ -111,6 +121,8 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 		if probeCtx.Err() != nil {
 			// The budget cut this probe short; that is not a probe failure.
 			next = earlier(next, &now)
+			m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "deferred",
+				Detail: "probe budget exhausted; retries on the next activation"})
 			continue
 		}
 		nextRun := res.NextRun
@@ -119,8 +131,26 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 		}
 		next = earlier(next, &nextRun)
 		if res.Fire {
-			fired = append(fired, observation{spec: spec, res: res})
+			fired = append(fired, observation{spec: spec, res: res, next: nextRun})
+			continue
 		}
+		outcome := "quiet"
+		reason := ""
+		switch {
+		case res.Err != nil:
+			outcome = "failed"
+		case res.Holds:
+			// The predicate is true but this pass must not wake the model: either
+			// the episode was already reported, or the reminder is not due yet.
+			outcome = "held"
+			if spec.RepeatAfter > 0 {
+				reason = "reminder not due"
+			} else {
+				reason = "already reported this episode"
+			}
+		}
+		m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: outcome,
+			Detail: watcherDetail(spec, res), Reason: reason, Next: nextRun})
 	}
 
 	// report_on_change means "report only when something changed": the report
@@ -138,9 +168,13 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 	for _, o := range fired {
 		if o.spec.Name == config.ReportWatcherName {
 			if manifest != nil && manifest.ReportOnChange && !changed {
+				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: o.spec.Name, Outcome: "quiet",
+					Detail: "report dropped: nothing changed", Next: o.next})
 				continue
 			}
 			if parked {
+				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: o.spec.Name, Outcome: "deferred",
+					Detail: "report dropped: parked on a question", Next: o.next})
 				continue
 			}
 		}
@@ -149,13 +183,33 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 			eid, err := eb.AppendEvent(id, ev)
 			if err != nil {
 				w.emit("error", fmt.Sprintf("could not queue watcher %q: %v", o.spec.Name, err))
+				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: o.spec.Name, Outcome: "failed",
+					Detail: "could not queue the event: " + err.Error(), Next: o.next})
 				continue
 			}
 			ev.ID = eid
 		}
 		events = append(events, ev)
+		m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: o.spec.Name, Outcome: "fired",
+			Detail: watcherDetail(o.spec, o.res), Next: o.next})
 	}
 	return events, next
+}
+
+// watcherDetail is the one-line observation a diagnostic carries: the probe's
+// raw stdout (the decision plus whatever explained it), or its failure. A timer
+// has no command output, so its prompt is the only thing worth showing.
+func watcherDetail(spec config.WatcherSpec, res watcher.Result) string {
+	if res.Err != nil {
+		return res.Err.Error()
+	}
+	if spec.Command == "" {
+		return res.Summary
+	}
+	if res.Output != "" {
+		return res.Output
+	}
+	return "no output"
 }
 
 // watcherEvent turns one fired probe into a durable event. A timer probe is a
@@ -221,6 +275,10 @@ func (m *Manager) dueEvents(w *worker, now time.Time) []core.Event {
 	if err != nil {
 		w.emit("error", "could not read due events: "+err.Error())
 		return nil
+	}
+	if len(events) > 0 {
+		m.diag(Diagnostic{Session: w.name, Kind: "event", Outcome: "recovered",
+			Detail: fmt.Sprintf("%d due event(s)", len(events))})
 	}
 	return events
 }

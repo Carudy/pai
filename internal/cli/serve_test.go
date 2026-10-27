@@ -51,7 +51,7 @@ func TestServeModelsIncludePresets(t *testing.T) {
 func TestServeFlags(t *testing.T) {
 	for _, args := range [][]string{{}, {"--ip", "127.0.0.1", "--port", "9384", "--max-active-sessions", "2"}, {"-ip", "127.0.0.1", "-p", "9384"}} {
 		f, err := parseServeFlags(args)
-		if err != nil || f.ip != "127.0.0.1" || f.port != 9384 || f.maxActive != 2 || f.maxResident != 4 || f.activityLog {
+		if err != nil || f.ip != "127.0.0.1" || f.port != 9384 || f.maxActive != 2 || f.maxResident != 4 || f.activityLog || f.debugLog {
 			t.Fatalf("%v: %+v %v", args, f, err)
 		}
 	}
@@ -64,6 +64,40 @@ func TestServeFlags(t *testing.T) {
 		if code := Run(context.Background(), io.Discard, []string{"serve", arg}); code != 0 {
 			t.Fatalf("help: %d", code)
 		}
+	}
+}
+
+func TestServeDebugLogFlag(t *testing.T) {
+	for _, args := range [][]string{{"--debug-log"}, {"--debug-log=true"}} {
+		f, err := parseServeFlags(args)
+		if err != nil || !f.debugLog {
+			t.Fatalf("debug flag: %+v %v", f, err)
+		}
+	}
+	f, err := parseServeFlags([]string{"--debug-log=false"})
+	if err != nil || f.debugLog {
+		t.Fatalf("disabled flag: %+v %v", f, err)
+	}
+	if !strings.Contains(serveHelp(), "--debug-log") {
+		t.Fatal("missing help")
+	}
+	// The two logs are independent: the activity log stays concise and says
+	// nothing about a probe's verdict.
+	f, err = parseServeFlags([]string{"--activity-log", "--debug-log"})
+	if err != nil || !f.activityLog || !f.debugLog {
+		t.Fatalf("both flags: %+v %v", f, err)
+	}
+	// The stream is wired end to end: closing the manager ends the writer.
+	m := runner.New(context.Background(), nil, 1)
+	var out bytes.Buffer
+	stop, err := startServeDiagnostics(m, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+	stop()
+	if out.Len() != 0 {
+		t.Fatal("unexpected output")
 	}
 }
 

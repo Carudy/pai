@@ -43,6 +43,9 @@ type Manager struct {
 	wg         sync.WaitGroup
 	sequence   uint64
 	activities map[chan Activity]struct{}
+	// diagnostics is a separate stream for operator-facing facts. Probe verdicts
+	// repeat on every interval, so they must not enter the browser's activities.
+	diagnostics map[chan Diagnostic]struct{}
 	// Failures survive worker removal without occupying runtime slots.
 	failures []Snapshot
 	// trustAll is a per-session auto-approval toggle. It lives here, not on the
@@ -860,6 +863,10 @@ func (m *Manager) Close() {
 	defer m.mu.Unlock()
 	for ch := range m.activities {
 		delete(m.activities, ch)
+		close(ch)
+	}
+	for ch := range m.diagnostics {
+		delete(m.diagnostics, ch)
 		close(ch)
 	}
 }

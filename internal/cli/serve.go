@@ -27,6 +27,7 @@ func serveHelp() string {
   --max-active-sessions <n>      Maximum live workers (default 2)
   --max-resident <n>             Prepared service runtimes, LRU-evicted (default 4, 0 = unbounded)
   --activity-log                Log tool calls/lifecycle to stdout (default false)
+  --debug-log                   Log probe verdicts, scheduler and model facts to stdout
   --token-file <path>            Token file; overrides PAI_SERVE_TOKEN
   --public-origin <origin>       Browser origin, e.g. https://pai.example.com
   --allow-origin <origin>        Extra browser origin to accept (repeatable)
@@ -39,6 +40,8 @@ terminating TLS or changing Host; forwarded headers are never trusted.
 on a second address too (a LAN IP, say) while --public-origin stays canonical. It
 is not a Host allowlist, and each origin still logs in separately.
 Activity logs omit reasoning and tool output; commands may contain sensitive data.
+Debug logs additionally include probe output, model token counts, and scheduler
+decisions: useful for auditing a service, but they can contain command output.
 Remote access requires TLS or a trusted TLS terminator. Clients can run tools
 with this process's permissions. Sessions use their saved workspace; new sessions default to the starting cwd.`
 }
@@ -63,6 +66,7 @@ type serveFlags struct {
 	allowOrigins repeatedFlag
 	help         bool
 	activityLog  bool
+	debugLog     bool
 }
 
 func parseServeFlags(args []string) (serveFlags, error) {
@@ -78,6 +82,7 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	fs.StringVar(&f.publicOrigin, "public-origin", "", "canonical browser origin")
 	fs.Var(&f.allowOrigins, "allow-origin", "extra browser origin to accept (repeatable)")
 	fs.BoolVar(&f.activityLog, "activity-log", false, "log activity to stdout")
+	fs.BoolVar(&f.debugLog, "debug-log", false, "log host-side diagnostics to stdout")
 	fs.BoolVar(&f.help, "help", false, "help")
 	fs.BoolVar(&f.help, "h", false, "help")
 	if err := fs.Parse(args); err != nil {
@@ -200,6 +205,14 @@ func runServe(ctx context.Context, args []string, stdout io.Writer, log *tui.Log
 			return 1
 		}
 		defer stopLog()
+	}
+	if f.debugLog {
+		stopDiag, diagErr := startServeDiagnostics(manager, stdout)
+		if diagErr != nil {
+			log.Errorf("debug log: %v\n", diagErr)
+			return 1
+		}
+		defer stopDiag()
 	}
 	go func() { result <- server.Serve(listener) }()
 	select {

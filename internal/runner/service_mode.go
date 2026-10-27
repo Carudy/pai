@@ -115,18 +115,24 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	if !hasSubstantive(wake.Events) {
 		next := m.nextServiceWake(name, probeNext, time.Now())
 		m.persistNextWake(w, name, next)
+		// Worth a line even though no model call happens: it is the difference
+		// between "the probe ran and found nothing" and "the service is dead".
+		m.diag(Diagnostic{Session: name, Kind: "activation", Outcome: "skipped",
+			Detail: "nothing substantive to report", Next: timeValue(next)})
 		return next, nil
 	}
 
 	if strings.TrimSpace(wake.Situation) == "" {
 		wake.Situation = renderSituation(wake, m.openWatchers(w, wake))
 	}
+	m.diag(Diagnostic{Session: name, Kind: "activation", Outcome: "start", Detail: wakeSummary(wake.Reason, len(wake.Events))})
 	_, err = w.activate(ctx, wake)
 	if err != nil {
 		// The wake's events were nacked with a backoff; make sure the scheduler
 		// looks again even if no watcher would have woken the service.
 		retry := time.Now().Add(30 * time.Second)
 		probeNext = earlier(probeNext, &retry)
+		m.diag(Diagnostic{Session: name, Kind: "activation", Outcome: "failed", Detail: err.Error()})
 	}
 	at := m.nextServiceWake(name, probeNext, time.Now())
 	m.persistNextWake(w, name, at)
@@ -228,6 +234,8 @@ func (m *Manager) CreateService(name, manifest string, approveCommands bool) (Se
 	delete(m.stoppedServices, view.Name)
 	m.mu.Unlock()
 	m.scheduler.Register(view.Name, view.NextWake)
+	m.diag(Diagnostic{Session: view.Name, Kind: "service", Outcome: "created",
+		Detail: fmt.Sprintf("%d watcher(s)", len(view.Watchers)), Next: timeValue(view.NextWake)})
 	return view, nil
 }
 
@@ -250,6 +258,8 @@ func (m *Manager) EditService(name, manifest string, approveCommands bool) (Serv
 	m.serviceSpecs[view.Name] = view.Spec
 	m.stoppedServices[view.Name] = true
 	m.mu.Unlock()
+	m.diag(Diagnostic{Session: view.Name, Kind: "service", Outcome: "edited",
+		Detail: fmt.Sprintf("%d watcher(s)", len(view.Watchers))})
 	return view, nil
 }
 
@@ -273,6 +283,8 @@ func (m *Manager) ApproveWatcher(name, watcher string) (ServiceView, error) {
 	if !stopped {
 		m.scheduler.Wake(name, core.Wake{Reason: "watcher approved"})
 	}
+	m.diag(Diagnostic{Session: name, Kind: "service", Subject: watcher, Outcome: "approved",
+		Detail: "granted by the operator"})
 	return view, nil
 }
 
@@ -513,6 +525,10 @@ func (w *worker) serviceDone(wake core.Wake, res core.WakeResult) error {
 		// nothing outstanding. A nacked wake must stay open: it will be retried.
 		w.markWatchersHandled(wake)
 	}
+	// One line per activation: what the model chose, what it said, and whether
+	// its wake was closed or handed back for retry.
+	w.m.diag(Diagnostic{Session: w.name, Kind: "activation", Outcome: res.Outcome,
+		Detail: activationDetail(res, len(wake.Events), ackErr)})
 
 	state, phase, status := StateSuspended, "suspended", res.Status
 	switch res.Outcome {
@@ -679,6 +695,7 @@ func (m *Manager) StopService(name string) error {
 			return err
 		}
 	}
+	m.diag(Diagnostic{Session: name, Kind: "service", Outcome: "stopped", Detail: "scheduling stopped by the operator"})
 	return nil
 }
 
@@ -713,6 +730,7 @@ func (m *Manager) StartService(name string) error {
 			return err
 		}
 	}
+	m.diag(Diagnostic{Session: name, Kind: "service", Outcome: "started", Detail: "scheduling resumed", Next: now})
 	return nil
 }
 
@@ -844,6 +862,43 @@ func boundedPayloadLimit(payload string, limit int, fallback string) string {
 		payload = strings.ToValidUTF8(payload[:limit], "") + "…"
 	}
 	return payload
+}
+
+// timeValue unwraps an optional schedule for a Diagnostic.
+func timeValue(at *time.Time) time.Time {
+	if at == nil {
+		return time.Time{}
+	}
+	return *at
+}
+
+// wakeSummary names why an activation ran, for the audit line.
+func wakeSummary(reason string, events int) string {
+	if strings.TrimSpace(reason) == "" {
+		reason = "wake"
+	}
+	return fmt.Sprintf("%s: %d event(s)", reason, events)
+}
+
+// activationDetail reports how an activation ended and whether its wake was
+// closed. The model's own status is bounded: a service may write paragraphs.
+func activationDetail(res core.WakeResult, events int, ackErr error) string {
+	parts := []string{fmt.Sprintf("%d event(s)", events)}
+	switch {
+	case ackErr != nil:
+		parts = append(parts, "ack failed: "+ackErr.Error())
+	case res.Err != nil:
+		parts = append(parts, "nacked for retry")
+	default:
+		parts = append(parts, "acked")
+	}
+	if s := strings.TrimSpace(res.Status); s != "" {
+		parts = append(parts, boundedPayload(s, ""))
+	}
+	if res.Err != nil {
+		parts = append(parts, res.Err.Error())
+	}
+	return strings.Join(parts, "; ")
 }
 
 // Keep the compiler honest about the service-mode interface.

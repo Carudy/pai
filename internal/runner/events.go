@@ -82,6 +82,26 @@ func (w *worker) emitLocked(kind string, data any) {
 	if kind != "reasoning" && kind != "notice" {
 		w.reasoning = ""
 	}
+	// Errors, notices and questions are the events an operator most wants in the
+	// audit log: a retry, a stalled stream, a failed write, or a service parked
+	// waiting for an answer. A pending prompt is the commonest reason a resident
+	// session looks alive but does nothing.
+	switch kind {
+	case "error", "notice", "ask":
+		if text, ok := data.(string); ok {
+			w.m.diagLocked(Diagnostic{Session: w.name, Kind: kind, Detail: text})
+		}
+	case "prompt":
+		if p, ok := data.(Prompt); ok {
+			// Title may carry the full command; the tool's name and target are the
+			// activity log's level of detail, so keep the same boundary here.
+			detail := p.Title
+			if p.Tool != nil {
+				detail = p.Tool.Name + " " + p.Tool.Target
+			}
+			w.m.diagLocked(Diagnostic{Session: w.name, Kind: "prompt", Outcome: p.Kind, Detail: detail})
+		}
+	}
 	for ch := range w.m.activities {
 		select {
 		case ch <- Activity{Name: w.name, Event: w.eventLocked(kind, data)}:

@@ -20,6 +20,13 @@ Empty output, an unrecognised first token, a nonzero exit, or a timeout is a
 **probe failure**, not a quiet "no". A bug in the script must be loud, because the
 model cannot tell a broken probe from a calm world.
 
+`Result` carries both readings of one run: `Summary` is the text after the
+decision token (what the model is handed when the probe fires), while `Output` is
+the bounded raw stdout and `Holds` is the predicate itself. The runner uses the
+latter two for `pai serve --debug-log`, so a probe that did not fire is still
+reported as `result "0 …", not triggered` — and one that fired but was latched
+out as `held`.
+
 The decision lives in the command so the manifest owns no query language and a
 probe can use whatever shell, Python, or `jq` is already on the host. The trade is
 that PAI cannot validate the logic, only the decision format.

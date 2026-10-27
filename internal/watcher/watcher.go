@@ -29,12 +29,17 @@ const (
 )
 
 // Result is one probe's outcome. State is the opaque value to persist; Fire says
-// whether this observation is worth waking the model for; Err reports a probe
-// failure, which is persisted but does not itself stop the watcher.
+// whether this observation is worth waking the model for. Holds is the predicate
+// itself, Output the bounded stdout, and Summary the text after the decision
+// token, so a caller can explain a quiet or latched observation as well as a
+// fired one. Err reports a probe failure, which is persisted but does not itself
+// stop the watcher.
 type Result struct {
 	Fire     bool
+	Holds    bool // the predicate is true now, even when the latch suppresses a wake
 	State    string
-	Summary  string
+	Output   string // the probe's stdout, bounded; empty for a timer
+	Summary  string // the text after the decision token, handed to the model when it fires
 	Severity string
 	Err      error
 	NextRun  time.Time
@@ -77,15 +82,17 @@ func Probe(ctx context.Context, spec config.WatcherSpec, dir, prev string, now t
 	}
 
 	st := decodeState(prev)
-	holds, summary, err := observe(ctx, spec, dir)
+	holds, output, summary, err := observe(ctx, spec, dir)
 	if err != nil {
 		return failed(spec, st, err, now, res)
 	}
+	res.Holds, res.Output = holds, output
 
 	if !holds {
 		// The episode ended. Forgetting the whole document — the latch, the
 		// acknowledgment, and the reminder clocks — lets the next hold fire
 		// immediately, without a timer to outlive the condition it describes.
+		res.Summary = summary
 		res.State = encodeState(state{})
 		return res
 	}
@@ -159,10 +166,11 @@ func failed(spec config.WatcherSpec, st state, cause error, now time.Time, res R
 	return res
 }
 
-// observe runs the probe and returns its decision plus the summary text. A
-// command that cannot answer (nonzero exit, timeout, empty output, or an
-// unrecognized decision token) is a probe failure, not a quiet "no".
-func observe(ctx context.Context, spec config.WatcherSpec, dir string) (bool, string, error) {
+// observe runs the probe and returns whether the predicate holds, the bounded
+// stdout (the raw observation, for logs), and the summary text. A command that
+// cannot answer (nonzero exit, timeout, empty output, or an unrecognized
+// decision token) is a probe failure, not a quiet "no".
+func observe(ctx context.Context, spec config.WatcherSpec, dir string) (bool, string, string, error) {
 	timeout := spec.Timeout
 	if timeout <= 0 {
 		timeout = min(10*time.Second, spec.Interval)
@@ -173,30 +181,30 @@ func observe(ctx context.Context, spec config.WatcherSpec, dir string) (bool, st
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Probes run without a confirmation prompt: the command was approved when
-	// the service was created, and a resident check cannot wait for a human.
+	// Probes run without a confirmation prompt: a resident check cannot wait for
+	// a human, so the grant must exist before the probe runs.
 	res, err := tool.ExecuteCommandAt(ctx, spec.Command, dir, nil)
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 	if res.TimedOut {
-		return false, "", fmt.Errorf("timed out after %s", timeout)
+		return false, "", "", fmt.Errorf("timed out after %s", timeout)
 	}
 	if res.ExitCode != 0 {
-		return false, "", fmt.Errorf("exit %d: %s", res.ExitCode, truncate(strings.TrimSpace(res.Output), 200))
+		return false, "", "", fmt.Errorf("exit %d: %s", res.ExitCode, truncate(strings.TrimSpace(res.Output), 200))
 	}
 	out := strings.TrimSpace(res.Output)
 	if out == "" {
-		return false, "", errors.New("probe printed no decision")
+		return false, "", "", errors.New("probe printed no decision")
 	}
 	if len(out) > maxObservation {
 		out = truncate(out, maxObservation)
 	}
 	holds, summary, ok := splitDecision(out)
 	if !ok {
-		return false, "", fmt.Errorf("probe decision must be 1/0 or true/false, got %q", firstToken(out))
+		return false, "", "", fmt.Errorf("probe decision must be 1/0 or true/false, got %q", firstToken(out))
 	}
-	return holds, summary, nil
+	return holds, out, summary, nil
 }
 
 // splitDecision reads the boolean on the first line and everything after the

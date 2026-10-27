@@ -845,6 +845,48 @@ when appropriate for your stdout destination. Events use a bounded 128-event que
 slow output drops new events rather than blocking agents. Shutdown drains queued
 logs for up to 250 ms; a blocked writer may lose the remaining logs.
 
+### Debug log
+
+`pai serve --debug-log` is the operator's audit trail: one timestamped line per
+host-side fact, including probes that did **not** fire and durably queued work.
+It is independent of `--activity-log`, so either or both can be on.
+
+```text
+2026-10-27T14:30:00 [river] watcher level: result "1 level=6.4 mode=danger", triggered, next 14:30:30
+2026-10-27T14:30:30 [river] watcher level: result "1 level=6.4 mode=danger", not triggered (already reported this episode), next 14:31:00
+2026-10-27T14:31:00 [river] watcher gate: awaiting approval: python3 gate.py, next 14:31:30
+2026-10-27T14:31:00 [river] watcher gate: failed: exit 3: boom, next 14:32:00
+2026-10-27T14:31:00 [river] activation skipped: nothing substantive to report, next 14:31:30
+2026-10-27T14:31:00 [tick] activation start: timer: 1 event(s)
+2026-10-27T14:31:02 [tick] model deepseek:flash usage: in 2921, out 121 (cached 2816)
+2026-10-27T14:31:02 [tick] activation inform: 1 event(s); acked; level 6.4 m
+2026-10-27T14:31:03 [tick] prompt confirm: execute sh
+2026-10-27T14:31:04 [river] error: could not persist the next wake: database is locked
+```
+
+What it covers:
+
+- **watcher**: every probe's verdict — `fired`, `quiet` (condition false), `held`
+  (true but the latch or reminder window suppressed the wake), `failed`, `deferred`
+  (out of the shared probe budget), `awaiting approval` — with the probe's raw
+  output and its next run;
+- **activation**: `start`, `skipped` (a clock tick that spent no model call), and
+  the end — the model's outcome, whether its events were acked or nacked, and the
+  bounded status;
+- **event**: pending events recovered from the store after a restart;
+- **service**: created, edited, a watcher granted by trust or by the operator,
+  stopped, started;
+- **model**: reported prompt/completion/cached tokens per call;
+- **prompt**: a pending approval, which is the commonest reason a resident session
+  looks alive but does nothing;
+- **notice/error**: the same messages the transcript shows, so a stalled stream,
+  retry, or failed write is visible without a browser.
+
+Probe output and commands are included, so the same sensitivity warning as the
+activity log applies; each field is bounded and collapsed to one line. The stream
+is a bounded buffer that drops when full rather than delaying an agent, and
+shutdown drains it for up to 250 ms.
+
 ### HTTP API
 
 Scripts and other clients can drive the same sessions over HTTP — create, send,
