@@ -134,7 +134,7 @@ func TestServiceProbeSkipsModelWhenNothingChanged(t *testing.T) {
 	skipWithoutPOSIXShell(t)
 	past := time.Now().Add(-time.Minute)
 	spec := config.WatcherSpec{
-		Name: "level", Type: "command", Command: "echo 0",
+		Name: "level", Command: "echo 0",
 		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	fp := &serviceTestProvider{done: make(chan int, 1)}
@@ -173,7 +173,7 @@ func TestServiceProbeWakesOnChange(t *testing.T) {
 	skipWithoutPOSIXShell(t)
 	past := time.Now().Add(-time.Minute)
 	spec := config.WatcherSpec{
-		Name: "level", Type: "command", Command: `printf '1 level=9\n'`,
+		Name: "level", Command: `printf '1 level=9\n'`,
 		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	fp := &serviceTestProvider{
@@ -553,7 +553,7 @@ func TestServiceUserInputSkipsProbes(t *testing.T) {
 	skipWithoutPOSIXShell(t)
 	past := time.Now().Add(-time.Minute)
 	spec := config.WatcherSpec{
-		Name: "probe", Type: "command", Command: "echo ran > probe-ran; echo 0",
+		Name: "probe", Command: "echo ran > probe-ran; echo 0",
 		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	fp := &serviceTestProvider{

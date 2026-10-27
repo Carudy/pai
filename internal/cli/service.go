@@ -431,7 +431,7 @@ func prepareServiceManifest(manifest *config.ServiceManifest) error {
 func commandWatchers(manifest *config.ServiceManifest) []string {
 	var out []string
 	for _, w := range manifest.Watchers {
-		if w.Type == "command" {
+		if w.Command != "" {
 			out = append(out, fmt.Sprintf("%s: %s", w.Name, w.Command))
 		}
 	}
@@ -473,7 +473,7 @@ func newService(store session.Store, name string, manifest *config.ServiceManife
 // case, so it shares one persisted schedule with every other probe.
 func reportWatcherSpec(every time.Duration) config.WatcherSpec {
 	return config.WatcherSpec{
-		Name: config.ReportWatcherName, Type: "timer", Interval: every,
+		Name: config.ReportWatcherName, Interval: every,
 		Timeout: min(10*time.Second, every),
 		Prompt:  config.ReportPrompt,
 	}

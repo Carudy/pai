@@ -584,24 +584,26 @@ report_on_change = true      # drop a heartbeat when no probe fired
 
 [[watcher]]
 name         = "river-level"
-type         = "command"     # command | timer
 interval     = "60s"        # 10s .. 24h
 timeout      = "10s"        # default min(10s, interval)
 command      = "scripts/check_river"
+prompt       = "If the level is high, say so and suggest checking the gate."
 hold_for     = "2m"         # stay true this long before firing
 repeat_after = "10m"        # re-alert while true; omit = once per episode
 severity     = "high"       # info|low|medium|high|critical
 
 [[watcher]]
-name     = "tide-sample"
-type     = "timer"          # a timer takes no command
+name     = "tide-sample"    # no command = a timer
 interval = "13m"
 prompt   = "Report the tide reading and whether it changed."
 ```
 
-A `timer` may carry a `prompt`: it is injected into the situation on every tick.
-A `command` watcher must not — its output is the summary. The built-in
-`_report` heartbeat created by `report_interval` carries one.
+A watcher with a `command` is a predicate: the command prints `1`/`true` (plus
+optional summary text) and the watcher decides. Without a `command` it is a
+timer: it fires every interval and its `prompt` is the wake context. Both kinds
+may carry a `prompt` — for a command probe it is extra guidance appended to the
+output when the probe fires. The built-in `_report` heartbeat created by
+`report_interval` carries one.
 
 ### Stop and start
 

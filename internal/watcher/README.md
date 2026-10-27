@@ -6,8 +6,8 @@ See the [module map](../organization.md) for layering.
 
 ## The probe contract
 
-A `command` watcher is a **predicate**, not a sensor. It runs in the session's
-workspace with a timeout and prints a decision on its first line:
+A watcher with a `command` is a **predicate**, not a sensor. It runs in the
+session's workspace with a timeout and prints a decision on its first line:
 
 | stdout | meaning |
 |---|---|
@@ -24,10 +24,10 @@ The decision lives in the command so the manifest owns no query language and a
 probe can use whatever shell, Python, or `jq` is already on the host. The trade is
 that PAI cannot validate the logic, only the decision format.
 
-`timer` watchers have no command and fire every interval. A timer may carry a
-`prompt`, which becomes the wake text (the built-in `_report` heartbeat uses one
-to ask for a status report); a `command` watcher must not, because its output is
-the summary.
+`timer` watchers have no command and fire every interval; their `prompt` is the
+wake text (empty falls back to `scheduled tick`). Both kinds may carry a `prompt`:
+for a command probe it is extra guidance appended after the output when the probe
+fires, so the model knows what to do with the observation.
 
 ## Debounce and latching
 

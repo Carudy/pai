@@ -142,10 +142,17 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 // in the payload for now; mapping it to an event class is a later policy.
 func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result, now time.Time) core.Event {
 	class, kind := core.EventWatcher, "watch"
-	if spec.Type == "timer" {
+	if spec.Command == "" {
 		class, kind = core.EventTimer, "timer"
 	}
 	payload := res.Summary
+	if spec.Command != "" && spec.Prompt != "" {
+		// A command probe's prompt is extra guidance for acting on its output.
+		if payload != "" {
+			payload += "\n"
+		}
+		payload += "Instruction: " + spec.Prompt
+	}
 	if spec.Severity != "" && spec.Severity != "info" {
 		payload = "[" + spec.Severity + "] " + payload
 	}
@@ -160,7 +167,7 @@ func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result,
 // schedule, one due check, and one next-wake computation with every other probe.
 func (m *Manager) ensureReportWatcher(wb ServiceWatcherBackend, sessionID string, every time.Duration, now time.Time) (WatcherState, bool) {
 	spec := config.WatcherSpec{
-		Name: config.ReportWatcherName, Type: "timer", Interval: every,
+		Name: config.ReportWatcherName, Interval: every,
 		Timeout: min(10*time.Second, every),
 		Prompt:  config.ReportPrompt,
 	}

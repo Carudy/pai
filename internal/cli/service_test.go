@@ -37,7 +37,6 @@ report_interval = "30s"
 
 [[watcher]]
 name = "tick"
-type = "timer"
 interval = "45s"
 `)
 	var out bytes.Buffer
@@ -141,7 +140,6 @@ workspace = "`+workspace+`"
 
 [[watcher]]
 name = "level"
-type = "command"
 interval = "30s"
 command = "true"
 `)
@@ -173,7 +171,6 @@ workspace = "`+workspace+`"
 
 [[watcher]]
 name = "tick"
-type = "timer"
 interval = "30s"
 `)
 	var out bytes.Buffer
@@ -236,7 +233,6 @@ report_interval = "30s"
 
 [[watcher]]
 name = "tick"
-type = "timer"
 interval = "30s"
 `)
 	var out bytes.Buffer
@@ -255,7 +251,6 @@ workspace = "`+newWorkspace+`"
 
 [[watcher]]
 name = "level"
-type = "command"
 interval = "60s"
 command = "echo 1"
 `)
@@ -361,7 +356,6 @@ report_interval = "1h"
 
 [[watcher]]
 name = "level"
-type = "command"
 interval = "60s"
 command = "echo 1"
 `

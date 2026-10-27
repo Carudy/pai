@@ -16,17 +16,16 @@ report_on_change = true
 
 [[watcher]]
 name    = "river-level"
-type    = "command"
 interval = "60s"
 timeout = "10s"
 command = "hydroctl level"
+prompt = "Report the crossing and whether the gate needs checking."
 hold_for = "2m"
 repeat_after = "15m"
 severity = "high"
 
 [[watcher]]
 name  = "heartbeat"
-type  = "timer"
 interval = "30s"
 prompt = "Report the current state in one line."
 `
@@ -46,8 +45,14 @@ func TestParseServiceManifest(t *testing.T) {
 		t.Fatalf("watchers = %+v", m.Watchers)
 	}
 	w := m.Watchers[0]
-	if w.Name != "river-level" || w.Type != "command" || w.Interval != time.Minute || w.Timeout != 10*time.Second {
+	if w.Name != "river-level" || w.Command == "" || w.Interval != time.Minute || w.Timeout != 10*time.Second {
 		t.Fatalf("watcher = %+v", w)
+	}
+	if w.Prompt != "Report the crossing and whether the gate needs checking." {
+		t.Fatalf("command prompt = %q", w.Prompt)
+	}
+	if m.Watchers[1].Command != "" {
+		t.Fatalf("a watcher without a command must be a timer: %+v", m.Watchers[1])
 	}
 	if w.HoldFor != 2*time.Minute || w.RepeatAfter != 15*time.Minute || w.Severity != "high" {
 		t.Fatalf("watcher timing = %+v", w)
@@ -94,27 +99,15 @@ func TestServiceManifestRejectsBadInput(t *testing.T) {
 		{"short interval", func(s string) string { return strings.Replace(s, `interval = "60s"`, `interval = "1s"`, 1) }, "interval must be at least"},
 		{"long interval", func(s string) string { return strings.Replace(s, `interval = "60s"`, `interval = "48h"`, 1) }, "longer than 24h"},
 		{"bad timeout", func(s string) string { return strings.Replace(s, `timeout = "10s"`, `timeout = "2m"`, 1) }, "timeout must not exceed"},
-		{"timer command", func(s string) string {
-			return strings.Replace(s, `interval = "30s"`, "interval = \"30s\"\ncommand = \"true\"", 1)
-		}, "takes no command"},
-		{"command without command", func(s string) string {
-			return strings.Replace(s, `command = "hydroctl level"`, ``, 1)
-		}, "command is required"},
-		{"bad type", func(s string) string {
-			return strings.Replace(s, `type    = "command"`, `type = "cron"`, 1)
-		}, "type must be timer or command"},
 		{"bad hold_for", func(s string) string {
 			return strings.Replace(s, `hold_for = "2m"`, `hold_for = "soon"`, 1)
 		}, "hold_for"},
 		{"bad repeat_after", func(s string) string {
 			return strings.Replace(s, `repeat_after = "15m"`, `repeat_after = "later"`, 1)
 		}, "repeat_after"},
-		{"command prompt", func(s string) string {
-			return strings.Replace(s, `severity = "high"`, "severity = \"high\"\nprompt = \"run it\"", 1)
-		}, "takes no prompt"},
 		{"bad severity", func(s string) string { return strings.Replace(s, `severity = "high"`, `severity = "urgent"`, 1) }, "unknown severity"},
 		{"duplicate watcher", func(s string) string {
-			return s + "\n[[watcher]]\nname = \"river-level\"\ntype = \"timer\"\ninterval = \"30s\"\n"
+			return s + "\n[[watcher]]\nname = \"river-level\"\ninterval = \"30s\"\n"
 		}, "duplicate watcher"},
 		{"bad name", func(s string) string { return strings.Replace(s, `name    = "river-level"`, `name = "River Level"`, 1) }, "must match"},
 	}
@@ -136,7 +129,7 @@ role = "devops"
 workspace = "/w"
 `
 	for i := 0; i < MaxWatchersPerService+1; i++ {
-		body += "\n[[watcher]]\nname = \"w" + string(rune('a'+i)) + "\"\ntype = \"timer\"\ninterval = \"30s\"\n"
+		body += "\n[[watcher]]\nname = \"w" + string(rune('a'+i)) + "\"\ninterval = \"30s\"\n"
 	}
 	_, err := ParseServiceManifest([]byte(body))
 	if err == nil || !strings.Contains(err.Error(), "at most") {
@@ -173,22 +166,23 @@ func TestRenderServiceManifestTOMLRoundTrip(t *testing.T) {
 
 func TestWatcherSpecRoundTrip(t *testing.T) {
 	w := WatcherSpec{
-		Name: "river-level", Type: "command", Command: `cat /srv/hydro/level.json`,
+		Name: "river-level", Command: `cat /srv/hydro/level.json`,
 		Interval: time.Minute, Timeout: 5 * time.Second,
 		HoldFor: 2 * time.Minute, RepeatAfter: time.Hour, Severity: "high",
+		Prompt: "Report the crossing.",
 	}
 	back, err := ParseWatcherSpec(MarshalWatcherSpec(w))
 	if err != nil {
 		t.Fatalf("ParseWatcherSpec: %v", err)
 	}
-	if back.Name != w.Name || back.Type != w.Type || back.Command != w.Command ||
+	if back.Name != w.Name || back.Command != w.Command ||
 		back.Interval != w.Interval || back.Timeout != w.Timeout || back.HoldFor != w.HoldFor ||
-		back.RepeatAfter != w.RepeatAfter || back.Severity != w.Severity {
+		back.RepeatAfter != w.RepeatAfter || back.Severity != w.Severity || back.Prompt != w.Prompt {
 		t.Fatalf("round trip = %+v, want %+v", back, w)
 	}
 
 	tick := WatcherSpec{
-		Name: "tick", Type: "timer", Interval: 5 * time.Minute,
+		Name: "tick", Interval: 5 * time.Minute,
 		Prompt: "Report the current state in one line.", Severity: "info",
 	}
 	back, err = ParseWatcherSpec(MarshalWatcherSpec(tick))

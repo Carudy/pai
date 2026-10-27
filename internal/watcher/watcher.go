@@ -61,7 +61,7 @@ func Probe(ctx context.Context, spec config.WatcherSpec, dir, prev string, now t
 	}
 	res := Result{Severity: spec.Severity, NextRun: now.Add(every)}
 
-	if spec.Type == "timer" {
+	if spec.Command == "" {
 		res.Fire = true
 		res.State = prev
 		res.Summary = spec.Prompt

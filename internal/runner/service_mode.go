@@ -715,8 +715,10 @@ func renderSituation(wake core.Wake) string {
 		}
 		switch {
 		case ev.Class == core.EventWatcher:
+			// A command probe may carry an instruction after its output, so allow
+			// more room here than the generic 512-byte event cap.
 			fmt.Fprintf(&b, "- watcher %q fired: %s\n",
-				strings.TrimPrefix(ev.Source, "watch:"), boundedPayload(ev.Payload, "triggered"))
+				strings.TrimPrefix(ev.Source, "watch:"), boundedPayloadLimit(ev.Payload, 2048, "triggered"))
 		case ev.Class == core.EventTimer && strings.HasPrefix(ev.Source, "watch:"):
 			name := strings.TrimPrefix(ev.Source, "watch:")
 			payload := boundedPayload(ev.Payload, "")
@@ -748,12 +750,16 @@ func renderSituation(wake core.Wake) string {
 // boundedPayload caps one event's text and falls back to a label when a probe
 // printed only its decision token.
 func boundedPayload(payload, fallback string) string {
+	return boundedPayloadLimit(payload, 512, fallback)
+}
+
+func boundedPayloadLimit(payload string, limit int, fallback string) string {
 	payload = strings.TrimSpace(payload)
 	if payload == "" {
 		return fallback
 	}
-	if len(payload) > 512 {
-		payload = strings.ToValidUTF8(payload[:512], "") + "…"
+	if len(payload) > limit {
+		payload = strings.ToValidUTF8(payload[:limit], "") + "…"
 	}
 	return payload
 }

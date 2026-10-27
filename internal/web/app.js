@@ -741,7 +741,7 @@ function paintService() {
     const name = text('span', label, 'watcher-name');
     name.title = spec.command ? spec.command : (spec.prompt ? spec.prompt : label);
     row.append(name);
-    const schedule = [spec.type || 'timer', spec.interval].filter(Boolean).join(' · ');
+    const schedule = [spec.command ? 'command' : 'timer', spec.interval].filter(Boolean).join(' · ');
     row.append(text('span', spec.severity && spec.severity !== 'info' ? schedule + ' · ' + spec.severity : schedule, 'watcher-meta'));
     const last = formatTimeExact(w.last_run), next = formatTimeExact(w.next_run);
     const lastNode = text('span', last || '—', 'watcher-times');
@@ -787,7 +787,7 @@ function paintService() {
 function starterManifest() {
   const role = selectedRole() || 'devops';
   const workspace = serverCwd || '/path/to/workspace';
-  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\nreport_interval = "1h"\n# report_on_change = true\n\n# [[watcher]]\n# name = "river-level"\n# type = "command"\n# interval = "60s"\n# command = "scripts/check_river"\n# hold_for = "2m"\n# repeat_after = "15m"\n# severity = "high"\n\n# [[watcher]]\n# name = "tick"\n# type = "timer"\n# interval = "5m"\n# prompt = "Report the current state in one line."\n';
+  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\nreport_interval = "1h"\n# report_on_change = true\n\n# [[watcher]]\n# name = "river-level"\n# interval = "60s"\n# command = "scripts/check_river"\n# prompt = "Say what changed and whether it needs action."\n# hold_for = "2m"\n# repeat_after = "15m"\n# severity = "high"\n\n# [[watcher]]\n# name = "tick"\n# interval = "5m"\n# prompt = "Report the current state in one line."\n';
 }
 function paintCreateTabs() {
   for (const mode of ['chat', 'service']) {

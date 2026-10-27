@@ -40,7 +40,7 @@ func readState(t *testing.T, s string) state {
 func TestTimerProbeAlwaysFires(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	res := Probe(context.Background(), config.WatcherSpec{
-		Name: "tick", Type: "timer", Interval: time.Minute,
+		Name: "tick", Interval: time.Minute,
 	}, t.TempDir(), "", now)
 
 	if !res.Fire {
@@ -60,7 +60,7 @@ func TestTimerProbeAlwaysFires(t *testing.T) {
 func TestTimerPromptIsTheSummary(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	res := Probe(context.Background(), config.WatcherSpec{
-		Name: "report", Type: "timer", Interval: time.Minute,
+		Name: "report", Interval: time.Minute,
 		Prompt: "Report the current state in one line.",
 	}, t.TempDir(), "", now)
 	if !res.Fire || res.Summary != "Report the current state in one line." {
@@ -84,7 +84,7 @@ func TestPredicateDecisions(t *testing.T) {
 		{"false", false},
 	} {
 		spec := config.WatcherSpec{
-			Name: "check", Type: "command", Command: "printf '%s\\n' " + tc.output,
+			Name: "check", Command: "printf '%s\\n' " + tc.output,
 			Interval: time.Minute, Timeout: 5 * time.Second,
 		}
 		res := Probe(ctx, spec, t.TempDir(), "", now)
@@ -100,7 +100,7 @@ func TestPredicateDecisions(t *testing.T) {
 func TestSummaryFollowsTheDecision(t *testing.T) {
 	skipOnWindows(t)
 	spec := config.WatcherSpec{
-		Name: "river", Type: "command",
+		Name:     "river",
 		Command:  `printf '1 mode=flood level=3.7\nextra detail\n'`,
 		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
@@ -119,7 +119,7 @@ func TestSummaryFollowsTheDecision(t *testing.T) {
 func TestBareDecisionHasAFallbackSummary(t *testing.T) {
 	skipOnWindows(t)
 	spec := config.WatcherSpec{
-		Name: "river", Type: "command", Command: "echo 1",
+		Name: "river", Command: "echo 1",
 		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	res := Probe(context.Background(), spec, t.TempDir(), "", time.Unix(1_700_000_000, 0))
@@ -132,7 +132,7 @@ func TestHoldForDebounces(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	spec := config.WatcherSpec{
-		Name: "river", Type: "command", Command: "cat value.txt",
+		Name: "river", Command: "cat value.txt",
 		Interval: time.Minute, Timeout: 5 * time.Second, HoldFor: 30 * time.Second,
 	}
 	ctx := context.Background()
@@ -159,7 +159,7 @@ func TestOncePerEpisodeByDefault(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	spec := config.WatcherSpec{
-		Name: "river", Type: "command", Command: "cat value.txt",
+		Name: "river", Command: "cat value.txt",
 		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	ctx := context.Background()
@@ -194,7 +194,7 @@ func TestRepeatAfterReAlerts(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	spec := config.WatcherSpec{
-		Name: "river", Type: "command", Command: "cat value.txt",
+		Name: "river", Command: "cat value.txt",
 		Interval: time.Minute, Timeout: 5 * time.Second, RepeatAfter: time.Minute,
 	}
 	ctx := context.Background()
@@ -219,7 +219,7 @@ func TestProbeFailureFiresOncePerDistinctError(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	spec := config.WatcherSpec{
-		Name: "broken", Type: "command", Command: "cat err.txt; exit 1",
+		Name: "broken", Command: "cat err.txt; exit 1",
 		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	ctx := context.Background()
@@ -253,7 +253,7 @@ func TestInvalidDecisionIsAProbeFailure(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	for _, command := range []string{"echo maybe", "true", "printf '\\n\\n'"} {
 		spec := config.WatcherSpec{
-			Name: "bad", Type: "command", Command: command,
+			Name: "bad", Command: command,
 			Interval: time.Minute, Timeout: 5 * time.Second,
 		}
 		res := Probe(context.Background(), spec, t.TempDir(), "", now)
@@ -269,7 +269,7 @@ func TestInvalidDecisionIsAProbeFailure(t *testing.T) {
 func TestNonzeroExitIsAProbeFailure(t *testing.T) {
 	skipOnWindows(t)
 	spec := config.WatcherSpec{
-		Name: "bad", Type: "command", Command: "echo 1; exit 3",
+		Name: "bad", Command: "echo 1; exit 3",
 		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	res := Probe(context.Background(), spec, t.TempDir(), "", time.Unix(1_700_000_000, 0))

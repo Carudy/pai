@@ -1330,8 +1330,8 @@ async function verifyServiceMode() {
     next_wake: '2026-10-27T12:00:00Z', status: 'level 3.8 m, above the warning band',
     spec: '{"goal":"watch the river","role":"devops"}',
     watchers: [
-      {name: '_report', enabled: true, spec: '{"type":"timer","interval":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
-      {name: 'river', enabled: true, spec: '{"type":"command","interval":"60s"}', last_state: '{"since":1}', last_error: 'courier failed'},
+      {name: '_report', enabled: true, spec: '{"interval":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
+      {name: 'river', enabled: true, spec: '{"command":"cat state.json","interval":"60s"}', last_state: '{"since":1}', last_error: 'courier failed'},
     ],
   };
   p.run("selected='river'; serviceView=" + JSON.stringify(view) + '; paintService();');

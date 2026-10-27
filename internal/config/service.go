@@ -30,8 +30,8 @@ const (
 	// maxCommand bounds a probe's command text. The command is stored in the
 	// session row and shown in approval and inspection output.
 	maxCommand = 4 << 10
-	// maxPrompt bounds a timer's instruction, which is injected into the wake
-	// on every tick.
+	// maxPrompt bounds a watcher's instruction, which is injected into the wake
+	// (the timer's wake text, or guidance after a command probe's output).
 	maxPrompt = 2 << 10
 )
 
@@ -54,9 +54,8 @@ type ServiceManifest struct {
 // Python, or jq is already on the host.
 type WatcherSpec struct {
 	Name        string
-	Type        string // timer | command
-	Command     string
-	Prompt      string // timer only: what the model should do on each tick
+	Command     string // empty = timer; present = a predicate probe
+	Prompt      string // wake context: a timer's instruction, or extra guidance for a command probe
 	Interval    time.Duration
 	Timeout     time.Duration
 	HoldFor     time.Duration // the predicate must hold this long before firing
@@ -79,7 +78,6 @@ type serviceSection struct {
 
 type watchSection struct {
 	Name        string `toml:"name"`
-	Type        string `toml:"type"`
 	Interval    string `toml:"interval"`
 	Timeout     string `toml:"timeout,omitempty"`
 	Command     string `toml:"command,omitempty"`
@@ -129,7 +127,7 @@ func RenderServiceManifestTOML(m *ServiceManifest) (string, error) {
 	}}
 	for _, w := range m.Watchers {
 		raw.Watchers = append(raw.Watchers, watchSection{
-			Name: w.Name, Type: w.Type, Interval: durationString(w.Interval),
+			Name: w.Name, Interval: durationString(w.Interval),
 			Timeout: durationString(w.Timeout), Command: w.Command, Prompt: w.Prompt,
 			HoldFor: durationString(w.HoldFor), RepeatAfter: durationString(w.RepeatAfter),
 			Severity: w.Severity,
@@ -204,7 +202,7 @@ func ParseWatcherSpec(spec string) (WatcherSpec, error) {
 }
 
 func watcherFromJSON(raw watcherJSON) (WatcherSpec, error) {
-	w := WatcherSpec{Name: raw.Name, Type: raw.Type, Command: raw.Command, Prompt: raw.Prompt, Severity: raw.Severity}
+	w := WatcherSpec{Name: raw.Name, Command: raw.Command, Prompt: raw.Prompt, Severity: raw.Severity}
 	var err error
 	if w.Interval, err = parseDuration(raw.Interval); err != nil {
 		return WatcherSpec{}, fmt.Errorf("interval: %w", err)
@@ -270,7 +268,6 @@ var watcherNameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,40}$`)
 func normalizeWatcher(raw watchSection) (WatcherSpec, error) {
 	w := WatcherSpec{
 		Name:     strings.TrimSpace(raw.Name),
-		Type:     strings.ToLower(strings.TrimSpace(raw.Type)),
 		Command:  strings.TrimSpace(raw.Command),
 		Prompt:   strings.TrimSpace(raw.Prompt),
 		Severity: strings.ToLower(strings.TrimSpace(raw.Severity)),
@@ -278,8 +275,8 @@ func normalizeWatcher(raw watchSection) (WatcherSpec, error) {
 	if !watcherNameRe.MatchString(w.Name) {
 		return WatcherSpec{}, fmt.Errorf("watcher name %q must match %s", w.Name, watcherNameRe)
 	}
-	if w.Type != "timer" && w.Type != "command" {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: type must be timer or command", w.Name)
+	if len(w.Prompt) > maxPrompt {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: prompt is longer than 2 KiB", w.Name)
 	}
 	var err error
 	if w.Interval, err = parseDuration(raw.Interval); err != nil {
@@ -314,20 +311,10 @@ func normalizeWatcher(raw watchSection) (WatcherSpec, error) {
 	default:
 		return WatcherSpec{}, fmt.Errorf("watcher %q: unknown severity %q", w.Name, w.Severity)
 	}
-	if w.Type == "timer" {
-		if w.Command != "" {
-			return WatcherSpec{}, fmt.Errorf("watcher %q: a timer takes no command", w.Name)
-		}
-		if len(w.Prompt) > maxPrompt {
-			return WatcherSpec{}, fmt.Errorf("watcher %q: prompt is longer than 2 KiB", w.Name)
-		}
-		return w, nil
-	}
-	if w.Prompt != "" {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: a command watcher takes no prompt; its output is the summary", w.Name)
-	}
 	if w.Command == "" {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: command is required", w.Name)
+		// No command means a timer: it always fires, and its prompt is the wake
+		// context (empty falls back to "scheduled tick").
+		return w, nil
 	}
 	if len(w.Command) > maxCommand {
 		return WatcherSpec{}, fmt.Errorf("watcher %q: command is longer than 4 KiB", w.Name)
@@ -361,7 +348,6 @@ type manifestJSON struct {
 
 type watcherJSON struct {
 	Name        string `json:"name"`
-	Type        string `json:"type"`
 	Interval    string `json:"interval"`
 	Timeout     string `json:"timeout,omitempty"`
 	Command     string `json:"command,omitempty"`
@@ -394,7 +380,7 @@ func MarshalWatcherSpec(w WatcherSpec) string {
 
 func watcherJSONOf(w WatcherSpec) watcherJSON {
 	return watcherJSON{
-		Name: w.Name, Type: w.Type, Interval: durationString(w.Interval),
+		Name: w.Name, Interval: durationString(w.Interval),
 		Timeout: durationString(w.Timeout), Command: w.Command, Prompt: w.Prompt,
 		HoldFor: durationString(w.HoldFor), RepeatAfter: durationString(w.RepeatAfter),
 		Severity: w.Severity,
