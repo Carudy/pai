@@ -22,9 +22,9 @@ func serveDiagnosticLine(d runner.Diagnostic) string {
 
 	switch d.Kind {
 	case "watcher":
-		b.WriteString("watcher ")
+		b.WriteString("watcher <")
 		b.WriteString(serveActivityText(d.Subject))
-		b.WriteString(": ")
+		b.WriteString(">: ")
 		if d.Outcome == "fired" || d.Outcome == "quiet" || d.Outcome == "held" {
 			b.WriteString("result ")
 			b.WriteString(strconv.Quote(serveActivityText(d.Detail)))
@@ -49,7 +49,15 @@ func serveDiagnosticLine(d runner.Diagnostic) string {
 		b.WriteString(serveActivityText(d.Kind))
 		if d.Subject != "" {
 			b.WriteString(" ")
-			b.WriteString(serveActivityText(d.Subject))
+			// A service fact may name a watcher; angle brackets keep it apart from
+			// the surrounding words without looking like a quoted value.
+			if d.Kind == "service" {
+				b.WriteString("<")
+				b.WriteString(serveActivityText(d.Subject))
+				b.WriteString(">")
+			} else {
+				b.WriteString(serveActivityText(d.Subject))
+			}
 		}
 		if d.Outcome != "" {
 			b.WriteString(" ")

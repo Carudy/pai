@@ -19,27 +19,27 @@ func TestServeDiagnosticLines(t *testing.T) {
 		{
 			"fired",
 			runner.Diagnostic{Time: at, Session: "demo", Kind: "watcher", Subject: "level", Outcome: "fired", Detail: "1 level=6.4", Next: next},
-			"2026-10-27T14:30:00 [demo] watcher level: result \"1 level=6.4\", triggered, next 14:30:30\n",
+			"2026-10-27T14:30:00 [demo] watcher <level>: result \"1 level=6.4\", triggered, next 14:30:30\n",
 		},
 		{
 			"quiet",
 			runner.Diagnostic{Time: at, Session: "demo", Kind: "watcher", Subject: "level", Outcome: "quiet", Detail: "0", Next: next},
-			"2026-10-27T14:30:00 [demo] watcher level: result \"0\", not triggered, next 14:30:30\n",
+			"2026-10-27T14:30:00 [demo] watcher <level>: result \"0\", not triggered, next 14:30:30\n",
 		},
 		{
 			"held",
 			runner.Diagnostic{Time: at, Session: "demo", Kind: "watcher", Subject: "level", Outcome: "held", Detail: "1 level=6.4", Reason: "already reported this episode", Next: next},
-			"2026-10-27T14:30:00 [demo] watcher level: result \"1 level=6.4\", not triggered (already reported this episode), next 14:30:30\n",
+			"2026-10-27T14:30:00 [demo] watcher <level>: result \"1 level=6.4\", not triggered (already reported this episode), next 14:30:30\n",
 		},
 		{
 			"awaiting approval",
 			runner.Diagnostic{Time: at, Session: "demo", Kind: "watcher", Subject: "gate", Outcome: "awaiting approval", Detail: "python3 gate.py", Next: next},
-			"2026-10-27T14:30:00 [demo] watcher gate: awaiting approval: python3 gate.py, next 14:30:30\n",
+			"2026-10-27T14:30:00 [demo] watcher <gate>: awaiting approval: python3 gate.py, next 14:30:30\n",
 		},
 		{
 			"failed",
 			runner.Diagnostic{Time: at, Session: "demo", Kind: "watcher", Subject: "gate", Outcome: "failed", Detail: "exit 3: boom"},
-			"2026-10-27T14:30:00 [demo] watcher gate: failed: exit 3: boom\n",
+			"2026-10-27T14:30:00 [demo] watcher <gate>: failed: exit 3: boom\n",
 		},
 		{
 			"skipped",
@@ -64,7 +64,7 @@ func TestServeDiagnosticLines(t *testing.T) {
 		{
 			"service grant",
 			runner.Diagnostic{Time: at, Session: "demo", Kind: "service", Subject: "level", Outcome: "granted", Detail: "trusted command: echo 0"},
-			"2026-10-27T14:30:00 [demo] service level granted: trusted command: echo 0\n",
+			"2026-10-27T14:30:00 [demo] service <level> granted: trusted command: echo 0\n",
 		},
 	}
 	for _, tc := range cases {

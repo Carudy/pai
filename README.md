@@ -852,10 +852,10 @@ host-side fact, including probes that did **not** fire and durably queued work.
 It is independent of `--activity-log`, so either or both can be on.
 
 ```text
-2026-10-27T14:30:00 [river] watcher level: result "1 level=6.4 mode=danger", triggered, next 14:30:30
-2026-10-27T14:30:30 [river] watcher level: result "1 level=6.4 mode=danger", not triggered (already reported this episode), next 14:31:00
-2026-10-27T14:31:00 [river] watcher gate: awaiting approval: python3 gate.py, next 14:31:30
-2026-10-27T14:31:00 [river] watcher gate: failed: exit 3: boom, next 14:32:00
+2026-10-27T14:30:00 [river] watcher <level>: result "1 level=6.4 mode=danger", triggered, next 14:30:30
+2026-10-27T14:30:30 [river] watcher <level>: result "1 level=6.4 mode=danger", not triggered (already reported this episode), next 14:31:00
+2026-10-27T14:31:00 [river] watcher <gate>: awaiting approval: python3 gate.py, next 14:31:30
+2026-10-27T14:31:00 [river] watcher <gate>: failed: exit 3: boom, next 14:32:00
 2026-10-27T14:31:00 [river] activation skipped: nothing substantive to report, next 14:31:30
 2026-10-27T14:31:00 [tick] activation start: timer: 1 event(s)
 2026-10-27T14:31:02 [tick] model deepseek:flash usage: in 2921, out 121 (cached 2816)

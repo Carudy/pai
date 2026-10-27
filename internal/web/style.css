@@ -20,6 +20,8 @@
     --accent: #5266d9;
     --green: #18794e;
     --red: #c13e4c;
+    /* A reported status is good news, not an accent: a hint of green. */
+    --inform-bg: #edf6f0;
     --shadow: 0 8px 30px #20283b08;
     --link: #247b80;
     --link-bg: #e2f2f1;
@@ -875,15 +877,15 @@ header p {
 }
 
 /* A service's inform report is the durable artifact of an activation: mark it
-   with a quiet accent rail and a report glyph, not a full attention card. A
+   with a quiet green rail and a report glyph, not a full attention card. A
    yield says "nothing to do", so it reads as a paused, dashed card. */
 .turn.assistant.action-inform {
-    background: var(--soft);
-    border-left: 3px solid var(--accent);
+    background: var(--inform-bg);
+    border-left: 3px solid var(--green);
 }
 
 .turn.assistant.action-inform .turn-heading {
-    color: var(--accent);
+    color: var(--green);
 }
 
 .turn.assistant.action-yield {
@@ -2160,6 +2162,7 @@ header p {
     --accent: #9aa7ff;
     --green: #7bdcaa;
     --red: #ff97a3;
+    --inform-bg: #1c2b24;
     --link: #8cd4d2;
     --link-bg: #1d3033;
     --link-ink: #b2e9e4;
