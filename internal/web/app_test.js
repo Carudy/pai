@@ -379,6 +379,17 @@ for (const [action, heading] of [['inform', '📢 PAI'], ['yield', '⏸️ PAI']
   const title = descendants(card).find(n => /\bturn-heading\b/.test(n.className));
   assert.equal(title.textContent, heading, action + ' heading names the action');
 }
+// The runtime trims an over-run for replay, but the stored turn still carries it.
+// A model that writes a second action must not turn the card into raw JSON; the
+// first accepted action still names it.
+wiring.run("$('history').replaceChildren(); renderTurns(" + JSON.stringify([
+  {Role:'assistant', Kind:'output', Content:'{"action":"inform","payload":"level 4.4"}{"action":"inform","payload":"again"}'},
+]) + ")");
+const overrun = wiring.get('history').children[0];
+assert.ok(overrun.classes.has('action-inform'), 'an over-run report keeps its card class');
+assert.ok(!descendants(overrun).some(n => n.className === 'prose'), 'protocol JSON is not printed for an over-run report');
+assert.ok(descendants(overrun).some(n => n.className === 'markdown'), 'the accepted payload renders as prose');
+assert.match(overrun.textContent, /Report/, 'the action is labelled');
 // A tool payload is a command, not prose: it never becomes Markdown.
 wiring.run("$('history').replaceChildren(); renderTurns(" + JSON.stringify([{Role:'assistant', Content:JSON.stringify({action:'tool', toolname:'execute', payload:'echo **hi**'})}]) + ")");
 assert.ok(!descendants(wiring.get('history')).some(n => n.className === 'markdown'), 'a tool payload stays a command');

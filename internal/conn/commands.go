@@ -146,6 +146,16 @@ func (a *attach) replayAnswer(content string) {
 		a.obs.Ask(clip(resp.GetPayload(), 2000))
 	case chat.ActionTerminate:
 		a.obs.Terminate(clip(resp.GetPayload(), 1000))
+	case chat.ActionInform:
+		// A live report is emitted as output, so the replay uses the same channel:
+		// dropping it would erase a service's status history from `pai conn`.
+		a.obs.Output(clip(resp.GetPayload(), 4000))
+	case chat.ActionYield:
+		// Live yield shows only its reason; do the same instead of inventing a
+		// line for "nothing to do".
+		if resp.Reason != "" {
+			a.obs.Reason(resp.Reason)
+		}
 	}
 }
 

@@ -80,7 +80,7 @@ func TestRunServiceAcksWakesAndInjectsSituation(t *testing.T) {
 	if len(inbox.results) != 3 {
 		t.Fatalf("acks = %v, want 3", inbox.results)
 	}
-	wantOutcomes := []string{"done", "yield", "yield"}
+	wantOutcomes := []string{"done", "yield", "inform"}
 	for i, ack := range inbox.results {
 		if ack.Err != nil {
 			t.Fatalf("ack %d = %v, want nil", i, ack.Err)

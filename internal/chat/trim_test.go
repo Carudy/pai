@@ -94,6 +94,11 @@ func TestDescribeTrim(t *testing.T) {
 	if got := DescribeTrim(actionA + "\nx"); got != "" {
 		t.Errorf("a stray character should not be reported: %q", got)
 	}
+	// A short second action is still a second action, so it must be surfaced even
+	// though it is well under the byte threshold.
+	if got := DescribeTrim(actionA + actionB); !strings.Contains(got, "1 further action(s)") {
+		t.Errorf("a small second action was not reported: %q", got)
+	}
 	if got := DescribeTrim(actionA); got != "" {
 		t.Errorf("a clean response should not be reported: %q", got)
 	}

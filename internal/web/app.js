@@ -321,6 +321,11 @@ function logDetails(node, title, value, open = false) {
   // arrives, instead of waiting for the whole conversation to be repainted.
   return details.lastElementChild;
 }
+// The protocol's actions, mirroring chat.knownActions. A response wrapped in prose
+// or followed by more output is accepted only when a candidate names one of these,
+// so a nested payload object cannot be mistaken for the response. Service-only
+// actions belong here too: without them a report rendered as raw protocol JSON.
+const RESPONSE_ACTIONS = ['tool', 'ask', 'done', 'terminate', 'inform', 'yield'];
 function parsedResponse(content) {
   try { const value = JSON.parse(content); if (value && typeof value.action === 'string') return value; } catch (_) {}
   // Accepted model responses can be wrapped in prose or a code fence.
@@ -331,7 +336,7 @@ function parsedResponse(content) {
       if (quoted) { if (escaped) escaped = false; else if (c === '\\') escaped = true; else if (c === '"') quoted = false; }
       else if (c === '"') quoted = true;
       else if (c === '{') depth++;
-      else if (c === '}' && --depth === 0) { try { const value = JSON.parse(content.slice(start, i + 1)); if (['tool','done','ask','terminate'].includes(value.action)) return value; } catch (_) {} break; }
+      else if (c === '}' && --depth === 0) { try { const value = JSON.parse(content.slice(start, i + 1)); if (RESPONSE_ACTIONS.includes(value.action)) return value; } catch (_) {} break; }
     }
   }
   return null;
@@ -1068,7 +1073,7 @@ function rawDetails(node, value, limit = Infinity) {
 }
 function response(node, data) {
   const tool = data.action === 'tool';
-  node.append(text('div', (tool ? (icons[data.toolname] || '📃') + ' ' + (data.toolname || 'Tool') : ({done:'✅ Complete',ask:'🙋 Question',terminate:'🤚 Stopped'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
+  node.append(text('div', (tool ? (icons[data.toolname] || '📃') + ' ' + (data.toolname || 'Tool') : ({done:'✅ Complete',ask:'🙋 Question',terminate:'🤚 Stopped',inform:'Report',yield:'Yield'}[data.action] || data.action)), data.action === 'done' ? 'badge complete' : 'badge'));
   if (data.reason) {
     // The reason is model prose like the payload, so it gets the same sanitized
     // Markdown rendering (and the same literal fallback) rather than plain text.

@@ -124,6 +124,11 @@ func recordUserInput(rt *Runtime, conv *conversation, events []core.Event, deliv
 // error even when the model had reached an outcome.
 func wakeResult(res activationResult, cause error) core.WakeResult {
 	out, status := res.outcome.String(), res.status
+	// inform and yield both stop the activation, but they are different facts to
+	// an operator: one published a report, the other had nothing to do.
+	if res.action == string(chat.ActionInform) {
+		out = res.action
+	}
 	if res.interrupted {
 		out = outcomeYield.String()
 	}

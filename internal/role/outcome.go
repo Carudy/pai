@@ -42,9 +42,12 @@ func (o outcome) String() string {
 // interrupted by the user (Ctrl+C / abort). An interrupt is not a service
 // outcome: chat waits for the next instruction, service nacks and sleeps.
 // Status is the terminal action's payload, bounded for a session view; the full
-// text is already in the transcript.
+// text is already in the transcript. Action names the model's terminal step when
+// the outcome is shared (inform and yield both stop a service activation), so a
+// log can say which one it was.
 type activationResult struct {
 	outcome     outcome
 	status      string
+	action      string
 	interrupted bool
 }

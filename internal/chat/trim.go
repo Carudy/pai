@@ -74,10 +74,16 @@ func TrimHistory(history []provider.Message) []provider.Message {
 // dropped.
 func DescribeTrim(content string) string {
 	kept, dropped := TrimToAction(content)
-	if dropped < trimNoticeBytes {
+	if dropped == 0 {
 		return ""
 	}
 	further := len(jsonCandidates(content[len(kept):]))
+	// A second complete action is a protocol violation worth a line even when it is
+	// short: the model is imitating the transcript, not trailing off. Plain stray
+	// text only matters once it is more than a typo.
+	if further == 0 && dropped < trimNoticeBytes {
+		return ""
+	}
 	return fmt.Sprintf("context: dropped %d bytes the model wrote past its action (%d further action(s) imitated); only the accepted action is replayed",
 		dropped, further)
 }

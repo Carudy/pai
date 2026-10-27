@@ -69,10 +69,11 @@ func (s *recorder) handler() http.Handler {
 				`{"seq":1,"role":"user","kind":"input","original":"first","sent":"first","state":"sent"},`+
 				`{"seq":2,"role":"assistant","kind":"output","original":"second","sent":"","state":"elided","essential":true}]}`)
 		case "/api/history":
-			fmt.Fprint(w, `{"name":"demo","role":"default","model":"a:one","cwd":"/w","total":3,"turns":[`+
+			fmt.Fprint(w, `{"name":"demo","role":"default","model":"a:one","cwd":"/w","total":4,"turns":[`+
 				`{"Role":"user","Kind":"input","Content":"earlier question","Seq":1,"Essential":true},`+
 				`{"Role":"assistant","Kind":"output","Content":"{\"action\":\"tool\",\"toolname\":\"read\",\"payload\":{\"path\":\"x\"},\"reason\":\"\"}","Seq":2},`+
-				`{"Role":"assistant","Kind":"output","Content":"{\"action\":\"done\",\"payload\":\"the answer\",\"reason\":\"done\"}","Seq":3}]}`)
+				`{"Role":"assistant","Kind":"output","Content":"{\"action\":\"inform\",\"payload\":\"level 3.8 m\",\"reason\":\"\"}","Seq":3},`+
+				`{"Role":"assistant","Kind":"output","Content":"{\"action\":\"done\",\"payload\":\"the answer\",\"reason\":\"done\"}","Seq":4}]}`)
 		default:
 			fmt.Fprint(w, `{"ok":true}`)
 		}
@@ -341,7 +342,7 @@ func TestRunReplaysAnIdleSession(t *testing.T) {
 	if !strings.Contains(out.String(), "attached to demo") {
 		t.Errorf("banner missing: %s", out.String())
 	}
-	wantCalls := "user:★ earlier question,done:the answer"
+	wantCalls := "user:★ earlier question,output:level 3.8 m,done:the answer"
 	if got := strings.Join(obs.calls, ","); got != wantCalls {
 		t.Errorf("replay calls = %q, want %q\ntool calls and plain instructions are noise here", got, wantCalls)
 	}
@@ -375,7 +376,7 @@ func TestRunReplaysAnAwaitingWorker(t *testing.T) {
 	}
 	// Nothing is in flight, so the stored transcript is shown even though a
 	// worker exists.
-	if got := strings.Join(obs.calls, ","); got != "user:★ earlier question,done:the answer" {
+	if got := strings.Join(obs.calls, ","); got != "user:★ earlier question,output:level 3.8 m,done:the answer" {
 		t.Fatalf("replay calls = %q", got)
 	}
 }

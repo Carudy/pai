@@ -231,7 +231,7 @@ func activate(ctx context.Context, cfg *config.UserConfig, rt *Runtime, conv *co
 			if res.history != nil {
 				conv.history = res.history
 			}
-			return activationResult{outcome: res.outcome, status: res.status}, nil
+			return activationResult{outcome: res.outcome, status: res.status, action: res.action}, nil
 		}
 	}
 }
@@ -289,6 +289,7 @@ func steeringMessage(msg string) string {
 type stepResult struct {
 	outcome outcome
 	status  string
+	action  string // the model's action when it names the terminal step (inform vs yield)
 	history []provider.Message
 }
 
@@ -378,30 +379,30 @@ func step(
 	switch resp.Action {
 	case chat.ActionDone:
 		rt.Observer.Done(resp.GetPayload())
-		return stepResult{outcome: outcomeDone, status: clampStatus(resp.GetPayload()), history: history}, nil
+		return stepResult{outcome: outcomeDone, status: clampStatus(resp.GetPayload()), action: string(resp.Action), history: history}, nil
 
 	case chat.ActionTerminate:
 		rt.Observer.Terminate(resp.GetPayload())
-		return stepResult{outcome: outcomeTerminate, status: clampStatus(resp.GetPayload()), history: history}, nil
+		return stepResult{outcome: outcomeTerminate, status: clampStatus(resp.GetPayload()), action: string(resp.Action), history: history}, nil
 
 	case chat.ActionAsk:
 		// The question is shown and recorded like any other reply; control returns
 		// to the user's normal input path instead of a separate blocking prompt. The
 		// answer arrives as the next instruction, which the model reads in history.
 		rt.Observer.Ask(resp.GetPayload())
-		return stepResult{outcome: outcomeAsk, status: clampStatus(resp.GetPayload()), history: history}, nil
+		return stepResult{outcome: outcomeAsk, status: clampStatus(resp.GetPayload()), action: string(resp.Action), history: history}, nil
 
 	case chat.ActionInform:
 		// A report is the service's status document: the driver persists it and the
 		// session view shows it until the next report.
 		rt.Observer.Output(resp.GetPayload())
-		return stepResult{outcome: outcomeYield, status: clampStatus(resp.GetPayload()), history: history}, nil
+		return stepResult{outcome: outcomeYield, status: clampStatus(resp.GetPayload()), action: string(resp.Action), history: history}, nil
 
 	case chat.ActionYield:
 		// Nothing more to do this episode. The reason was shown above unless it is
 		// empty; the optional payload carries host hints (until/on) that the
 		// scheduler will interpret in a later phase.
-		return stepResult{outcome: outcomeYield, status: clampStatus(resp.GetPayload()), history: history}, nil
+		return stepResult{outcome: outcomeYield, status: clampStatus(resp.GetPayload()), action: string(resp.Action), history: history}, nil
 
 	case chat.ActionTool:
 		rt.Logger.Debugf("toolname: %s\n", resp.ToolName)
