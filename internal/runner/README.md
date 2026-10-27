@@ -20,12 +20,18 @@ the next one. `ServiceInbox` is the worker side: the host pushes one wake,
 `role.RunService` blocks in `Next`, and `Done` acknowledges it.
 
 The manager is the production host. `StartServices` registers persisted services,
-`Activate` prepares or reuses the resident worker, and `Send` on a service
-becomes a durable `EventUser` instead of a chat task. A service worker prepares
+skipping one whose stored state is `stopped` (stopping is durable), `Activate`
+prepares or reuses the resident worker, and `Send` on a service
+becomes a durable `EventUser` instead of a chat task; a stopped service refuses
+it with `ErrStopped`. `StopService` unregisters the service, cancels a live
+activation (a parked worker included), and persists `stopped`; `StartService`
+registers it due now. A service worker prepares
 once, calls `role.RunService`, and stays `suspended` between wakes; `busy` marks
-an activation. `ServiceEventBackend` is the optional durable port for append,
-ack/nack, due events, and the next wake; a backend without it runs an ephemeral
-service.
+an activation. The stored manifest's `goal` is installed with
+`chat.RolePrompt.SetStanding`, so it sits in the prompt head on every wake and
+survives compaction. `ServiceEventBackend` is the optional durable port for
+append, ack/nack, due events, and the next wake; a backend without it runs an
+ephemeral service.
 
 ## Integration contract
 
@@ -57,7 +63,7 @@ history, err := m.History(name, offset, limit)
 - Capacity caps **live** workers, including busy workers and pending approvals/questions. Idle (`awaiting`) workers are reused, or evicted and joined when a different session needs the slot. Full busy capacity returns `ErrCapacity`; there is no unbounded cross-session wait queue.
 - Task and steering queues each hold 32 messages. `Send` never answers a model question. `Steer` is consumed at a safe point; while idle it becomes a normal instruction. `/new` and `/rename` are rejected, including case/whitespace variants; steering rejects slash commands altogether.
 - `Cancel` interrupts the active role step and aborts its pending prompt. It does not abort idle instruction input or discard queued tasks. Cancel during preparation shuts that worker down. Worker lifetime follows the application context, not HTTP request contexts.
-- `SetModel`, `SetRole`, `SetWorkingDir`, `Rename`, and `Rewind` change persisted session state. Each requires an idle session (a busy/starting worker, queued work, or a pending prompt returns `ErrBusy`) and retires the worker under a reservation, so the next `Send` re-prepares against the new settings and history; `Rename` also drops the old entry. They are optional capabilities: each returns an error when the backend does not implement its interface.
+- `SetModel`, `SetRole`, `SetWorkingDir`, `Rename`, and `Rewind` change persisted session state. Each requires an idle session (a busy/starting worker, queued work, or a pending prompt returns `ErrBusy`) and retires the worker under a reservation, so the next `Send` re-prepares against the new settings and history; `Rename` also drops the old entry. A resident service counts as idle while it is `suspended` or `parked`; `SetWorkingDir` is refused for one, because the manifest owns its workspace. They are optional capabilities: each returns an error when the backend does not implement its interface.
 - `SetWorkingDir` requires a nonblank existing directory, normalized to an absolute path. It changes only the saved workspace, not files or process cwd; the next runtime rebuilds project instructions and tools against that workspace. Successful changes also clear retained failure diagnostics, so an invalid old workspace can be repaired without starting a runtime.
 - `Reply` requires the pending prompt's string ID. `choice` answers the confirmation (`once`/`deny`, plus `session`/`always` when the confirmation carries non-empty `untrusted` names); `text` is accepted but unused. Stale/duplicate replies return `ErrPrompt`. Prompt IDs are unique for the manager lifetime.
 - `SetTrustAll` turns a session's auto-approval on or off: while on, every command and file-change confirmation is granted without emitting a prompt, and enabling it also resolves one already pending. The flag is per-session and in-memory — never persisted, cleared on rename/delete — and lives on the manager so it outlives the worker rebuilt for each instruction; `TrustAll` reads it. It needs no backend interface.

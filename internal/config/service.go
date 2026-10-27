@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -20,74 +21,72 @@ const (
 	// MaxWatchersPerService bounds the probe pool a single service can create.
 	MaxWatchersPerService = 8
 	// ReportWatcherName is the reserved timer watcher that carries
-	// service.report_every. Manifest watcher names must start with a letter, so a
-	// user cannot collide with it.
+	// service.report_interval. Manifest watcher names must start with a letter,
+	// so a user cannot collide with it.
 	ReportWatcherName = "_report"
+	// ReportPrompt is the reserved heartbeat's instruction: it is what the model
+	// reads when the report interval comes due.
+	ReportPrompt = "Report what changed since the last report. If nothing changed, yield."
+	// maxCommand bounds a probe's command text. The command is stored in the
+	// session row and shown in approval and inspection output.
+	maxCommand = 4 << 10
+	// maxPrompt bounds a timer's instruction, which is injected into the wake
+	// on every tick.
+	maxPrompt = 2 << 10
 )
 
 // ServiceManifest is one parsed, normalized manifest.
 type ServiceManifest struct {
-	Goal        string
-	Role        string
-	Workspace   string
-	ReportEvery time.Duration
-	OnChange    bool
-	Watchers    []WatcherSpec
+	Goal           string
+	Role           string
+	Workspace      string
+	ReportInterval time.Duration
+	ReportOnChange bool
+	Watchers       []WatcherSpec
 	// JSON is the canonical stored representation.
 	JSON string
 }
 
-// WatcherSpec is one host-side probe.
+// WatcherSpec is one host-side check. A command watcher is a predicate, not a
+// sensor: it prints 1/0 (or true/false) and everything after the decision token
+// is the summary handed to the model. Keeping the decision in the command means
+// the manifest owns no query language, and the probe can use whichever shell,
+// Python, or jq is already on the host.
 type WatcherSpec struct {
-	Name     string
-	Kind     string // timer | command
-	Cmd      string
-	Every    time.Duration
-	Timeout  time.Duration
-	Debounce time.Duration // the manifest's "for"
-	Cooldown time.Duration
-	Severity string
-	Trigger  *WatchTrigger
-}
-
-// WatchTrigger is the edge condition a command probe evaluates.
-type WatchTrigger struct {
-	Kind  string // json_number | json_string | json_bool | changed
-	Field string
-	Op    string
-	Value any
+	Name        string
+	Type        string // timer | command
+	Command     string
+	Prompt      string // timer only: what the model should do on each tick
+	Interval    time.Duration
+	Timeout     time.Duration
+	HoldFor     time.Duration // the predicate must hold this long before firing
+	RepeatAfter time.Duration // re-alert interval while it keeps holding; 0 = once per episode
+	Severity    string
 }
 
 type serviceFile struct {
-	Service serviceSection `toml:"service"`
-	Watch   []watchSection `toml:"watch"`
+	Service  serviceSection `toml:"service"`
+	Watchers []watchSection `toml:"watcher"`
 }
 
 type serviceSection struct {
-	Goal        string `toml:"goal"`
-	Role        string `toml:"role"`
-	Workspace   string `toml:"workspace"`
-	ReportEvery string `toml:"report_every"`
-	OnChange    bool   `toml:"on_change"`
+	Goal           string `toml:"goal"`
+	Role           string `toml:"role"`
+	Workspace      string `toml:"workspace"`
+	ReportInterval string `toml:"report_interval,omitempty"`
+	ReportOnChange bool   `toml:"report_on_change,omitempty"`
 }
 
 type watchSection struct {
-	Name     string          `toml:"name"`
-	Kind     string          `toml:"kind"`
-	Every    string          `toml:"every"`
-	Timeout  string          `toml:"timeout"`
-	Cmd      string          `toml:"cmd"`
-	For      string          `toml:"for"`
-	Cooldown string          `toml:"cooldown"`
-	Severity string          `toml:"severity"`
-	Trigger  *triggerSection `toml:"trigger"`
-}
-
-type triggerSection struct {
-	Kind  string `toml:"kind"`
-	Field string `toml:"field"`
-	Op    string `toml:"op"`
-	Value any    `toml:"value"`
+	Name        string `toml:"name"`
+	Type        string `toml:"type"`
+	Interval    string `toml:"interval"`
+	Timeout     string `toml:"timeout,omitempty"`
+	Command     string `toml:"command,omitempty"`
+	Prompt      string `toml:"prompt,omitempty"`
+	HoldFor     string `toml:"hold_for,omitempty"`
+	RepeatAfter string `toml:"repeat_after,omitempty"`
+	Severity    string `toml:"severity,omitempty"`
 }
 
 // ParseServiceManifest parses and validates a manifest file.
@@ -100,12 +99,47 @@ func ParseServiceManifest(data []byte) (*ServiceManifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(manifestJSONOf(manifest))
+	encoded, err := MarshalServiceManifest(manifest)
 	if err != nil {
-		return nil, fmt.Errorf("encode service manifest: %w", err)
+		return nil, err
 	}
-	manifest.JSON = string(encoded)
+	manifest.JSON = encoded
 	return manifest, nil
+}
+
+// MarshalServiceManifest renders a manifest's canonical stored JSON.
+func MarshalServiceManifest(m *ServiceManifest) (string, error) {
+	encoded, err := json.Marshal(manifestJSONOf(m))
+	if err != nil {
+		return "", fmt.Errorf("encode service manifest: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// RenderServiceManifestTOML renders an editable TOML document. It is the inverse
+// of ParseServiceManifest and exists so an editor can prefill the exact form the
+// manifest was written in; the canonical stored form remains JSON.
+func RenderServiceManifestTOML(m *ServiceManifest) (string, error) {
+	raw := serviceFile{Service: serviceSection{
+		Goal:           m.Goal,
+		Role:           m.Role,
+		Workspace:      m.Workspace,
+		ReportInterval: durationString(m.ReportInterval),
+		ReportOnChange: m.ReportOnChange,
+	}}
+	for _, w := range m.Watchers {
+		raw.Watchers = append(raw.Watchers, watchSection{
+			Name: w.Name, Type: w.Type, Interval: durationString(w.Interval),
+			Timeout: durationString(w.Timeout), Command: w.Command, Prompt: w.Prompt,
+			HoldFor: durationString(w.HoldFor), RepeatAfter: durationString(w.RepeatAfter),
+			Severity: w.Severity,
+		})
+	}
+	var buf bytes.Buffer
+	if err := toml.NewEncoder(&buf).Encode(raw); err != nil {
+		return "", fmt.Errorf("encode service manifest as TOML: %w", err)
+	}
+	return buf.String(), nil
 }
 
 // NextWake returns the earliest heartbeat or watcher interval from now. A
@@ -113,15 +147,15 @@ func ParseServiceManifest(data []byte) (*ServiceManifest, error) {
 func (m *ServiceManifest) NextWake(now time.Time) (time.Time, bool) {
 	var next time.Time
 	found := false
-	if m.ReportEvery > 0 {
-		next = now.Add(m.ReportEvery)
+	if m.ReportInterval > 0 {
+		next = now.Add(m.ReportInterval)
 		found = true
 	}
 	for _, w := range m.Watchers {
-		if w.Every <= 0 {
+		if w.Interval <= 0 {
 			continue
 		}
-		at := now.Add(w.Every)
+		at := now.Add(w.Interval)
 		if !found || at.Before(next) {
 			next, found = at, true
 		}
@@ -142,13 +176,13 @@ func ParseStoredServiceSpec(spec string) (*ServiceManifest, error) {
 	}
 	manifest := &ServiceManifest{
 		Goal: raw.Goal, Role: raw.Role, Workspace: raw.Workspace,
-		OnChange: raw.OnChange, JSON: spec,
+		ReportOnChange: raw.ReportOnChange, JSON: spec,
 	}
 	var err error
-	if manifest.ReportEvery, err = parseDuration(raw.ReportEvery); err != nil {
-		return nil, fmt.Errorf("stored report_every: %w", err)
+	if manifest.ReportInterval, err = parseDuration(raw.ReportInterval); err != nil {
+		return nil, fmt.Errorf("stored report_interval: %w", err)
 	}
-	for _, w := range raw.Watch {
+	for _, w := range raw.Watchers {
 		spec, err := watcherFromJSON(w)
 		if err != nil {
 			return nil, fmt.Errorf("stored watcher %q: %w", w.Name, err)
@@ -170,32 +204,29 @@ func ParseWatcherSpec(spec string) (WatcherSpec, error) {
 }
 
 func watcherFromJSON(raw watcherJSON) (WatcherSpec, error) {
-	w := WatcherSpec{Name: raw.Name, Kind: raw.Kind, Cmd: raw.Cmd, Severity: raw.Severity}
+	w := WatcherSpec{Name: raw.Name, Type: raw.Type, Command: raw.Command, Prompt: raw.Prompt, Severity: raw.Severity}
 	var err error
-	if w.Every, err = parseDuration(raw.Every); err != nil {
-		return WatcherSpec{}, fmt.Errorf("every: %w", err)
+	if w.Interval, err = parseDuration(raw.Interval); err != nil {
+		return WatcherSpec{}, fmt.Errorf("interval: %w", err)
 	}
 	if w.Timeout, err = parseDuration(raw.Timeout); err != nil {
 		return WatcherSpec{}, fmt.Errorf("timeout: %w", err)
 	}
-	if w.Debounce, err = parseDuration(raw.For); err != nil {
-		return WatcherSpec{}, fmt.Errorf("for: %w", err)
+	if w.HoldFor, err = parseDuration(raw.HoldFor); err != nil {
+		return WatcherSpec{}, fmt.Errorf("hold_for: %w", err)
 	}
-	if w.Cooldown, err = parseDuration(raw.Cooldown); err != nil {
-		return WatcherSpec{}, fmt.Errorf("cooldown: %w", err)
-	}
-	if raw.Trigger != nil {
-		w.Trigger = &WatchTrigger{Kind: raw.Trigger.Kind, Field: raw.Trigger.Field, Op: raw.Trigger.Op, Value: raw.Trigger.Value}
+	if w.RepeatAfter, err = parseDuration(raw.RepeatAfter); err != nil {
+		return WatcherSpec{}, fmt.Errorf("repeat_after: %w", err)
 	}
 	return w, nil
 }
 
 func normalizeManifest(raw serviceFile) (*ServiceManifest, error) {
 	manifest := &ServiceManifest{
-		Goal:      strings.TrimSpace(raw.Service.Goal),
-		Role:      strings.TrimSpace(raw.Service.Role),
-		Workspace: strings.TrimSpace(raw.Service.Workspace),
-		OnChange:  raw.Service.OnChange,
+		Goal:           strings.TrimSpace(raw.Service.Goal),
+		Role:           strings.TrimSpace(raw.Service.Role),
+		Workspace:      strings.TrimSpace(raw.Service.Workspace),
+		ReportOnChange: raw.Service.ReportOnChange,
 	}
 	if manifest.Goal == "" {
 		return nil, fmt.Errorf("service.goal is required")
@@ -210,17 +241,17 @@ func normalizeManifest(raw serviceFile) (*ServiceManifest, error) {
 		return nil, fmt.Errorf("service.workspace is required")
 	}
 	var err error
-	if manifest.ReportEvery, err = parseDuration(raw.Service.ReportEvery); err != nil {
-		return nil, fmt.Errorf("service.report_every: %w", err)
+	if manifest.ReportInterval, err = parseDuration(raw.Service.ReportInterval); err != nil {
+		return nil, fmt.Errorf("service.report_interval: %w", err)
 	}
-	if manifest.ReportEvery > 0 && manifest.ReportEvery < MinWatchInterval {
-		return nil, fmt.Errorf("service.report_every must be at least %s", MinWatchInterval)
+	if manifest.ReportInterval > 0 && manifest.ReportInterval < MinWatchInterval {
+		return nil, fmt.Errorf("service.report_interval must be at least %s", MinWatchInterval)
 	}
-	if len(raw.Watch) > MaxWatchersPerService {
+	if len(raw.Watchers) > MaxWatchersPerService {
 		return nil, fmt.Errorf("at most %d watchers are allowed", MaxWatchersPerService)
 	}
-	seen := make(map[string]bool, len(raw.Watch))
-	for _, w := range raw.Watch {
+	seen := make(map[string]bool, len(raw.Watchers))
+	for _, w := range raw.Watchers {
 		spec, err := normalizeWatcher(w)
 		if err != nil {
 			return nil, err
@@ -239,40 +270,41 @@ var watcherNameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,40}$`)
 func normalizeWatcher(raw watchSection) (WatcherSpec, error) {
 	w := WatcherSpec{
 		Name:     strings.TrimSpace(raw.Name),
-		Kind:     strings.ToLower(strings.TrimSpace(raw.Kind)),
-		Cmd:      strings.TrimSpace(raw.Cmd),
+		Type:     strings.ToLower(strings.TrimSpace(raw.Type)),
+		Command:  strings.TrimSpace(raw.Command),
+		Prompt:   strings.TrimSpace(raw.Prompt),
 		Severity: strings.ToLower(strings.TrimSpace(raw.Severity)),
 	}
 	if !watcherNameRe.MatchString(w.Name) {
 		return WatcherSpec{}, fmt.Errorf("watcher name %q must match %s", w.Name, watcherNameRe)
 	}
-	if w.Kind != "timer" && w.Kind != "command" {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: kind must be timer or command", w.Name)
+	if w.Type != "timer" && w.Type != "command" {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: type must be timer or command", w.Name)
 	}
 	var err error
-	if w.Every, err = parseDuration(raw.Every); err != nil {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: every: %w", w.Name, err)
+	if w.Interval, err = parseDuration(raw.Interval); err != nil {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: interval: %w", w.Name, err)
 	}
-	if w.Every < MinWatchInterval {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: every must be at least %s", w.Name, MinWatchInterval)
+	if w.Interval < MinWatchInterval {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: interval must be at least %s", w.Name, MinWatchInterval)
 	}
-	if w.Every > 24*time.Hour {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: every is longer than 24h", w.Name)
+	if w.Interval > 24*time.Hour {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: interval is longer than 24h", w.Name)
 	}
 	if w.Timeout, err = parseDuration(raw.Timeout); err != nil {
 		return WatcherSpec{}, fmt.Errorf("watcher %q: timeout: %w", w.Name, err)
 	}
 	if w.Timeout == 0 {
-		w.Timeout = min(10*time.Second, w.Every)
+		w.Timeout = min(10*time.Second, w.Interval)
 	}
-	if w.Timeout > w.Every {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: timeout must not exceed every", w.Name)
+	if w.Timeout > w.Interval {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: timeout must not exceed interval", w.Name)
 	}
-	if w.Debounce, err = parseDuration(raw.For); err != nil {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: for: %w", w.Name, err)
+	if w.HoldFor, err = parseDuration(raw.HoldFor); err != nil {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: hold_for: %w", w.Name, err)
 	}
-	if w.Cooldown, err = parseDuration(raw.Cooldown); err != nil {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: cooldown: %w", w.Name, err)
+	if w.RepeatAfter, err = parseDuration(raw.RepeatAfter); err != nil {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: repeat_after: %w", w.Name, err)
 	}
 	if w.Severity == "" {
 		w.Severity = "info"
@@ -282,68 +314,25 @@ func normalizeWatcher(raw watchSection) (WatcherSpec, error) {
 	default:
 		return WatcherSpec{}, fmt.Errorf("watcher %q: unknown severity %q", w.Name, w.Severity)
 	}
-	if w.Kind == "timer" {
-		if w.Cmd != "" || raw.Trigger != nil {
-			return WatcherSpec{}, fmt.Errorf("watcher %q: a timer watcher takes no cmd or trigger", w.Name)
+	if w.Type == "timer" {
+		if w.Command != "" {
+			return WatcherSpec{}, fmt.Errorf("watcher %q: a timer takes no command", w.Name)
+		}
+		if len(w.Prompt) > maxPrompt {
+			return WatcherSpec{}, fmt.Errorf("watcher %q: prompt is longer than 2 KiB", w.Name)
 		}
 		return w, nil
 	}
-	if w.Cmd == "" {
+	if w.Prompt != "" {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: a command watcher takes no prompt; its output is the summary", w.Name)
+	}
+	if w.Command == "" {
 		return WatcherSpec{}, fmt.Errorf("watcher %q: command is required", w.Name)
 	}
-	if len(w.Cmd) > 4<<10 {
+	if len(w.Command) > maxCommand {
 		return WatcherSpec{}, fmt.Errorf("watcher %q: command is longer than 4 KiB", w.Name)
 	}
-	if raw.Trigger == nil {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: command watchers need a trigger", w.Name)
-	}
-	trig, err := normalizeTrigger(w.Name, *raw.Trigger)
-	if err != nil {
-		return WatcherSpec{}, err
-	}
-	w.Trigger = trig
 	return w, nil
-}
-
-func normalizeTrigger(watcher string, raw triggerSection) (*WatchTrigger, error) {
-	t := &WatchTrigger{
-		Kind: strings.ToLower(strings.TrimSpace(raw.Kind)), Field: strings.TrimSpace(raw.Field),
-		Op: strings.TrimSpace(raw.Op), Value: raw.Value,
-	}
-	switch t.Kind {
-	case "changed":
-		return t, nil
-	case "json_number", "json_string", "json_bool":
-	default:
-		return nil, fmt.Errorf("watcher %q: trigger kind must be json_number, json_string, json_bool, or changed", watcher)
-	}
-	if t.Field == "" {
-		return nil, fmt.Errorf("watcher %q: trigger.field is required", watcher)
-	}
-	if t.Value == nil {
-		return nil, fmt.Errorf("watcher %q: trigger.value is required", watcher)
-	}
-	valid := false
-	switch t.Kind {
-	case "json_number":
-		switch t.Value.(type) {
-		case int64, float64:
-			valid = t.Op == ">" || t.Op == ">=" || t.Op == "<" || t.Op == "<=" || t.Op == "==" || t.Op == "!="
-		}
-	case "json_string":
-		switch t.Value.(type) {
-		case string:
-			valid = t.Op == "==" || t.Op == "!=" || t.Op == "contains"
-		}
-	case "json_bool":
-		if _, ok := t.Value.(bool); ok {
-			valid = t.Op == "==" || t.Op == "!="
-		}
-	}
-	if !valid {
-		return nil, fmt.Errorf("watcher %q: trigger value/op do not match kind %s", watcher, t.Kind)
-	}
-	return t, nil
 }
 
 func parseDuration(s string) (time.Duration, error) {
@@ -362,40 +351,33 @@ func durationString(d time.Duration) string {
 }
 
 type manifestJSON struct {
-	Goal        string        `json:"goal"`
-	Role        string        `json:"role"`
-	Workspace   string        `json:"workspace"`
-	ReportEvery string        `json:"report_every,omitempty"`
-	OnChange    bool          `json:"on_change,omitempty"`
-	Watch       []watcherJSON `json:"watch,omitempty"`
+	Goal           string        `json:"goal"`
+	Role           string        `json:"role"`
+	Workspace      string        `json:"workspace"`
+	ReportInterval string        `json:"report_interval,omitempty"`
+	ReportOnChange bool          `json:"report_on_change,omitempty"`
+	Watchers       []watcherJSON `json:"watchers,omitempty"`
 }
 
 type watcherJSON struct {
-	Name     string       `json:"name"`
-	Kind     string       `json:"kind"`
-	Every    string       `json:"every"`
-	Timeout  string       `json:"timeout,omitempty"`
-	Cmd      string       `json:"cmd,omitempty"`
-	For      string       `json:"for,omitempty"`
-	Cooldown string       `json:"cooldown,omitempty"`
-	Severity string       `json:"severity,omitempty"`
-	Trigger  *triggerJSON `json:"trigger,omitempty"`
-}
-
-type triggerJSON struct {
-	Kind  string `json:"kind"`
-	Field string `json:"field,omitempty"`
-	Op    string `json:"op,omitempty"`
-	Value any    `json:"value,omitempty"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Interval    string `json:"interval"`
+	Timeout     string `json:"timeout,omitempty"`
+	Command     string `json:"command,omitempty"`
+	Prompt      string `json:"prompt,omitempty"`
+	HoldFor     string `json:"hold_for,omitempty"`
+	RepeatAfter string `json:"repeat_after,omitempty"`
+	Severity    string `json:"severity,omitempty"`
 }
 
 func manifestJSONOf(m *ServiceManifest) manifestJSON {
 	out := manifestJSON{
 		Goal: m.Goal, Role: m.Role, Workspace: m.Workspace,
-		ReportEvery: durationString(m.ReportEvery), OnChange: m.OnChange,
+		ReportInterval: durationString(m.ReportInterval), ReportOnChange: m.ReportOnChange,
 	}
 	for _, w := range m.Watchers {
-		out.Watch = append(out.Watch, watcherJSONOf(w))
+		out.Watchers = append(out.Watchers, watcherJSONOf(w))
 	}
 	return out
 }
@@ -411,13 +393,10 @@ func MarshalWatcherSpec(w WatcherSpec) string {
 }
 
 func watcherJSONOf(w WatcherSpec) watcherJSON {
-	jw := watcherJSON{
-		Name: w.Name, Kind: w.Kind, Every: durationString(w.Every),
-		Timeout: durationString(w.Timeout), Cmd: w.Cmd, For: durationString(w.Debounce),
-		Cooldown: durationString(w.Cooldown), Severity: w.Severity,
+	return watcherJSON{
+		Name: w.Name, Type: w.Type, Interval: durationString(w.Interval),
+		Timeout: durationString(w.Timeout), Command: w.Command, Prompt: w.Prompt,
+		HoldFor: durationString(w.HoldFor), RepeatAfter: durationString(w.RepeatAfter),
+		Severity: w.Severity,
 	}
-	if w.Trigger != nil {
-		jw.Trigger = &triggerJSON{Kind: w.Trigger.Kind, Field: w.Trigger.Field, Op: w.Trigger.Op, Value: w.Trigger.Value}
-	}
-	return jw
 }

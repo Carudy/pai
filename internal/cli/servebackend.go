@@ -151,6 +151,13 @@ func (b *serveBackend) serviceViewLocked(name string) (runner.ServiceView, error
 		return runner.ServiceView{}, err
 	}
 	view := runner.ServiceView{Meta: serveMeta(info.Meta), Status: info.Status, Spec: info.Spec}
+	if info.Spec != "" {
+		if manifest, err := config.ParseStoredServiceSpec(info.Spec); err == nil {
+			if text, err := config.RenderServiceManifestTOML(manifest); err == nil {
+				view.ManifestTOML = text
+			}
+		}
+	}
 	for _, w := range watchers {
 		view.Watchers = append(view.Watchers, runner.WatcherState{
 			ID: w.ID, SessionID: w.SessionID, Name: w.Name, Spec: w.Spec,
@@ -197,6 +204,41 @@ func (b *serveBackend) CreateService(name, manifestText string, approveCommands 
 		return runner.ServiceView{}, err
 	}
 	if _, _, err := newService(b.store, name, manifest, cfg.DefaultModel, time.Now()); err != nil {
+		return runner.ServiceView{}, err
+	}
+	return b.serviceViewLocked(name)
+}
+
+// EditService replaces a stopped service's manifest through the shared CLI
+// helper, so validation, command approval, and watcher reconciliation cannot
+// drift between the two entry points.
+func (b *serveBackend) EditService(name, manifestText string, approveCommands bool) (runner.ServiceView, error) {
+	if !session.ValidName(name) {
+		return runner.ServiceView{}, fmt.Errorf("invalid session name %q (allowed: letters, digits, . _ -)", name)
+	}
+	manifest, err := config.ParseServiceManifest([]byte(manifestText))
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	if err := prepareServiceManifest(manifest); err != nil {
+		return runner.ServiceView{}, err
+	}
+	if commands := commandWatchers(manifest); len(commands) > 0 && !approveCommands {
+		return runner.ServiceView{}, fmt.Errorf("command watchers need approval: %s", strings.Join(commands, "; "))
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, err := b.serviceStore(); err != nil {
+		return runner.ServiceView{}, err
+	}
+	if _, err := b.store.Get(name); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return runner.ServiceView{}, fmt.Errorf("%w: %s", runner.ErrNotFound, name)
+		}
+		return runner.ServiceView{}, err
+	}
+	if err := updateService(b.store, name, manifest, time.Now()); err != nil {
 		return runner.ServiceView{}, err
 	}
 	return b.serviceViewLocked(name)
@@ -600,11 +642,34 @@ func (b *serveBackend) SetRole(name, role string) error {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	sess, err := b.store.Get(name)
+	if err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return runner.ErrNotFound
+		}
+		return fmt.Errorf("get session: %w", err)
+	}
 	if err := b.store.SetRole(name, role); err != nil {
 		if errors.Is(err, session.ErrNotFound) {
 			return runner.ErrNotFound
 		}
 		return fmt.Errorf("set session role: %w", err)
+	}
+	// A service's manifest is the durable definition the view and a restart read,
+	// so its role must agree with the session metadata.
+	if sess.Meta.Mode == session.ModeService {
+		if ss, ok := b.store.(session.ServiceStore); ok {
+			if info, err := ss.ServiceInfo(name); err == nil && info.Spec != "" {
+				if manifest, err := config.ParseStoredServiceSpec(info.Spec); err == nil {
+					manifest.Role = role
+					if spec, err := config.MarshalServiceManifest(manifest); err == nil {
+						if err := ss.SetServiceSpec(name, spec); err != nil {
+							return fmt.Errorf("update service role: %w", err)
+						}
+					}
+				}
+			}
+		}
 	}
 	return nil
 }

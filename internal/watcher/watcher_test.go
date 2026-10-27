@@ -40,7 +40,7 @@ func readState(t *testing.T, s string) state {
 func TestTimerProbeAlwaysFires(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	res := Probe(context.Background(), config.WatcherSpec{
-		Name: "tick", Kind: "timer", Every: time.Minute,
+		Name: "tick", Type: "timer", Interval: time.Minute,
 	}, t.TempDir(), "", now)
 
 	if !res.Fire {
@@ -52,139 +52,175 @@ func TestTimerProbeAlwaysFires(t *testing.T) {
 	if res.Err != nil {
 		t.Fatalf("err = %v", res.Err)
 	}
+	if res.Summary != "scheduled tick" {
+		t.Fatalf("summary = %q, want the default", res.Summary)
+	}
 }
 
-func TestChangedTriggerSeedsThenFiresOnce(t *testing.T) {
+func TestTimerPromptIsTheSummary(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	res := Probe(context.Background(), config.WatcherSpec{
+		Name: "report", Type: "timer", Interval: time.Minute,
+		Prompt: "Report the current state in one line.",
+	}, t.TempDir(), "", now)
+	if !res.Fire || res.Summary != "Report the current state in one line." {
+		t.Fatalf("fire=%v summary=%q", res.Fire, res.Summary)
+	}
+}
+
+func TestPredicateDecisions(t *testing.T) {
+	skipOnWindows(t)
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+
+	for _, tc := range []struct {
+		output string
+		fire   bool
+	}{
+		{"1", true},
+		{"true", true},
+		{"TRUE", true},
+		{"0", false},
+		{"false", false},
+	} {
+		spec := config.WatcherSpec{
+			Name: "check", Type: "command", Command: "printf '%s\\n' " + tc.output,
+			Interval: time.Minute, Timeout: 5 * time.Second,
+		}
+		res := Probe(ctx, spec, t.TempDir(), "", now)
+		if res.Err != nil {
+			t.Fatalf("%q: err = %v", tc.output, res.Err)
+		}
+		if res.Fire != tc.fire {
+			t.Fatalf("%q: fire = %v, want %v", tc.output, res.Fire, tc.fire)
+		}
+	}
+}
+
+func TestSummaryFollowsTheDecision(t *testing.T) {
+	skipOnWindows(t)
+	spec := config.WatcherSpec{
+		Name: "river", Type: "command",
+		Command:  `printf '1 mode=flood level=3.7\nextra detail\n'`,
+		Interval: time.Minute, Timeout: 5 * time.Second,
+	}
+	res := Probe(context.Background(), spec, t.TempDir(), "", time.Unix(1_700_000_000, 0))
+	if !res.Fire || res.Err != nil {
+		t.Fatalf("fire = %v, err = %v", res.Fire, res.Err)
+	}
+	if strings.Contains(res.Summary, "1 mode") || !strings.Contains(res.Summary, "mode=flood level=3.7") {
+		t.Fatalf("summary = %q", res.Summary)
+	}
+	if !strings.Contains(res.Summary, "extra detail") {
+		t.Fatalf("summary lost the second line: %q", res.Summary)
+	}
+}
+
+func TestBareDecisionHasAFallbackSummary(t *testing.T) {
+	skipOnWindows(t)
+	spec := config.WatcherSpec{
+		Name: "river", Type: "command", Command: "echo 1",
+		Interval: time.Minute, Timeout: 5 * time.Second,
+	}
+	res := Probe(context.Background(), spec, t.TempDir(), "", time.Unix(1_700_000_000, 0))
+	if res.Summary != "triggered" {
+		t.Fatalf("summary = %q, want the fallback", res.Summary)
+	}
+}
+
+func TestHoldForDebounces(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	spec := config.WatcherSpec{
-		Name: "level", Kind: "command", Cmd: "cat value.txt",
-		Every: time.Minute, Timeout: 5 * time.Second,
-		Trigger: &config.WatchTrigger{Kind: "changed"},
+		Name: "river", Type: "command", Command: "cat value.txt",
+		Interval: time.Minute, Timeout: 5 * time.Second, HoldFor: 30 * time.Second,
+	}
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	writeValue(t, dir, "1")
+
+	first := Probe(ctx, spec, dir, "", now)
+	if first.Fire {
+		t.Fatal("the first observation starts the hold window, it does not fire")
+	}
+	early := Probe(ctx, spec, dir, first.State, now.Add(10*time.Second))
+	if early.Fire {
+		t.Fatal("a condition younger than hold_for must not fire")
+	}
+	late := Probe(ctx, spec, dir, early.State, now.Add(41*time.Second))
+	if !late.Fire {
+		t.Fatal("a condition that held for the window should fire")
+	}
+}
+
+// Without repeat_after a continuously true predicate fires once per episode:
+// the latch clears only when the predicate goes false.
+func TestOncePerEpisodeByDefault(t *testing.T) {
+	skipOnWindows(t)
+	dir := t.TempDir()
+	spec := config.WatcherSpec{
+		Name: "river", Type: "command", Command: "cat value.txt",
+		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
 
 	writeValue(t, dir, "1")
 	first := Probe(ctx, spec, dir, "", now)
-	if first.Fire {
-		t.Fatal("the first observation only seeds the baseline")
+	if !first.Fire {
+		t.Fatal("the first true observation should fire")
 	}
-	st := readState(t, first.State)
-	if st.Value != "1" {
-		t.Fatalf("baseline = %q, want 1", st.Value)
+	again := Probe(ctx, spec, dir, first.State, now.Add(time.Minute))
+	if again.Fire {
+		t.Fatal("a still-true predicate must not fire twice in one episode")
 	}
-
-	second := Probe(ctx, spec, dir, first.State, now.Add(time.Minute))
-	if second.Fire {
-		t.Fatal("an unchanged value must not fire")
+	if st := readState(t, again.State); !st.Reported {
+		t.Fatalf("state = %+v, want the episode latched", st)
 	}
 
-	writeValue(t, dir, "2")
-	third := Probe(ctx, spec, dir, second.State, now.Add(2*time.Minute))
-	if !third.Fire {
-		t.Fatal("a changed value should fire")
+	writeValue(t, dir, "0")
+	cleared := Probe(ctx, spec, dir, again.State, now.Add(2*time.Minute))
+	if cleared.Fire {
+		t.Fatal("a false predicate does not fire")
 	}
-	if !strings.Contains(third.Summary, "changed to 2") {
-		t.Fatalf("summary = %q", third.Summary)
-	}
-	st = readState(t, third.State)
-	if st.Value != "2" || st.Pending != "" || st.Since != 0 {
-		t.Fatalf("state after fire = %+v, want the new baseline and no pending change", st)
-	}
-
-	fourth := Probe(ctx, spec, dir, third.State, now.Add(3*time.Minute))
-	if fourth.Fire {
-		t.Fatal("the same value must not fire twice")
+	writeValue(t, dir, "1")
+	reopened := Probe(ctx, spec, dir, cleared.State, now.Add(3*time.Minute))
+	if !reopened.Fire {
+		t.Fatal("a new episode should fire again")
 	}
 }
 
-func TestChangedTriggerHonoursDebounce(t *testing.T) {
+func TestRepeatAfterReAlerts(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	spec := config.WatcherSpec{
-		Name: "level", Kind: "command", Cmd: "cat value.txt",
-		Every: time.Minute, Timeout: 5 * time.Second, Debounce: 30 * time.Second,
-		Trigger: &config.WatchTrigger{Kind: "changed"},
+		Name: "river", Type: "command", Command: "cat value.txt",
+		Interval: time.Minute, Timeout: 5 * time.Second, RepeatAfter: time.Minute,
 	}
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
 	writeValue(t, dir, "1")
-	seeded := Probe(ctx, spec, dir, "", now)
-	writeValue(t, dir, "2")
-
-	early := Probe(ctx, spec, dir, seeded.State, now.Add(10*time.Second))
-	if early.Fire {
-		t.Fatal("a change younger than the debounce window must not fire")
-	}
-	mid := Probe(ctx, spec, dir, early.State, now.Add(20*time.Second))
-	if mid.Fire {
-		t.Fatal("the change is still younger than the window")
-	}
-	late := Probe(ctx, spec, dir, mid.State, now.Add(41*time.Second))
-	if !late.Fire {
-		t.Fatal("a change that persisted for the window should fire")
-	}
-}
-
-func TestJSONNumberTriggerAndCooldown(t *testing.T) {
-	skipOnWindows(t)
-	dir := t.TempDir()
-	spec := config.WatcherSpec{
-		Name: "river", Kind: "command", Cmd: `echo '{"river":{"level":3.4}}'`,
-		Every: time.Minute, Timeout: 5 * time.Second, Cooldown: time.Minute,
-		Trigger: &config.WatchTrigger{Kind: "json_number", Field: "river.level", Op: ">", Value: 3.2},
-	}
-	ctx := context.Background()
-	now := time.Unix(1_700_000_000, 0)
 
 	first := Probe(ctx, spec, dir, "", now)
 	if !first.Fire {
-		t.Fatal("the threshold was crossed on the first observation")
-	}
-	if first.Err != nil {
-		t.Fatalf("err = %v", first.Err)
-	}
-	if !strings.Contains(first.Summary, "river.level") {
-		t.Fatalf("summary = %q", first.Summary)
+		t.Fatal("the first true observation should fire")
 	}
 	held := Probe(ctx, spec, dir, first.State, now.Add(10*time.Second))
 	if held.Fire {
-		t.Fatal("cooldown must suppress a repeat while the condition still holds")
+		t.Fatal("repeat_after must suppress a repeat before its interval")
 	}
 	after := Probe(ctx, spec, dir, held.State, now.Add(61*time.Second))
 	if !after.Fire {
-		t.Fatal("the condition should fire again once the cooldown elapsed")
-	}
-}
-
-func TestJSONWhitespaceIsNotAChange(t *testing.T) {
-	skipOnWindows(t)
-	dir := t.TempDir()
-	writeValue(t, dir, `{"a": 1}`)
-	spec := config.WatcherSpec{
-		Name: "doc", Kind: "command", Cmd: "cat value.txt",
-		Every: time.Minute, Timeout: 5 * time.Second,
-		Trigger: &config.WatchTrigger{Kind: "changed"},
-	}
-	ctx := context.Background()
-	now := time.Unix(1_700_000_000, 0)
-	first := Probe(ctx, spec, dir, "", now)
-	writeValue(t, dir, `{"a":1}`)
-	second := Probe(ctx, spec, dir, first.State, now.Add(time.Minute))
-	if second.Fire {
-		t.Fatal("reformatting JSON is not a change")
+		t.Fatal("the condition should fire again once repeat_after elapsed")
 	}
 }
 
 func TestProbeFailureFiresOncePerDistinctError(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
-	writeValue(t, dir, "boom")
 	spec := config.WatcherSpec{
-		Name: "broken", Kind: "command", Cmd: "cat err.txt; exit 1",
-		Every: time.Minute, Timeout: 5 * time.Second,
-		Trigger: &config.WatchTrigger{Kind: "changed"},
+		Name: "broken", Type: "command", Command: "cat err.txt; exit 1",
+		Interval: time.Minute, Timeout: 5 * time.Second,
 	}
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
@@ -209,5 +245,35 @@ func TestProbeFailureFiresOncePerDistinctError(t *testing.T) {
 	third := Probe(ctx, spec, dir, second.State, now.Add(2*time.Minute))
 	if !third.Fire {
 		t.Fatal("a distinct failure is news")
+	}
+}
+
+func TestInvalidDecisionIsAProbeFailure(t *testing.T) {
+	skipOnWindows(t)
+	now := time.Unix(1_700_000_000, 0)
+	for _, command := range []string{"echo maybe", "true", "printf '\\n\\n'"} {
+		spec := config.WatcherSpec{
+			Name: "bad", Type: "command", Command: command,
+			Interval: time.Minute, Timeout: 5 * time.Second,
+		}
+		res := Probe(context.Background(), spec, t.TempDir(), "", now)
+		if res.Err == nil {
+			t.Fatalf("%q: err = nil, want a probe failure", command)
+		}
+		if !res.Fire {
+			t.Fatalf("%q: a first failure should be surfaced", command)
+		}
+	}
+}
+
+func TestNonzeroExitIsAProbeFailure(t *testing.T) {
+	skipOnWindows(t)
+	spec := config.WatcherSpec{
+		Name: "bad", Type: "command", Command: "echo 1; exit 3",
+		Interval: time.Minute, Timeout: 5 * time.Second,
+	}
+	res := Probe(context.Background(), spec, t.TempDir(), "", time.Unix(1_700_000_000, 0))
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "exit 3") {
+		t.Fatalf("err = %v, want an exit-3 failure", res.Err)
 	}
 }

@@ -27,10 +27,11 @@ See the [module map](../organization.md) for its near-leaf position.
   in `cli`, not here.
 - `SetScalar` / `UnsetScalar` perform comment-preserving scalar edits.
 - `ParseServiceManifest` parses and validates a resident-session manifest
-  (`[service]` plus `[[watch]]`), normalizes durations and trigger shapes, and
-  produces the canonical JSON stored in `sessions.spec`;
-  `ParseStoredServiceSpec` reads it back. Interval floors, watcher limits, and
-  command/trigger rules are structural rails, not cost budgets.
+  (`[service]` plus `[[watcher]]`), normalizes durations, and produces the
+  canonical JSON stored in `sessions.spec`; `ParseStoredServiceSpec` reads it
+  back. Interval floors, watcher limits, and command rules are structural rails,
+  not cost budgets. The watcher's decision is the probe's own 1/0 output, so the
+  manifest carries no query language.
 - `LoadRoleExtraEntry` is the role-extra seam for custom tools; the tool
   definitions themselves are parsed by `prompts`.
 - `Template`, `WriteTemplate`, `MergeTemplate`, and `ResetTemplate` support

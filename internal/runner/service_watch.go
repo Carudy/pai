@@ -47,8 +47,8 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 	}
 
 	manifest := m.serviceManifest(name)
-	if manifest != nil && manifest.ReportEvery > 0 && !hasWatcher(watchers, config.ReportWatcherName) {
-		if added, ok := m.ensureReportWatcher(wb, id, manifest.ReportEvery, now); ok {
+	if manifest != nil && manifest.ReportInterval > 0 && !hasWatcher(watchers, config.ReportWatcherName) {
+		if added, ok := m.ensureReportWatcher(wb, id, manifest.ReportInterval, now); ok {
 			watchers = append(watchers, added)
 		}
 	}
@@ -102,8 +102,8 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 		}
 	}
 
-	// on_change means "report only when something changed": the report tick is a
-	// heartbeat, not news, so it is dropped when no other probe fired. Being
+	// report_on_change means "report only when something changed": the report
+	// tick is a heartbeat, not news, so it is dropped when no other probe fired. Being
 	// parked on a question suppresses it too — a heartbeat would only re-ask.
 	changed := false
 	for _, o := range fired {
@@ -116,7 +116,7 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 	events := make([]core.Event, 0, len(fired))
 	for _, o := range fired {
 		if o.spec.Name == config.ReportWatcherName {
-			if manifest != nil && manifest.OnChange && !changed {
+			if manifest != nil && manifest.ReportOnChange && !changed {
 				continue
 			}
 			if parked {
@@ -142,7 +142,7 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 // in the payload for now; mapping it to an event class is a later policy.
 func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result, now time.Time) core.Event {
 	class, kind := core.EventWatcher, "watch"
-	if spec.Kind == "timer" {
+	if spec.Type == "timer" {
 		class, kind = core.EventTimer, "timer"
 	}
 	payload := res.Summary
@@ -155,13 +155,14 @@ func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result,
 	}
 }
 
-// ensureReportWatcher materializes service.report_every as a timer watcher. It is
-// a watcher rather than a special case so the heartbeat shares one persisted
+// ensureReportWatcher materializes service.report_interval as a timer watcher. It
+// is a watcher rather than a special case so the heartbeat shares one persisted
 // schedule, one due check, and one next-wake computation with every other probe.
 func (m *Manager) ensureReportWatcher(wb ServiceWatcherBackend, sessionID string, every time.Duration, now time.Time) (WatcherState, bool) {
 	spec := config.WatcherSpec{
-		Name: config.ReportWatcherName, Kind: "timer", Every: every,
+		Name: config.ReportWatcherName, Type: "timer", Interval: every,
 		Timeout: min(10*time.Second, every),
+		Prompt:  config.ReportPrompt,
 	}
 	at := now.Add(every)
 	ws := WatcherState{

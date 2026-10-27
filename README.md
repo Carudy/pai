@@ -278,8 +278,9 @@ recap_turns = 3      # recent exchanges echoed when resuming (0 = no recap)
 # rewind_backup = true
 ```
 
-The older `[app] truncate_exec_limit` / `truncate_search_limit` keys still work
-as aliases, but `[context]` is canonical.
+The older `[app] truncate_exec_limit` / `truncate_search_limit` keys are no
+longer read; a leftover key is ignored. Move those values to
+`[context] exec_limit` / `search_limit`.
 
 ### Environment Variables
 
@@ -555,6 +556,126 @@ release binaries stay cross-compilable.
 See [`internal/session/README.md`](internal/session/README.md) for the store,
 locking, and backend details.
 
+## 🔁 Resident services
+
+A service is a session that wakes itself — on its own interval, or when a check
+says the world changed — and then runs one bounded activation with the same loop
+and role machinery as `pai chat`. Services run only while `pai serve` is running.
+
+```bash
+pai service create river-watch --file river.toml --yes
+pai service show river-watch
+pai serve
+```
+
+`pai service create` needs the session store, so stop `pai serve` first; the web
+form (**Services** → **+ New session**) creates and schedules a service without a
+restart.
+
+### The manifest
+
+```toml
+[service]
+goal             = "Watch the river gauge and report only when it matters."
+role             = "devops"
+workspace        = "~/work/river"
+report_interval  = "15m"     # heartbeat; omit to wake only on events
+report_on_change = true      # drop a heartbeat when no probe fired
+
+[[watcher]]
+name         = "river-level"
+type         = "command"     # command | timer
+interval     = "60s"        # 10s .. 24h
+timeout      = "10s"        # default min(10s, interval)
+command      = "scripts/check_river"
+hold_for     = "2m"         # stay true this long before firing
+repeat_after = "10m"        # re-alert while true; omit = once per episode
+severity     = "high"       # info|low|medium|high|critical
+
+[[watcher]]
+name     = "tide-sample"
+type     = "timer"          # a timer takes no command
+interval = "13m"
+prompt   = "Report the tide reading and whether it changed."
+```
+
+A `timer` may carry a `prompt`: it is injected into the situation on every tick.
+A `command` watcher must not — its output is the summary. The built-in
+`_report` heartbeat created by `report_interval` carries one.
+
+### Stop and start
+
+```bash
+pai service stop demo     # stop scheduling; the state survives a restart
+pai service start demo    # resume and probe immediately
+pai service list          # state column shows suspended / parked / stopped
+```
+
+While `pai serve` is running the store is locked, so use the **Stop** / **Start**
+button in the service panel (or `POST /api/service/stop|start`). A stopped
+service accepts no instructions until it is started.
+
+### Changing settings
+
+Model, role, and reasoning can be changed while a service is suspended (its
+normal sleeping state), parked on a question, or stopped: the resident runtime is
+retired and the next wake rebuilds with the new setting. A role change also
+rewrites the manifest's `role`, so `pai service show` and a restart agree.
+Workspace is the exception — probes and the model both run there, so it belongs to
+the manifest; change it with a manifest edit while the service is stopped.
+
+A **manifest edit** is a stopped-only replacement, not a live patch:
+
+```bash
+pai service stop demo
+pai service edit demo --file river.toml --yes
+pai service start demo
+```
+
+The web panel offers the same under **Details → Edit manifest** when the service
+is stopped. The session's identity, history, queued events, and model are kept;
+role, workspace, spec, and the watcher set are replaced. A probe whose spec did
+not change keeps its latched state; a changed or new one starts clean. Command
+watchers require the same explicit approval as creation.
+
+A user instruction is an immediate wake, not a wait for the next timer. The
+head-of-activation probe pass is deferred for that wake, so the reply is not
+queued behind commands; the deferred probes run on the following activation. The
+instruction is recorded as a user turn, so it stays in the transcript and in the
+history the model reads later.
+
+### Probe contract
+
+A `command` watcher is a predicate, not a parser: it runs in the workspace and
+prints its decision on the first line.
+
+| stdout | meaning |
+|---|---|
+| `1` or `true` | the condition holds |
+| `0` or `false` | it does not |
+| text after the token | the summary shown to the model |
+| nonzero exit, empty output, unknown token | probe failure (reported once per distinct message) |
+
+```sh
+#!/bin/sh
+set -eu
+mode=$(python3 -c 'import json; print(json.load(open("state.json"))["mode"])')
+[ "$mode" = "normal" ] && echo 0 || echo "1 mode=$mode"
+```
+
+`hold_for` filters flaps; `repeat_after` is the re-alert interval while the
+condition keeps holding. With neither set, a watcher fires once per continuous
+episode, so a level condition cannot wake the model on every probe by accident.
+`report_on_change` makes `report_interval` mean "only when something changed".
+
+The `goal` becomes a `## Service goal` block in the prompt head, after the role
+and project guidance and before the tool reference, so every wake carries the
+standing intent and compaction cannot drop it. `workspace` is the probe's and the
+model's working directory, resolved once at creation.
+
+See [`internal/watcher/README.md`](internal/watcher/README.md) for the probe and
+state contract.
+
 ## 🌐 Browser / server mode
 
 ```bash
@@ -717,6 +838,8 @@ for the full endpoint and security contract.
   storage, the SQLite backend, and store ownership.
 - [`internal/runner/README.md`](internal/runner/README.md) — bounded concurrent
   runtimes, the integration contract, and workspace residency.
+- [`internal/watcher/README.md`](internal/watcher/README.md) — the service probe
+  contract, its debounce and latch state, and how a probe becomes a wake.
 - [`internal/web/README.md`](internal/web/README.md) — the browser UI and the full
   HTTP/SSE API contract.
 

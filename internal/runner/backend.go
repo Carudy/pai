@@ -118,8 +118,8 @@ type ServiceEventBackend interface {
 }
 
 // ServiceInfoBackend exposes a service's stored manifest JSON. The runner reads
-// report_every and on_change from it, and falls back to its interval when the
-// backend cannot persist watcher state.
+// report_interval and report_on_change from it, and falls back to its interval
+// when the backend cannot persist watcher state.
 type ServiceInfoBackend interface {
 	ServiceSpec(name string) (string, error)
 }
@@ -135,7 +135,7 @@ type ServiceStateBackend interface {
 
 // ServiceWatcherBackend is the durable half of host-side probes. The runner
 // executes a probe when it is due, persists what it observed, and wakes the
-// model only when that observation crossed the trigger. A backend without it
+// model only when that observation crossed the condition. A backend without it
 // still runs a service: its watchers are then only a scheduling interval from
 // the manifest and are never executed.
 type ServiceWatcherBackend interface {
@@ -167,11 +167,12 @@ type WatcherState struct {
 // Phase and Error are filled from a live worker when one exists.
 type ServiceView struct {
 	Meta
-	Status   string         `json:"status,omitempty"`
-	Spec     string         `json:"spec,omitempty"`
-	Phase    string         `json:"phase,omitempty"`
-	Error    string         `json:"error,omitempty"`
-	Watchers []WatcherState `json:"watchers,omitempty"`
+	Status       string         `json:"status,omitempty"`
+	Spec         string         `json:"spec,omitempty"`
+	ManifestTOML string         `json:"manifest_toml,omitempty"`
+	Phase        string         `json:"phase,omitempty"`
+	Error        string         `json:"error,omitempty"`
+	Watchers     []WatcherState `json:"watchers,omitempty"`
 }
 
 // ServiceBackend reads one service without requiring a live runtime. A backend
@@ -187,6 +188,13 @@ type ServiceCreator interface {
 	// CreateService validates and stores the manifest, then returns the created
 	// view. approveCommands is the HTTP equivalent of `--yes`.
 	CreateService(name, manifest string, approveCommands bool) (ServiceView, error)
+}
+
+// ServiceEditor replaces a stopped service's manifest. It is deliberately not a
+// live edit: the session identity, history, and queued events are kept, while the
+// role, workspace, spec, and watcher set are reconciled.
+type ServiceEditor interface {
+	EditService(name, manifest string, approveCommands bool) (ServiceView, error)
 }
 
 // WorkspaceBackend resolves the immutable workspace when preparing a runtime.

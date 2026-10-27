@@ -239,7 +239,8 @@ rejected; there is no URL authentication.
   which the UI prefills into its working-directory field.
 - `GET /api/service?name=...`: `runner.ServiceView` — the durable view of a
   resident session: metadata (mode, state, next wake), `status` (the last
-  report), `spec` (the stored manifest as canonical JSON), `phase` and `error`
+  report), `spec` (the stored manifest as canonical JSON), `manifest_toml` (the
+  same manifest rendered for an editor), `phase` and `error`
   when a runtime is live, and one `watchers` entry per probe with its spec,
   last/next run, last state, and last error. Read-only, and available while the
   server holds the store lock that `pai service show` needs.
@@ -248,6 +249,16 @@ rejected; there is no URL authentication.
   validation as `pai service create`; a manifest with command watchers is
   refused unless `approve_commands` is true. The new service is registered with
   the scheduler immediately, so it starts without a restart.
+- `POST /api/service/edit`: the same body → 200 with the updated view. Only a
+  service whose state is `stopped` can be edited. It replaces the role,
+  workspace, spec, and watcher set, keeps the session identity/history/events and
+  the model, preserves the latched state of unchanged probes, and leaves the
+  service stopped. Command watchers need the same approval as creation.
+- `POST /api/service/stop` and `/api/service/start`: `{ "name": "..." }` → the
+  updated view. Stop cancels a live activation, unregisters the service from the
+  scheduler, persists `state = stopped`, and clears its next wake; the state
+  survives a restart. Start registers it due now, so the first probe runs
+  immediately. A stopped service refuses instructions with 409.
 - `GET /api/history?name=...&offset=0&limit=100`: `runner.History` (native core
   turn keys `Role`, `Kind`, `Content`, `At`, `Seq`, plus `essential` when set;
   metadata uses runner's JSON tags).
@@ -394,15 +405,25 @@ only authority, so a reload or bookmark keeps the tab, and a session URL
 (`/session/<name>`) switches the tab to that session's own mode. Creating is one
 flow with two forms behind **+ New session**: chat asks for a name, workspace,
 and role; service asks for a name and a manifest (TOML, prefilled), because
-watchers and triggers already have an exact textual form and a half-built form
-would hide them. The service form requires ticking the command-watcher approval
-box, mirroring `--yes`.
+the manifest has an exact textual form and a half-built form would hide it. The
+service form requires ticking the command-watcher approval box, mirroring
+`--yes`.
 
-Opening a service shows its durable view above the transcript: state/phase,
-next wake, the last report, every probe with its last observation and error, and
-the stored manifest. It refreshes with the transcript, so a probe firing or a
-report landing is visible while the service runs. Sending an instruction still
-works from the composer; it is queued as a durable event for the next wake.
+Opening a service shows a **stable bar above the transcript**, collapsed to one
+line by default: **Details** expands the state, last report, a table of watchers
+(name, schedule, last/next run, humanized latch state), the stored manifest, and —
+while the service is stopped — an **Edit manifest** box, and the choice is
+remembered per browser. The bar shows the shared state
+word (`Idle`, `Parked`, `Working`, `Stopped`), the next wake to the second, and
+**Stop** / **Start**; it never disappears on a failed refresh. The sidebar's
+service rows use the same vocabulary in two lines: name, then a state dot with the
+next wake.
+
+Model, role, and reasoning are editable in the shared header while the service is
+idle — suspended, parked, or stopped — because the resident runtime is retired
+and the next wake re-prepares with the new setting. A role change also updates the
+stored manifest. **Working dir** is disabled for a service: the manifest owns the
+workspace, and probes run there too.
 
 **Compress now** forces the compaction that `summarize_after_tokens` would
 trigger later: it sends the CLI's `/compact` as an instruction (a command is

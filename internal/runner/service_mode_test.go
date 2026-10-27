@@ -17,9 +17,10 @@ type serviceTestProvider struct {
 	replies []string
 	calls   int
 	done    chan int
+	last    provider.CompletionParams
 }
 
-func (p *serviceTestProvider) Completion(context.Context, provider.CompletionParams) (*provider.ChatCompletion, error) {
+func (p *serviceTestProvider) Completion(_ context.Context, params provider.CompletionParams) (*provider.ChatCompletion, error) {
 	p.mu.Lock()
 	if p.calls >= len(p.replies) {
 		p.mu.Unlock()
@@ -27,6 +28,7 @@ func (p *serviceTestProvider) Completion(context.Context, provider.CompletionPar
 	}
 	reply := p.replies[p.calls]
 	p.calls++
+	p.last = params
 	p.mu.Unlock()
 	select {
 	case p.done <- p.calls:
@@ -46,6 +48,12 @@ func (p *serviceTestProvider) CallCount() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.calls
+}
+
+func (p *serviceTestProvider) LastParams() provider.CompletionParams {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.last
 }
 
 type serviceTestBackend struct {
@@ -123,6 +131,24 @@ func (b *serviceTestBackend) SetServiceState(_ string, state, status string) err
 	return nil
 }
 
+func (b *serviceTestBackend) SetModel(_ string, model string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.meta.Model = model
+	return nil
+}
+
+func (b *serviceTestBackend) Models() ([]string, string, error) {
+	return []string{"test:model", "other:model"}, "test:model", nil
+}
+
+func (b *serviceTestBackend) SetRole(_ string, role string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.meta.Role = role
+	return nil
+}
+
 func (b *serviceTestBackend) persistedState() (string, string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -170,7 +196,7 @@ func TestManagerReschedulesServiceHeartbeat(t *testing.T) {
 	backend := &serviceTestBackend{
 		meta:     Meta{Name: "svc", ID: "sid-2", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
 		provider: fp,
-		spec:     `{"goal":"g","role":"devops","workspace":"/w","report_every":"15s"}`,
+		spec:     `{"goal":"g","role":"devops","workspace":"/w","report_interval":"15s"}`,
 	}
 	m := New(context.Background(), backend, 2)
 	defer m.Close()

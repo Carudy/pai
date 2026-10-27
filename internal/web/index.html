@@ -163,19 +163,42 @@
                     </section>
                     <section id="service-panel" aria-label="Service" hidden>
                         <div class="service-head">
+                            <button
+                                id="service-collapse"
+                                type="button"
+                                class="service-collapse"
+                                aria-controls="service-body"
+                                aria-expanded="false"
+                                title="Show service details"
+                            ><span class="config-caret" aria-hidden="true">▸</span> Details</button>
                             <span id="service-state" class="service-badge"></span>
                             <span id="service-next" class="service-next"></span>
+                            <button id="service-toggle" type="button" hidden></button>
                             <button id="refresh-service" type="button" title="Reload this service view">↻</button>
                         </div>
-                        <p id="service-status" class="service-status"></p>
-                        <details id="service-watchers-box" open>
-                            <summary>Watchers</summary>
-                            <div id="service-watchers" class="service-watchers"></div>
-                        </details>
-                        <details id="service-manifest-box">
-                            <summary>Manifest</summary>
-                            <pre id="service-manifest-view"></pre>
-                        </details>
+                        <div id="service-body" hidden>
+                            <p id="service-status" class="service-status"></p>
+                            <details id="service-watchers-box" open>
+                                <summary>Watchers</summary>
+                                <div id="service-watchers" class="service-watchers"></div>
+                            </details>
+                            <details id="service-manifest-box">
+                                <summary>Manifest</summary>
+                                <pre id="service-manifest-view"></pre>
+                            </details>
+                            <details id="service-edit-box" hidden>
+                                <summary>Edit manifest</summary>
+                                <textarea id="service-manifest-edit" rows="14" spellcheck="false"></textarea>
+                                <label class="check" for="service-approve-edit">
+                                    <input id="service-approve-edit" type="checkbox" />
+                                    I reviewed the command watchers; they may run on a schedule
+                                </label>
+                                <div class="service-edit-actions">
+                                    <button id="service-save" type="button" class="primary">Save manifest</button>
+                                    <span class="muted">Editing is only allowed while the service is stopped; the session history is kept.</span>
+                                </div>
+                            </details>
+                        </div>
                     </section>
                     <div id="conversation">
                         <section id="history" aria-label="Conversation">

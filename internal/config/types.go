@@ -101,13 +101,11 @@ func (c ContextConfig) ElideLimit() int {
 type tomlConfig struct {
 	Providers map[string]ProviderConfig `toml:"providers"`
 	App       struct {
-		DefaultModel        string                   `toml:"default_model"`
-		DefaultRole         string                   `toml:"default_role"`
-		Streaming           *bool                    `toml:"streaming"`
-		ReasoningEffort     provider.ReasoningEffort `toml:"reasoning"`
-		Interactive         bool                     `toml:"interactive"`
-		TruncateExecLimit   int                      `toml:"truncate_exec_limit"`
-		TruncateSearchLimit int                      `toml:"truncate_search_limit"`
+		DefaultModel    string                   `toml:"default_model"`
+		DefaultRole     string                   `toml:"default_role"`
+		Streaming       *bool                    `toml:"streaming"`
+		ReasoningEffort provider.ReasoningEffort `toml:"reasoning"`
+		Interactive     bool                     `toml:"interactive"`
 		// PresetModels are provider:model suggestions offered by frontends; a
 		// suggestion list, never an allowlist.
 		PresetModels []string `toml:"preset_models"`
@@ -374,13 +372,6 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 		Token:  strings.TrimSpace(raw.Conn.Token),
 		Origin: strings.TrimSpace(raw.Conn.Origin),
 	}
-	if raw.App.TruncateExecLimit > 0 {
-		cfg.Context.ExecLimit = raw.App.TruncateExecLimit
-	}
-	if raw.App.TruncateSearchLimit > 0 {
-		cfg.Context.SearchLimit = raw.App.TruncateSearchLimit
-	}
-	// [context] is canonical and overrides the legacy [app] keys above.
 	ctx := raw.Context
 	if ctx.ExecLimit > 0 {
 		cfg.Context.ExecLimit = ctx.ExecLimit

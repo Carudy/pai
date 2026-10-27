@@ -18,6 +18,9 @@ var (
 	ErrNotFound  = errors.New("runtime not found")
 	ErrQueueFull = errors.New("runner queue full")
 	ErrPrompt    = errors.New("prompt is no longer pending")
+	// ErrStopped means the resident session was stopped by the user; it must be
+	// started before it can accept an instruction or run an activation.
+	ErrStopped = errors.New("service is stopped; start it first")
 )
 
 var ErrBusy = errors.New("session is busy; wait for pending prompts and queued instructions before changing model")
@@ -67,6 +70,10 @@ type Manager struct {
 	serviceNames map[string]bool
 	sessionIDs   map[string]string
 	serviceSpecs map[string]string
+	// stoppedServices are durable-stopped services: unregistered with the scheduler
+	// and refused by Send until StartService. The map mirrors sessions.state so a
+	// stop survives a restart without a store read on every send.
+	stoppedServices map[string]bool
 	// maxResident bounds prepared service runtimes; 0 leaves it unbounded. Chat
 	// workers are not counted: they retire after each instruction anyway.
 	maxResident int
@@ -79,10 +86,11 @@ func New(ctx context.Context, backend Backend, max int) *Manager {
 	ctx, cancel := context.WithCancel(ctx)
 	m := &Manager{
 		ctx: ctx, cancel: cancel, backend: backend, max: max,
-		entries:      make(map[string]*worker),
-		serviceNames: make(map[string]bool),
-		sessionIDs:   make(map[string]string),
-		serviceSpecs: make(map[string]string),
+		entries:         make(map[string]*worker),
+		serviceNames:    make(map[string]bool),
+		sessionIDs:      make(map[string]string),
+		serviceSpecs:    make(map[string]string),
+		stoppedServices: make(map[string]bool),
 	}
 	m.scheduler = NewScheduler(ctx, m, max)
 	go func() { <-ctx.Done(); m.Close() }()
@@ -660,6 +668,11 @@ func (m *Manager) SetRole(name, role string) error {
 	if err := b.SetRole(name, role); err != nil {
 		return err
 	}
+	if m.serviceNames[name] {
+		// SetRole also rewrites the stored manifest's role; drop the cached spec
+		// so the next activation re-reads it. m.mu is held by reserveIdle here.
+		delete(m.serviceSpecs, name)
+	}
 	m.clearFailureLocked(name)
 	return nil
 }
@@ -669,6 +682,9 @@ func (m *Manager) SetRole(name, role string) error {
 func (m *Manager) SetWorkingDir(name, cwd string) error {
 	if strings.TrimSpace(cwd) == "" {
 		return errors.New("working directory is required")
+	}
+	if m.isService(name) {
+		return errors.New("a service's workspace comes from its manifest; recreate the service to change it")
 	}
 	dir, err := ResolveWorkingDir(cwd)
 	if err != nil {
@@ -736,6 +752,7 @@ func (m *Manager) Delete(name string) error {
 		delete(m.serviceNames, name)
 		delete(m.sessionIDs, name)
 		delete(m.serviceSpecs, name)
+		delete(m.stoppedServices, name)
 		m.scheduler.Unregister(name)
 	}
 	return nil
@@ -863,9 +880,15 @@ func (m *Manager) reserveIdle(name string) (func(), error) {
 		return nil, ErrBusy
 	}
 	w := m.entries[name]
-	if w != nil && (w.state != StateAwaiting || w.pending != nil || len(w.tasks) != 0 || len(w.steering) != 0) {
-		m.mu.Unlock()
-		return nil, ErrBusy
+	if w != nil {
+		// A chat worker waits in StateAwaiting; a resident service waits in
+		// StateSuspended or StateParked. Both are idle enough to retire for a
+		// settings change. A pending confirmation still blocks.
+		idle := w.state == StateAwaiting || w.state == StateSuspended || w.state == StateParked
+		if !idle || w.pending != nil || len(w.tasks) != 0 || len(w.steering) != 0 {
+			m.mu.Unlock()
+			return nil, ErrBusy
+		}
 	}
 	if m.changing == nil {
 		m.changing = make(map[string]bool)

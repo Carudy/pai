@@ -46,8 +46,18 @@ func (m *Manager) StartServices() error {
 		if spec != "" {
 			m.serviceSpecs[meta.Name] = spec
 		}
+		// A stopped service is loaded but not scheduled: stopping is durable, so a
+		// restart must not silently resume it.
+		stopped := meta.State == StateStopped
+		if stopped {
+			m.stoppedServices[meta.Name] = true
+		} else {
+			delete(m.stoppedServices, meta.Name)
+		}
 		m.mu.Unlock()
-		m.scheduler.Register(meta.Name, meta.NextWake)
+		if !stopped {
+			m.scheduler.Register(meta.Name, meta.NextWake)
+		}
 	}
 	return nil
 }
@@ -69,7 +79,14 @@ func (m *Manager) WakeService(name string, wake core.Wake) bool {
 func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*time.Time, error) {
 	w, err := m.serviceWorker(ctx, name)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, ErrStopped) {
+			return nil, err
+		}
+		// A preparation failure (including a settings change that is retiring the
+		// worker) must not silently unschedule the service: ask the scheduler to
+		// look again shortly.
+		retry := time.Now().Add(30 * time.Second)
+		return &retry, err
 	}
 	now := time.Now()
 	m.mu.Lock()
@@ -77,11 +94,22 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	m.mu.Unlock()
 	m.enforceResidentLimit(name)
 
-	probeEvents, probeNext := m.probeDue(ctx, w, now)
-	wake.Events = mergeEvents(wake.Events, append(m.dueEvents(w, now), probeEvents...))
+	// Recover durable work first, so a user instruction is seen before the probe
+	// pass. A person waiting for an answer must not sit behind up to 15 seconds of
+	// probes; the due watchers stay due and run on the next activation instead.
+	wake.Events = mergeEvents(wake.Events, m.dueEvents(w, now))
+
+	var probeEvents []core.Event
+	var probeNext *time.Time
+	if hasUserInput(wake.Events) {
+		probeNext = m.nextWatcherRun(w, now)
+	} else {
+		probeEvents, probeNext = m.probeDue(ctx, w, now)
+		wake.Events = mergeEvents(wake.Events, probeEvents)
+	}
 
 	// A bare clock tick is only the scheduler's hint to probe. When no probe
-	// crossed its trigger, the activation ends here: an unchanged world costs no
+	// crossed its condition, the activation ends here: an unchanged world costs no
 	// model call.
 	if !hasSubstantive(wake.Events) {
 		next := m.nextServiceWake(name, probeNext, time.Now())
@@ -140,9 +168,13 @@ func (m *Manager) sendServiceEvent(name, text string) error {
 	}
 	id := m.sessionIDs[name]
 	known := m.serviceNames[name]
+	stopped := m.stoppedServices[name]
 	m.mu.Unlock()
 	if !known {
 		return ErrNotFound
+	}
+	if stopped {
+		return ErrStopped
 	}
 
 	ev := core.Event{
@@ -161,7 +193,14 @@ func (m *Manager) sendServiceEvent(name, text string) error {
 		return nil
 	}
 	// The session may be known but not yet registered (for example a service
-	// created after startup). Register it and retry once.
+	// created after startup). Register it and retry once — but never resurrect a
+	// service that was stopped while this send was in flight.
+	m.mu.Lock()
+	stopped = m.stoppedServices[name]
+	m.mu.Unlock()
+	if stopped {
+		return ErrStopped
+	}
 	m.scheduler.Register(name, nil)
 	if m.scheduler.Wake(name, wake) {
 		return nil
@@ -185,8 +224,31 @@ func (m *Manager) CreateService(name, manifest string, approveCommands bool) (Se
 	m.serviceNames[view.Name] = true
 	m.sessionIDs[view.Name] = view.ID
 	m.serviceSpecs[view.Name] = view.Spec
+	delete(m.stoppedServices, view.Name)
 	m.mu.Unlock()
 	m.scheduler.Register(view.Name, view.NextWake)
+	return view, nil
+}
+
+// EditService replaces a stopped service's manifest. The backend owns the store
+// write; the manager only refreshes its cached spec and identity so the next
+// start reads the new definition. The scheduler is not touched: the service is
+// stopped by construction.
+func (m *Manager) EditService(name, manifest string, approveCommands bool) (ServiceView, error) {
+	backend, ok := m.backend.(ServiceEditor)
+	if !ok {
+		return ServiceView{}, errors.New("this backend cannot edit services")
+	}
+	view, err := backend.EditService(name, manifest, approveCommands)
+	if err != nil {
+		return ServiceView{}, err
+	}
+	m.mu.Lock()
+	m.serviceNames[view.Name] = true
+	m.sessionIDs[view.Name] = view.ID
+	m.serviceSpecs[view.Name] = view.Spec
+	m.stoppedServices[view.Name] = true
+	m.mu.Unlock()
 	return view, nil
 }
 
@@ -271,6 +333,16 @@ func (m *Manager) serviceWorker(ctx context.Context, name string) (*worker, erro
 		m.mu.Unlock()
 		return nil, ErrClosed
 	}
+	if m.stoppedServices[name] {
+		m.mu.Unlock()
+		return nil, ErrStopped
+	}
+	if m.changing[name] {
+		// A settings change is retiring the worker: do not prepare a new one
+		// against the metadata that is about to be replaced.
+		m.mu.Unlock()
+		return nil, ErrBusy
+	}
 	w := m.entries[name]
 	if w == nil {
 		wctx, cancel := context.WithCancel(m.ctx)
@@ -335,6 +407,11 @@ func (w *worker) runService() {
 		}
 		rp, err = chat.LoadRolePromptForSession(copyCfg.DefaultRole, copyCfg.RoleExtra, copyCfg.RoleExtraTools, copyCfg.TrustedProjects, cwd, meta.CreatedAt)
 		if err == nil {
+			// The manifest's goal is the service's standing instruction. It belongs
+			// in the head, so it is present on every wake and survives compaction.
+			if manifest := w.m.serviceManifest(w.name); manifest != nil {
+				rp.SetStanding(manifest.Goal)
+			}
 			w.m.mu.Lock()
 			w.rt = rt
 			rt.TrustedCmds = w.m.commandTrustLocked(w.name)
@@ -475,9 +552,154 @@ func (w *worker) ackWake(wake core.Wake, cause error) error {
 	return first
 }
 
+// StopService stops scheduling a resident session and persists the stopped
+// state, so a restart does not resume it. A live activation is canceled rather
+// than finished: stopping is an operator action, not a request to complete the
+// current task. Pending events stay in the store and are delivered after Start.
+func (m *Manager) StopService(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return ErrNotFound
+	}
+	m.mu.Lock()
+	if m.closed || m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return ErrClosed
+	}
+	if !m.serviceNames[name] {
+		m.mu.Unlock()
+		return ErrNotFound
+	}
+	if m.stoppedServices[name] {
+		m.mu.Unlock()
+		return nil
+	}
+	m.stoppedServices[name] = true
+	m.mu.Unlock()
+
+	// Unregister first so the scheduler cannot start another activation while the
+	// current worker is being retired.
+	m.scheduler.Unregister(name)
+	for {
+		m.mu.Lock()
+		w := m.entries[name]
+		m.mu.Unlock()
+		if w == nil {
+			break
+		}
+		w.cancel()
+		<-w.done
+		m.mu.Lock()
+		if m.entries[name] == w {
+			delete(m.entries, name)
+		}
+		m.mu.Unlock()
+		break
+	}
+
+	if sb, ok := m.backend.(ServiceStateBackend); ok {
+		if err := sb.SetServiceState(name, StateStopped, "stopped by user"); err != nil {
+			return err
+		}
+	}
+	if eb, ok := m.backend.(ServiceEventBackend); ok {
+		if err := eb.SetNextWake(name, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// StartService resumes a stopped service. Registration is due now, so the first
+// activation probes immediately; the worker itself is prepared lazily by
+// Activate, as it is after a restart.
+func (m *Manager) StartService(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return ErrNotFound
+	}
+	m.mu.Lock()
+	if m.closed || m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return ErrClosed
+	}
+	if !m.serviceNames[name] {
+		m.mu.Unlock()
+		return ErrNotFound
+	}
+	delete(m.stoppedServices, name)
+	m.mu.Unlock()
+
+	now := time.Now()
+	if eb, ok := m.backend.(ServiceEventBackend); ok {
+		if err := eb.SetNextWake(name, &now); err != nil {
+			return err
+		}
+	}
+	m.scheduler.Register(name, &now)
+	if sb, ok := m.backend.(ServiceStateBackend); ok {
+		if err := sb.SetServiceState(name, StateSuspended, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// hasUserInput reports whether the wake carries an instruction from a person.
+// Such a wake takes priority over due probes: the user is waiting for a reply.
+func hasUserInput(events []core.Event) bool {
+	for _, ev := range events {
+		if ev.Class == core.EventUser && ev.Kind == "user_input" {
+			return true
+		}
+	}
+	return false
+}
+
+// nextWatcherRun reports when the scheduler should look at the probes again
+// without running them now. An overdue probe returns now, so the activation that
+// just answered the user is followed immediately by a normal probe pass.
+func (m *Manager) nextWatcherRun(w *worker, now time.Time) *time.Time {
+	m.mu.Lock()
+	id, name := w.sessionID, w.name
+	m.mu.Unlock()
+	wb, ok := m.backend.(ServiceWatcherBackend)
+	if !ok {
+		return m.nextServiceWake(name, nil, now)
+	}
+	if id == "" {
+		return nil
+	}
+	watchers, err := wb.Watchers(id)
+	if err != nil {
+		retry := now.Add(30 * time.Second)
+		return &retry
+	}
+	// A user wake skips the probe pass, but a report interval still needs its
+	// reserved watcher: materialize it here so the heartbeat is not lost.
+	manifest := m.serviceManifest(name)
+	if manifest != nil && manifest.ReportInterval > 0 && !hasWatcher(watchers, config.ReportWatcherName) {
+		if added, ok := m.ensureReportWatcher(wb, id, manifest.ReportInterval, now); ok {
+			watchers = append(watchers, added)
+		}
+	}
+	var next *time.Time
+	for _, ws := range watchers {
+		if !ws.Enabled {
+			continue
+		}
+		if ws.NextRun == nil || !ws.NextRun.After(now) {
+			return &now
+		}
+		next = earlier(next, ws.NextRun)
+	}
+	return next
+}
+
 // renderSituation is the host's bounded projection of a wake. Telemetry never
-// enters the model's context; the rest is ranked and capped so one noisy event
-// cannot dominate the prompt.
+// enters the model's context, the scheduler's own clock tick is dropped (the
+// probe that fired explains the wake), and the rest is named so the model can
+// tell a watcher apart from a user instruction. A probe's output is whatever it
+// printed after its 1/0 decision, capped so one noisy script cannot dominate the
+// prompt.
 func renderSituation(wake core.Wake) string {
 	var b strings.Builder
 	b.WriteString("## Situation\n")
@@ -488,17 +710,52 @@ func renderSituation(wake core.Wake) string {
 		if ev.Class == core.EventTelemetry {
 			continue
 		}
-		payload := ev.Payload
-		if len(payload) > 512 {
-			payload = payload[:512] + "…"
+		if ev.Class == core.EventTimer && ev.Source == "clock" {
+			continue
 		}
-		fmt.Fprintf(&b, "- [%s] %s: %s\n", ev.Class, ev.Source, payload)
+		switch {
+		case ev.Class == core.EventWatcher:
+			fmt.Fprintf(&b, "- watcher %q fired: %s\n",
+				strings.TrimPrefix(ev.Source, "watch:"), boundedPayload(ev.Payload, "triggered"))
+		case ev.Class == core.EventTimer && strings.HasPrefix(ev.Source, "watch:"):
+			name := strings.TrimPrefix(ev.Source, "watch:")
+			payload := boundedPayload(ev.Payload, "")
+			if name == config.ReportWatcherName {
+				fmt.Fprintf(&b, "- periodic report is due: %s\n", boundedPayload(ev.Payload, "report"))
+			} else if payload != "" {
+				fmt.Fprintf(&b, "- timer %q fired: %s\n", name, payload)
+			} else {
+				fmt.Fprintf(&b, "- timer %q fired\n", name)
+			}
+		case ev.Class == core.EventUser:
+			if ev.Kind == "user_input" {
+				// A user instruction is recorded as a turn, so the history already
+				// carries it; repeating it here would send it twice.
+				continue
+			}
+			fmt.Fprintf(&b, "- user: %s\n", boundedPayload(ev.Payload, "instruction"))
+		default:
+			fmt.Fprintf(&b, "- [%s] %s: %s\n", ev.Class, ev.Source, boundedPayload(ev.Payload, ""))
+		}
 	}
 	const limit = 4 << 10
 	if b.Len() > limit {
 		return b.String()[:limit] + "\n[truncated]"
 	}
 	return b.String()
+}
+
+// boundedPayload caps one event's text and falls back to a label when a probe
+// printed only its decision token.
+func boundedPayload(payload, fallback string) string {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return fallback
+	}
+	if len(payload) > 512 {
+		payload = strings.ToValidUTF8(payload[:512], "") + "…"
+	}
+	return payload
 }
 
 // Keep the compiler honest about the service-mode interface.

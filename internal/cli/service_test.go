@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/runner"
 	"github.com/Carudy/pai/internal/session"
 	"github.com/Carudy/pai/internal/tui"
 )
@@ -32,12 +33,12 @@ func TestServiceCreateListShow(t *testing.T) {
 goal = "watch the river"
 role = "devops"
 workspace = "`+workspace+`"
-report_every = "30s"
+report_interval = "30s"
 
-[[watch]]
+[[watcher]]
 name = "tick"
-kind = "timer"
-every = "45s"
+type = "timer"
+interval = "45s"
 `)
 	var out bytes.Buffer
 	log := tui.NewLogger(&out, false)
@@ -61,7 +62,7 @@ every = "45s"
 	if code := runServiceCmd(context.Background(), []string{"show", "svc"}, &out, log); code != 0 {
 		t.Fatalf("show: %s", out.String())
 	}
-	for _, want := range []string{"workspace:", "report_every", "tick", "watchers:"} {
+	for _, want := range []string{"workspace:", "report_interval", "tick", "watchers:"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("show output is missing %q:\n%s", want, out.String())
 		}
@@ -112,8 +113,8 @@ every = "45s"
 	if err != nil || len(watchers) != 2 {
 		t.Fatalf("watchers = %+v, %v", watchers, err)
 	}
-	// report_every is stored as the reserved timer watcher, next to the manifest's
-	// own probes.
+	// report_interval is stored as the reserved timer watcher, next to the
+	// manifest's own probes.
 	names := map[string]bool{}
 	for _, w := range watchers {
 		names[w.Name] = true
@@ -138,12 +139,11 @@ goal = "probe"
 role = "devops"
 workspace = "`+workspace+`"
 
-[[watch]]
+[[watcher]]
 name = "level"
-kind = "command"
-every = "30s"
-cmd = "true"
-trigger = { kind = "changed" }
+type = "command"
+interval = "30s"
+command = "true"
 `)
 	var out bytes.Buffer
 	log := tui.NewLogger(&out, false)
@@ -157,6 +157,155 @@ trigger = { kind = "changed" }
 	out.Reset()
 	if code := runServiceCmd(context.Background(), []string{"create", "probe", "--file", path, "--yes"}, &out, log); code != 0 {
 		t.Fatalf("create with --yes: %s", out.String())
+	}
+}
+
+func TestServiceStopStart(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	workspace := t.TempDir()
+	path := writeManifest(t, t.TempDir(), `
+[service]
+goal = "tick"
+role = "devops"
+workspace = "`+workspace+`"
+
+[[watcher]]
+name = "tick"
+type = "timer"
+interval = "30s"
+`)
+	var out bytes.Buffer
+	log := tui.NewLogger(&out, false)
+	if code := runServiceCmd(context.Background(), []string{"create", "svc", "--file", path}, &out, log); code != 0 {
+		t.Fatalf("create: %s", out.String())
+	}
+
+	out.Reset()
+	if code := runServiceCmd(context.Background(), []string{"stop", "svc"}, &out, log); code != 0 {
+		t.Fatalf("stop: %s", out.String())
+	}
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss := store.(session.ServiceStore)
+	info, err := ss.ServiceInfo("svc")
+	if err != nil {
+		store.Close()
+		t.Fatal(err)
+	}
+	if info.State != runner.StateStopped || info.NextWake != nil {
+		store.Close()
+		t.Fatalf("after stop: state = %q next = %v", info.State, info.NextWake)
+	}
+	store.Close()
+
+	out.Reset()
+	if code := runServiceCmd(context.Background(), []string{"start", "svc"}, &out, log); code != 0 {
+		t.Fatalf("start: %s", out.String())
+	}
+	store, err = session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	info, err = store.(session.ServiceStore).ServiceInfo("svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.State != runner.StateSuspended || info.NextWake == nil {
+		t.Fatalf("after start: state = %q next = %v", info.State, info.NextWake)
+	}
+}
+
+// Editing is a manifest replacement for a stopped service: history and identity
+// stay, while the role, workspace, spec, and watcher set are reconciled.
+func TestServiceEditWhileStopped(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	workspace := t.TempDir()
+	path := writeManifest(t, t.TempDir(), `
+[service]
+goal = "first"
+role = "devops"
+workspace = "`+workspace+`"
+report_interval = "30s"
+
+[[watcher]]
+name = "tick"
+type = "timer"
+interval = "30s"
+`)
+	var out bytes.Buffer
+	log := tui.NewLogger(&out, false)
+	if code := runServiceCmd(context.Background(), []string{"create", "svc", "--file", path}, &out, log); code != 0 {
+		t.Fatalf("create: %s", out.String())
+	}
+
+	// A live (or at least not stopped) service refuses the edit.
+	newWorkspace := t.TempDir()
+	edited := writeManifest(t, t.TempDir(), `
+[service]
+goal = "edited"
+role = "coder"
+workspace = "`+newWorkspace+`"
+
+[[watcher]]
+name = "level"
+type = "command"
+interval = "60s"
+command = "echo 1"
+`)
+	out.Reset()
+	if code := runServiceCmd(context.Background(), []string{"edit", "svc", "--file", edited, "--yes"}, &out, log); code == 0 {
+		t.Fatalf("editing a service that is not stopped was accepted: %s", out.String())
+	}
+
+	out.Reset()
+	if code := runServiceCmd(context.Background(), []string{"stop", "svc"}, &out, log); code != 0 {
+		t.Fatalf("stop: %s", out.String())
+	}
+	out.Reset()
+	if code := runServiceCmd(context.Background(), []string{"edit", "svc", "--file", edited, "--yes"}, &out, log); code != 0 {
+		t.Fatalf("edit: %s", out.String())
+	}
+
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ss := store.(session.ServiceStore)
+	info, err := ss.ServiceInfo("svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(newWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Role != "coder" || info.Cwd != resolved || info.State != runner.StateStopped || info.NextWake != nil {
+		t.Fatalf("after edit: role=%q cwd=%q state=%q next=%v", info.Role, info.Cwd, info.State, info.NextWake)
+	}
+	if !strings.Contains(info.Spec, `"goal":"edited"`) || !strings.Contains(info.Spec, `"level"`) {
+		t.Fatalf("spec was not replaced: %s", info.Spec)
+	}
+	watchers, err := ss.Watchers(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, w := range watchers {
+		names[w.Name] = true
+		if w.NextRun != nil {
+			t.Fatalf("watcher %q has a next run while stopped: %v", w.Name, w.NextRun)
+		}
+	}
+	if len(watchers) != 1 || !names["level"] {
+		t.Fatalf("watchers = %v, want only the edited probe", names)
 	}
 }
 
@@ -208,14 +357,13 @@ func TestServeBackendCreateService(t *testing.T) {
 goal = "watch the river"
 role = "devops"
 workspace = "` + workspace + `"
-report_every = "1h"
+report_interval = "1h"
 
-[[watch]]
+[[watcher]]
 name = "level"
-kind = "command"
-every = "60s"
-cmd = "echo 1"
-trigger = { kind = "changed" }
+type = "command"
+interval = "60s"
+command = "echo 1"
 `
 	store, err := session.Open()
 	if err != nil {
@@ -245,6 +393,19 @@ trigger = { kind = "changed" }
 
 	if _, err := backend.CreateService("svc", manifest, true); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("duplicate create: %v", err)
+	}
+
+	// A service's role lives in both the session row and the stored manifest; a
+	// change must keep them in sync so the view and a restart agree.
+	if err := backend.SetRole("svc", "coder"); err != nil {
+		t.Fatalf("SetRole: %v", err)
+	}
+	renamed, err := backend.ServiceView("svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Role != "coder" || !strings.Contains(renamed.Spec, `"role":"coder"`) {
+		t.Fatalf("role change did not reach the manifest: role=%q spec=%s", renamed.Role, renamed.Spec)
 	}
 
 	got, err := backend.ServiceView("svc")

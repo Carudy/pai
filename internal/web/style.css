@@ -164,7 +164,7 @@ label {
 
 #app {
     display: grid;
-    grid-template-columns: 240px minmax(0, 1fr) 300px;
+    grid-template-columns: 260px minmax(0, 1fr) 300px;
     grid-template-rows: minmax(0, 1fr);
     height: 100vh;
     height: 100dvh;
@@ -417,10 +417,14 @@ header p {
 }
 
 .session-row {
-    display: flex;
-    align-items: stretch;
-    gap: 4px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    column-gap: 6px;
+    align-items: center;
     flex-shrink: 0;
+    padding: 4px 6px;
+    border-radius: 8px;
 }
 
 .session-row button {
@@ -431,13 +435,18 @@ header p {
 }
 
 .session-row .session-open {
-    flex: 1;
+    grid-column: 1;
+    grid-row: 1;
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .session-row .session-delete {
-    flex: 0 0 auto;
-    padding: 0 8px;
+    grid-column: 2;
+    grid-row: 1;
+    padding: 0 6px;
     font-style: normal;
     color: var(--muted);
 }
@@ -450,14 +459,20 @@ header p {
         transition: opacity 0.1s ease-in-out;
     }
     .session-row:hover .session-delete,
-    .session-row:focus-within .session-delete {
+    .session-row:focus-within .session-delete,
+    .session-row.selected .session-delete {
         opacity: 1;
     }
 }
 
-.session-row.selected .session-open {
+.session-row.selected {
     background: var(--link-bg);
-    border-color: var(--link-border);
+    box-shadow: inset 0 0 0 1px var(--link-border);
+}
+
+.session-row.selected .session-open {
+    background: transparent;
+    border-color: transparent;
     color: var(--link-ink);
     font-weight: 700;
 }
@@ -771,6 +786,8 @@ header p {
 
 .conversation-wrapper {
     position: relative;
+    display: flex;
+    flex-direction: column;
     container-type: inline-size;
     min-width: 0;
     min-height: 0;
@@ -778,12 +795,13 @@ header p {
 }
 
 #conversation {
+    flex: 1 1 auto;
     overflow: auto;
     overscroll-behavior: contain;
     padding: 24px 28px;
     min-height: 0;
     scrollbar-gutter: stable;
-    height: 100%;
+    height: auto;
 }
 
 #history {
@@ -854,6 +872,28 @@ header p {
 .turn.user {
     background: var(--soft);
     box-shadow: none;
+}
+
+/* A service's inform report is the durable artifact of an activation: mark it
+   with a quiet accent rail and a report glyph, not a full attention card. A
+   yield says "nothing to do", so it reads as a paused, dashed card. */
+.turn.assistant.action-inform {
+    background: var(--soft);
+    border-left: 3px solid var(--accent);
+}
+
+.turn.assistant.action-inform .turn-heading {
+    color: var(--accent);
+}
+
+.turn.assistant.action-yield {
+    background: var(--panel);
+    border-style: dashed;
+    box-shadow: none;
+}
+
+.turn.assistant.action-yield .turn-heading {
+    color: var(--muted);
 }
 
 /* Rewind control on a user turn: quiet until the card is hovered or focused. */
@@ -2170,26 +2210,44 @@ header p {
     font-weight: 650;
 }
 
-/* Only services carry a state in the list; chat rows stay name-only. */
+/* Only services carry a state in the list; chat rows stay name-only. The state
+   is the second line: a dot, a short word, and the next wake, so a long name can
+   use the full width instead of fighting the badge and the delete button. */
 .session-row .session-state {
-    align-self: center;
-    flex: 0 0 auto;
-    padding: 1px 7px;
-    border-radius: 999px;
-    background: var(--soft);
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--muted);
     font-size: 11px;
+    font-style: normal;
 }
 
-.session-row .session-state[data-state='busy'] {
-    background: var(--complete-bg);
-    color: var(--complete-ink);
+.session-row .session-state::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: var(--muted);
+    vertical-align: middle;
 }
 
-.session-row .session-state[data-state='parked'] {
-    color: var(--red);
-    border: 1px solid var(--border);
-    background: transparent;
+.session-row .session-state[data-state='busy']::before,
+.session-row .session-state[data-state='starting']::before {
+    background: var(--accent);
+}
+
+.session-row .session-state[data-state='parked']::before {
+    background: var(--red);
+}
+
+.session-row .session-state[data-state='stopped']::before {
+    opacity: 0.5;
 }
 
 .panel-overlay {
@@ -2263,10 +2321,11 @@ header p {
 /* ── Service view above the conversation ──────────────────── */
 #service-panel {
     display: flex;
+    flex: 0 0 auto;
     flex-direction: column;
     gap: 8px;
-    margin: 8px 0;
-    padding: 10px 12px;
+    margin: 10px 14px 0;
+    padding: 8px 12px;
     border: 1px solid var(--border);
     border-radius: 10px;
     background: var(--panel);
@@ -2279,7 +2338,38 @@ header p {
 .service-head {
     display: flex;
     align-items: center;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.service-collapse {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.service-collapse:hover {
+    color: var(--ink);
+    background: var(--soft);
+    border-radius: 6px;
+}
+
+#service-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 38vh;
+    overflow: auto;
+}
+
+#service-body[hidden] {
+    display: none;
 }
 
 .service-badge {
@@ -2300,7 +2390,7 @@ header p {
 }
 
 .service-next {
-    flex: 1;
+    flex: 1 1 160px;
     color: var(--muted);
     font-size: 12px;
 }
@@ -2317,27 +2407,71 @@ header p {
     font-size: 12px;
 }
 
+.service-watchers {
+    overflow-x: auto;
+}
+
+#service-edit-box textarea {
+    width: 100%;
+    min-height: 180px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+}
+
+.service-edit-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 6px;
+}
+
+.watcher-head,
 .watcher-row {
     display: grid;
-    grid-template-columns: minmax(8ch, 1fr) auto auto minmax(0, 2fr);
-    gap: 8px;
+    grid-template-columns: minmax(12ch, 1.2fr) minmax(11ch, 0.8fr) 19ch 19ch minmax(14ch, 1.4fr);
+    gap: 10px;
     align-items: baseline;
+    min-width: 700px;
     padding: 4px 0;
-    border-top: 1px solid var(--border);
     font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.watcher-head {
+    padding-top: 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.watcher-row {
+    border-top: 1px solid var(--border);
+}
+
+.watcher-head + .watcher-row {
+    border-top: 0;
 }
 
 .watcher-name {
     font-weight: 650;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .watcher-meta,
 .watcher-times {
     color: var(--muted);
+    white-space: nowrap;
 }
 
 .watcher-state {
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .watcher-state.error {

@@ -17,6 +17,8 @@ See the [module map](../organization.md) for the surrounding layers.
   capability-gated vocabulary: `ChatActions` is the interactive set and
   `ServiceActions` adds `inform` and `yield`. Parsing recognizes every known
   action; `Response.ValidateFor` rejects one the current mode does not allow.
+  `SetStanding` adds a per-session instruction (a service's goal) to the head,
+  after the role and project context and before the tool reference.
 - `RolePrompt.MessagesWithSituation` (or `WithSituation`) inserts a bounded,
   per-activation situation block after history and before the tail. It is a
   projection, never a recorded turn, and the head stays byte-identical so the

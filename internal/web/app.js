@@ -11,8 +11,12 @@ let selected = '', generation = 0, stream = null, retry = null, lastEventAt = 0,
 // storage, for the same reason the selected session is.
 let sessionMode = 'chat';
 // The service view for the open session, and the request counter that keeps a
-// slow refresh from painting over a newer one.
-let serviceView = null, serviceRequest = 0, serviceTimer = null;
+// slow refresh from painting over a newer one. serviceError keeps the bar stable
+// when a view cannot be loaded instead of hiding it.
+let serviceView = null, serviceRequest = 0, serviceTimer = null, serviceError = '';
+let serviceEditFor = '', serviceEditDirty = false;
+const SERVICE_EXPANDED_KEY = 'pai.service-expanded';
+let serviceExpanded = false;
 let serverCwd = '';
 let createMode = 'chat';
 // Reconnect delay for the event stream: back off while the server is unreachable
@@ -117,8 +121,14 @@ async function applyModel(e) {
 }
 function workingDirControls() {
   const input = $('session-working-dir');
-  const disabled = !selected || modelBlocked || cwdApplying;
+  // A service's workspace is part of its manifest: probes and the model both run
+  // there, so moving it is a recreate, not a setting.
+  const service = sessionMode === 'service';
+  const disabled = !selected || modelBlocked || cwdApplying || service;
   input.disabled = disabled;
+  input.title = service
+    ? "A service's workspace comes from its manifest; recreate the service to change it"
+    : 'Existing directory on the server; used on the next send';
   $('apply-working-dir').disabled = disabled || !input.value.trim() || input.value.trim() === savedCwd;
 }
 async function applyWorkingDir(e) {
@@ -187,7 +197,7 @@ function statusText(value) { return String(value || '').replace(/[\x00-\x1f\x7f]
 // One emoji per phase, at the head of the status line. The spinner keeps its own
 // job — it says the machine is working — so the generic model waits spin, while a
 // phase that is waiting on the reader (a prompt, a question) shows a still glyph.
-const phaseIcons = {starting:'⏳', waiting_model:'⏳', reasoning:'🤔', tool:'🔧', compacting:'🗜', waiting_approval:'🙋', waiting_question:'❓', awaiting:'💤', stopped:'⛔'};
+const phaseIcons = {starting:'⏳', waiting_model:'⏳', reasoning:'🤔', tool:'🔧', compacting:'🗜', waiting_approval:'🙋', waiting_question:'❓', awaiting:'💤', suspended:'💤', parked:'⏸', stopped:'⛔'};
 const spinningPhases = new Set(['starting', 'waiting_model']);
 function statusIcon(s) {
   if (s.pending) return s.pending.kind === 'confirm' ? '🙋' : '❓';
@@ -199,7 +209,21 @@ function phaseLabel(s) {
     const tool = s.active_tool;
     return 'Running ' + statusText(tool.Name || 'tool') + (tool.Target ? ' · ' + statusText(tool.Target) : '');
   }
-  return ({starting:'Starting…', waiting_model:'Waiting for model response', reasoning:'Receiving reasoning', tool:'Running tool', compacting:'Compressing history…', waiting_approval:'Waiting for approval', waiting_question:'Waiting for answer', awaiting:'Awaiting instruction', stopped:'Stopped'})[s.phase || s.state] || 'Waiting for model response';
+  const known = {starting:'Starting…', waiting_model:'Waiting for model response', reasoning:'Receiving reasoning', tool:'Running tool', compacting:'Compressing history…', waiting_approval:'Waiting for approval', waiting_question:'Waiting for answer', awaiting:'Awaiting instruction', suspended:'Idle · sleeping until the next wake', parked:'Parked · waiting for an answer', stopped:'Stopped'};
+  const phase = s.phase || s.state;
+  return known[phase] || (s.state === 'suspended' ? 'Idle · sleeping until the next wake' : s.state === 'parked' ? 'Parked · waiting for an answer' : s.state === 'stopped' ? 'Stopped' : 'Waiting for model response');
+}
+// The short vocabulary shared by the sidebar row and the service bar. The header
+// adds phase detail on top of the same words, so the two never disagree.
+function serviceStateLabel(state) {
+  switch (String(state || '')) {
+    case 'suspended': return 'Idle';
+    case 'parked': return 'Parked';
+    case 'stopped': return 'Stopped';
+    case 'busy': return 'Working';
+    case 'starting': return 'Starting…';
+    default: return state ? String(state) : 'Stored';
+  }
 }
 function runSnapshot(s) {
   if (s.pending) {
@@ -447,6 +471,24 @@ function applySessionsCollapsed(collapsed) {
   try { localStorage.setItem(SESSIONS_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (_) {}
 }
 function storedSessionsCollapsed() { try { return localStorage.getItem(SESSIONS_COLLAPSED_KEY) === '1'; } catch (_) { return false; } }
+// The service bar is a stable one-line header when collapsed and a bounded
+// details panel when expanded. The choice is a browser preference, like the
+// session list and the theme.
+function storedServiceExpanded() { try { return localStorage.getItem(SERVICE_EXPANDED_KEY) === '1'; } catch (_) { return false; } }
+function applyServiceExpanded(expanded) {
+  serviceExpanded = !!expanded;
+  const body = $('service-body');
+  if (body) body.hidden = !serviceExpanded;
+  const toggle = $('service-collapse');
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', String(serviceExpanded));
+    toggle.title = serviceExpanded ? 'Hide service details' : 'Show service details';
+    // The harness's fake DOM has no querySelector; the caret is the only child.
+    const caret = toggle.firstElementChild;
+    if (caret) caret.textContent = serviceExpanded ? '▾' : '▸';
+  }
+  try { localStorage.setItem(SERVICE_EXPANDED_KEY, serviceExpanded ? '1' : '0'); } catch (_) {}
+}
 async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
   const controller = typeof AbortController === 'function' ? new AbortController() : null;
@@ -483,25 +525,32 @@ async function sessions(reset = false) {
     const row = text('div', '', 'session-row');
     row.dataset.name = meta.name;
     row.classList.toggle('selected', meta.name === selected);
+    row.title = meta.name;
     const button = text('button', meta.name, 'session-open');
     button.type = 'button';
+    button.title = meta.name;
     button.setAttribute('aria-current', meta.name === selected ? 'page' : 'false');
     button.onclick = () => select(meta.name, meta.cwd);
-    const remove = text('button', '🗑', 'session-delete');
+    const remove = text('button', '✕', 'session-delete');
     remove.type = 'button';
     remove.title = 'Delete this session';
     remove.setAttribute('aria-label', 'Delete session ' + meta.name);
     remove.onclick = event => { event.stopPropagation(); return deleteSession(meta.name); };
     row.append(button);
+    row.append(remove);
     if (meta.mode === 'service') {
-      // A service's state is the interesting part of the row: it says whether the
-      // session is asleep, parked on a question, or working.
-      const state = text('span', String(meta.state || 'stored'), 'session-state');
+      // Two lines in a narrow column: name on top, then state and the next wake
+      // in one muted line. The short vocabulary matches the header.
+      const state = text('span', serviceStateLabel(meta.state), 'session-state');
       state.dataset.state = String(meta.state || 'stored');
-      if (meta.next_wake) state.title = 'next wake ' + formatTime(meta.next_wake);
+      if (meta.next_wake) {
+        state.textContent += ' · next ' + formatWakeShort(meta.next_wake);
+        state.title = 'State: ' + serviceStateLabel(meta.state) + '\nNext wake: ' + formatTimeExact(meta.next_wake);
+      } else {
+        state.title = 'State: ' + serviceStateLabel(meta.state);
+      }
       row.append(state);
     }
-    row.append(remove);
     $('sessions').append(row);
   }
   sessionOffset += (page.sessions || []).length; $('more-sessions').hidden = sessionOffset >= page.total;
@@ -520,7 +569,8 @@ function applyModeUI() {
   $('tab-service').classList.toggle('selected', service);
   $('sessions-heading').textContent = service ? 'Services' : 'Chat';
   $('sessions').setAttribute('aria-label', service ? 'Services' : 'Chat sessions');
-  if (!service) { $('service-panel').hidden = true; serviceView = null; }
+  if (!service) { $('service-panel').hidden = true; serviceView = null; serviceError = ''; }
+  else { paintService(); if (selected) loadService().catch(() => {}); }
   if (!selected) {
     $('title').textContent = service ? 'Select or create a service' : 'Select or create a session';
     paintEmpty();
@@ -558,48 +608,151 @@ function routeFromURL() {
 }
 
 async function loadService() {
-  if (!selected || sessionMode !== 'service') { serviceView = null; $('service-panel').hidden = true; return; }
+  if (!selected || sessionMode !== 'service') { serviceView = null; serviceError = ''; paintService(); return; }
   const request = ++serviceRequest, name = selected;
   try {
     const view = await api('service?name=' + encodeURIComponent(name));
     if (request !== serviceRequest || selected !== name) return;
     serviceView = view;
+    serviceError = '';
     paintService();
   } catch (e) {
     if (request !== serviceRequest) return;
-    if (e.status === 404) { serviceView = null; $('service-panel').hidden = true; return; }
+    // A missing view must not make the bar vanish: it stays with an explanation.
+    if (e.status === 404) {
+      serviceView = null;
+      serviceError = 'No service view. The session may have been deleted.';
+      paintService();
+      return;
+    }
     error(e);
+    if (!serviceView) { serviceError = e.message || 'Could not load the service view'; paintService(); }
   }
 }
 function scheduleService() { clearTimeout(serviceTimer); serviceTimer = setTimeout(() => { loadService().catch(() => {}); }, 400); }
 
+// Stop or start the open service. The server persists the state, so the view and
+// the scheduler agree immediately; history is refreshed because stopping retires
+// the live runtime.
+// Save a stopped service's manifest. The server re-validates and reconciles the
+// watcher set; the page only refreshes what it read back.
+async function saveServiceManifest() {
+  if (!selected) return;
+  const name = selected, manifest = $('service-manifest-edit').value;
+  if (!manifest.trim()) { error(new Error('The manifest is empty')); return; }
+  try {
+    const view = await api('service/edit', {name, manifest, approve_commands: $('service-approve-edit').checked});
+    if (selected !== name) return;
+    serviceView = view;
+    serviceEditFor = '';
+    serviceEditDirty = false;
+    paintService();
+    toast('manifest saved; start the service to apply it');
+    await sessions(true).catch(() => {});
+  } catch (e) {
+    error(e);
+  }
+}
+
+async function serviceControl(kind) {
+  if (!selected) return;
+  try {
+    await api('service/' + kind, {name: selected});
+    await loadService();
+    await loadSnapshot().catch(() => {});
+    scheduleHistory();
+    await sessions(true).catch(() => {});
+  } catch (e) {
+    error(e);
+  }
+}
+
 function specOf(watcher) {
   try { return JSON.parse(watcher.spec || '{}'); } catch { return {}; }
 }
+// last_state is the watcher's debounce/latch document; show what it means rather
+// than the raw JSON. Unix seconds become the same compact clock as the schedule.
+function humanizeWatcherState(w) {
+  if (w.last_error) return w.last_error;
+  const raw = String(w.last_state || '').trim();
+  if (!raw) return '';
+  let st;
+  try { st = JSON.parse(raw); } catch { return raw; }
+  if (!st || typeof st !== 'object') return raw;
+  const stamp = seconds => formatWakeShort(new Date(Number(seconds) * 1000).toISOString());
+  const parts = [];
+  if (st.error) parts.push('error: ' + st.error);
+  if (st.since) parts.push('holding since ' + stamp(st.since));
+  if (st.fired) parts.push('fired ' + stamp(st.fired));
+  if (st.reported && !st.fired) parts.push('reported');
+  return parts.join(' · ') || raw;
+}
 function paintService() {
-  const view = serviceView;
-  if (!view) { $('service-panel').hidden = true; return; }
-  $('service-panel').hidden = false;
-  const state = String(view.state || 'stored');
+  const panel = $('service-panel');
+  // The bar exists only for a selected service. It is never hidden by a failed
+  // refresh: a stable bar with an explanation beats one that blinks in and out.
+  if (sessionMode !== 'service' || !selected) { panel.hidden = true; return; }
+  panel.hidden = false;
+
   const badge = $('service-state');
-  badge.textContent = view.phase && view.phase !== state ? state + ' · ' + view.phase : state;
+  const toggle = $('service-toggle');
+  const view = serviceView;
+  if (!view) {
+    badge.textContent = serviceError ? 'Service' : 'Loading…';
+    badge.dataset.state = serviceError ? 'stored' : 'loading';
+    $('service-next').textContent = '';
+    $('service-status').textContent = serviceError || 'Loading the service view…';
+    $('service-watchers').replaceChildren();
+    $('service-manifest-view').textContent = '';
+    if (toggle) toggle.hidden = true;
+    return;
+  }
+
+  const state = String(view.state || 'stored');
+  badge.textContent = serviceStateLabel(state);
   badge.dataset.state = state;
-  $('service-next').textContent = view.next_wake ? 'next wake ' + formatTime(view.next_wake) : 'no timer';
+  $('service-next').textContent = state === 'stopped'
+    ? 'not scheduled'
+    : view.next_wake ? 'next wake ' + formatTimeExact(view.next_wake) : 'waiting for an event';
   $('service-status').textContent = view.status ? view.status : 'No report yet.';
+
+  if (toggle) {
+    const stopped = state === 'stopped';
+    toggle.textContent = stopped ? '▶ Start' : '■ Stop';
+    toggle.title = stopped ? 'Resume this service' : 'Stop scheduling this service';
+    toggle.dataset.action = stopped ? 'start' : 'stop';
+    toggle.hidden = false;
+  }
 
   const box = $('service-watchers');
   box.replaceChildren();
   const watchers = view.watchers || [];
-  if (!watchers.length) box.append(text('p', 'No watchers: this service only wakes when you send it something.', 'muted'));
+  if (!watchers.length) {
+    box.append(text('p', 'No watchers: this service only wakes when you send it something.', 'muted'));
+  } else {
+    const head = text('div', '', 'watcher-head');
+    for (const label of ['Watcher', 'Schedule', 'Last run', 'Next run', 'State']) head.append(text('span', label));
+    box.append(head);
+  }
   for (const w of watchers) {
     const spec = specOf(w);
     const row = text('div', '', 'watcher-row');
     const label = w.name === '_report' ? 'report (heartbeat)' : w.name;
-    row.append(text('span', label, 'watcher-name'));
-    row.append(text('span', [spec.kind || 'timer', spec.every].filter(Boolean).join(' · '), 'watcher-meta'));
-    row.append(text('span', 'last ' + (formatTime(w.last_run) || '—') + ' · next ' + (formatTime(w.next_run) || '—'), 'watcher-times'));
-    const detail = w.last_error || w.last_state || '';
-    const tail = text('span', detail.length > 120 ? detail.slice(0, 120) + '…' : detail, 'watcher-state');
+    const name = text('span', label, 'watcher-name');
+    name.title = spec.command ? spec.command : (spec.prompt ? spec.prompt : label);
+    row.append(name);
+    const schedule = [spec.type || 'timer', spec.interval].filter(Boolean).join(' · ');
+    row.append(text('span', spec.severity && spec.severity !== 'info' ? schedule + ' · ' + spec.severity : schedule, 'watcher-meta'));
+    const last = formatTimeExact(w.last_run), next = formatTimeExact(w.next_run);
+    const lastNode = text('span', last || '—', 'watcher-times');
+    if (last) lastNode.title = 'Last run: ' + last;
+    row.append(lastNode);
+    const nextNode = text('span', next || '—', 'watcher-times');
+    if (next) nextNode.title = 'Next run: ' + next;
+    row.append(nextNode);
+    const detail = humanizeWatcherState(w);
+    const tail = text('span', detail || '—', 'watcher-state');
+    if (detail.length > 160) tail.title = detail;
     if (w.last_error) tail.classList.toggle('error', true);
     row.append(tail);
     box.append(row);
@@ -608,13 +761,33 @@ function paintService() {
   let manifest = view.spec || '';
   try { manifest = JSON.stringify(JSON.parse(manifest), null, 2); } catch { /* show it raw */ }
   $('service-manifest-view').textContent = manifest || 'No manifest.';
+
+  // The manifest is editable only while stopped: a live service would race its
+  // next activation. Unsaved text survives a periodic refresh; a service switch
+  // or a successful save reloads the canonical TOML.
+  const editBox = $('service-edit-box');
+  if (editBox) {
+    const stopped = state === 'stopped';
+    editBox.hidden = !stopped;
+    if (stopped) {
+      if (serviceEditFor !== view.name || !serviceEditDirty) {
+        const area = $('service-manifest-edit');
+        if (area) area.value = view.manifest_toml || '';
+        serviceEditFor = view.name;
+        serviceEditDirty = false;
+      }
+    } else {
+      serviceEditFor = '';
+      serviceEditDirty = false;
+    }
+  }
 }
 
 // ── Create panel ───────────────────────────────────────────
 function starterManifest() {
   const role = selectedRole() || 'devops';
   const workspace = serverCwd || '/path/to/workspace';
-  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\nreport_every = "1h"\n# on_change = true\n\n# [[watch]]\n# name = "river-level"\n# kind = "command"\n# every = "60s"\n# cmd = "cat /path/to/state.json"\n# trigger = { kind = "json_number", field = "level", op = ">", value = 3.2 }\n# for = "2m"\n# cooldown = "15m"\n# severity = "high"\n';
+  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\nreport_interval = "1h"\n# report_on_change = true\n\n# [[watcher]]\n# name = "river-level"\n# type = "command"\n# interval = "60s"\n# command = "scripts/check_river"\n# hold_for = "2m"\n# repeat_after = "15m"\n# severity = "high"\n\n# [[watcher]]\n# name = "tick"\n# type = "timer"\n# interval = "5m"\n# prompt = "Report the current state in one line."\n';
 }
 function paintCreateTabs() {
   for (const mode of ['chat', 'service']) {
@@ -896,9 +1069,35 @@ function formatTime(value) {
   const pad = n => String(n).padStart(2, '0');
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
+// Schedules are precise to the second: "next wake" is an operational deadline,
+// not a chat timestamp.
+function formatTimeExact(value) {
+  const base = formatTime(value);
+  if (!base) return '';
+  const d = new Date(value);
+  const pad = n => String(n).padStart(2, '0');
+  return base + ':' + pad(d.getSeconds());
+}
+// The sidebar is narrow: today only needs the clock, another day needs the date.
+function formatWakeShort(value) {
+  if (!value) return '';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '';
+  const pad = n => String(n).padStart(2, '0');
+  const time = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+  const today = new Date();
+  return d.toDateString() === today.toDateString() ? time : pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + time;
+}
 function stampTime(node, value) {
   const label = formatTime(value);
   if (label) node.append(text('time', label, 'turn-time'));
+}
+// A service report is a first-class card, not just another assistant turn; a
+// yield is the explicit "nothing to do" card. Chat keeps the neutral marker.
+function actionHeading(action) {
+  if (action === 'inform') return '📢 PAI';
+  if (action === 'yield') return '⏸️ PAI';
+  return '✦ PAI';
 }
 function renderTurns(turns) {
   let toolCard = null;
@@ -910,7 +1109,8 @@ function renderTurns(turns) {
     }
     const parsed = turn.Role === 'assistant' ? parsedResponse(turn.Content) : null;
     const article = text('article', '', 'turn ' + (turn.Role === 'user' ? 'user' : 'assistant'));
-    if (!parsed || parsed.action !== 'tool') article.append(text('div', turn.Role === 'user' ? 'You' : '✦ PAI', 'turn-heading'));
+    if (parsed && (parsed.action === 'inform' || parsed.action === 'yield')) article.classList.toggle('action-' + parsed.action, true);
+    if (!parsed || parsed.action !== 'tool') article.append(text('div', turn.Role === 'user' ? 'You' : actionHeading(parsed && parsed.action), 'turn-heading'));
     // Only a plain user instruction is a rewind point; ask-answers and tool
     // results share the user role but are not instructions.
     if (turn.Role === 'user' && turn.Kind === 'input') {
@@ -1252,7 +1452,10 @@ function connect() {
     if (event.data !== undefined) {
       activity(event);
     }
-    if (['snapshot','busy','awaiting','done','terminate','stopped','prompt','prompt_replied','user','session'].includes(event.type)) scheduleHistory();
+    if (['snapshot','busy','awaiting','done','terminate','stopped','suspended','parked','prompt','prompt_replied','user','session'].includes(event.type)) scheduleHistory();
+    // The service bar is a durable view, not a transcript card: refresh it on every
+    // event so its state and next wake track the scheduler, not only history loads.
+    if (sessionMode === 'service') scheduleService();
     scheduleContext();
   };
   stream.onerror = () => {
@@ -1654,7 +1857,9 @@ async function select(name, cwd, replaceURL = false) {
     $('title').textContent = name; $('title').title = name;
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
-    $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
+  serviceView = null; serviceError = ''; paintService();
+  serviceEditFor = ''; serviceEditDirty = false;
+  $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   updateJumpButtons();
   $('conversation').scrollTop = 0; autoScroll = false; lastScrollTop = 0; followTail = true; controls();
   loadTrustAll();
@@ -2076,6 +2281,13 @@ $('tab-service').onclick = () => setMode('service');
 $('create-tab-chat').onclick = () => switchCreateMode('chat');
 $('create-tab-service').onclick = () => switchCreateMode('service');
 $('refresh-service').onclick = () => { loadService().catch(error); };
+$('service-collapse').onclick = () => applyServiceExpanded(!serviceExpanded);
+$('service-save').onclick = saveServiceManifest;
+$('service-manifest-edit').oninput = () => { serviceEditDirty = true; };
+$('service-toggle').onclick = () => {
+  const actionName = $('service-toggle').dataset.action;
+  if (selected && actionName) serviceControl(actionName);
+};
 $('composer').onsubmit = e => { e.preventDefault(); action('send'); };
 $('steer').onclick = () => action('steer'); $('cancel').onclick = () => action('cancel');
 $('apply-plan').onclick = () => action('send', AUTO_REPLY);
@@ -2115,6 +2327,7 @@ controls();
 applyTheme(initialTheme());
 applyConfigCollapsed(storedConfigCollapsed());
 applySessionsCollapsed(storedSessionsCollapsed());
+applyServiceExpanded(storedServiceExpanded());
 initPendingDrag();
 initReasoningDrag();
 updateJumpButtons();

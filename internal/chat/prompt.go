@@ -59,6 +59,12 @@ type RolePrompt struct {
 	// and before the tail. It is never recorded as a turn.
 	situation string
 
+	// standing is a per-session instruction (a service's goal) placed in the head,
+	// after the role and project context and before the tool reference. It is
+	// constant for the life of the session, so it stays cacheable and is never
+	// removed by compaction.
+	standing string
+
 	workingDir string
 	hostInfo   string
 	head       string
@@ -112,6 +118,15 @@ func (rp *RolePrompt) actionSet() ActionSet {
 // expression. Callers must set it before the first request.
 func (rp *RolePrompt) SetActions(actions ActionSet) *RolePrompt {
 	rp.Actions = actions
+	rp.head = composeHead(rp, rp.hostInfo)
+	return rp
+}
+
+// SetStanding installs a per-session instruction (a service's goal) and
+// recomposes the head. It must be called before the prompt is shared: the head
+// is frozen so the provider's prefix cache can match from one wake to the next.
+func (rp *RolePrompt) SetStanding(text string) *RolePrompt {
+	rp.standing = strings.TrimSpace(text)
 	rp.head = composeHead(rp, rp.hostInfo)
 	return rp
 }
@@ -185,6 +200,13 @@ func composeHead(rp *RolePrompt, hostInfo string) string {
 		b.WriteString(ctx)
 		b.WriteString("\n\n")
 		b.WriteString(repoConvention)
+	}
+	// A service's goal is its standing instruction. It sits after the role and
+	// project guidance and before the tool reference, is constant per session, and
+	// survives compaction because the head is never trimmed.
+	if goal := strings.TrimSpace(rp.standing); goal != "" {
+		b.WriteString("\n\n## Service goal\n")
+		b.WriteString(goal)
 	}
 	for _, t := range rp.Tools {
 		b.WriteString("\n\n## Tool: ")

@@ -1,13 +1,14 @@
 // Package watcher evaluates a service's host-side probes.
 //
-// A probe is a bounded command (or a plain tick) whose observation is compared
-// against a trigger. The caller persists the resulting State and wakes the model
-// only when the observation crossed the trigger, so an unchanged world costs no
-// model call. Nothing here knows about sessions, scheduling, or the model.
+// A probe is a bounded command (or a plain tick) that answers one question:
+// does the watched condition hold? The command prints 1/0 (or true/false); the
+// rest of its output is the summary handed to the model when the watch fires.
+// Keeping the decision in the command means the manifest owns no query
+// language, and a probe can use whatever shell, Python, or jq is on the host.
+// Nothing here knows about sessions, scheduling, or the model.
 package watcher
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,7 +29,7 @@ const (
 )
 
 // Result is one probe's outcome. State is the opaque value to persist; Fire says
-// whether this observation is worth waking the model; Err reports a probe
+// whether this observation is worth waking the model for; Err reports a probe
 // failure, which is persisted but does not itself stop the watcher.
 type Result struct {
 	Fire     bool
@@ -40,74 +41,74 @@ type Result struct {
 }
 
 // state is what a watcher remembers between probes. It is JSON so it survives
-// in the store's single last_state column: Value is the comparison baseline,
-// Pending the value being debounced for a "changed" trigger, Since when the
-// current condition started holding, Fired when the model was last woken, and
+// in the store's single last_state column: Since when the predicate started
+// holding, Fired when the model was last woken, Reported whether this episode
+// has already fired (the latch that makes the default once-per-episode), and
 // Error the last probe failure.
 type state struct {
-	Value   string `json:"value,omitempty"`
-	Pending string `json:"pending,omitempty"`
-	Since   int64  `json:"since,omitempty"`
-	Fired   int64  `json:"fired,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Since    int64  `json:"since,omitempty"`
+	Fired    int64  `json:"fired,omitempty"`
+	Reported bool   `json:"reported,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Probe runs one watcher once. prev is the watcher's last persisted State; now
 // is the probe time, so scheduling stays testable.
 func Probe(ctx context.Context, spec config.WatcherSpec, dir, prev string, now time.Time) Result {
-	every := spec.Every
+	every := spec.Interval
 	if every < config.MinWatchInterval {
 		every = config.MinWatchInterval
 	}
 	res := Result{Severity: spec.Severity, NextRun: now.Add(every)}
 
-	if spec.Kind == "timer" {
+	if spec.Type == "timer" {
 		res.Fire = true
 		res.State = prev
-		res.Summary = "periodic check"
+		res.Summary = spec.Prompt
+		if res.Summary == "" {
+			res.Summary = "scheduled tick"
+		}
 		return res
 	}
 
 	st := decodeState(prev)
-	obs, err := observe(ctx, spec, dir)
+	holds, summary, err := observe(ctx, spec, dir)
 	if err != nil {
 		return failed(spec, st, err, now, res)
 	}
 
-	holds, pending, detail, err := evaluate(spec.Trigger, obs, st)
-	if err != nil {
-		return failed(spec, st, err, now, res)
+	next := state{Fired: st.Fired, Reported: st.Reported}
+	if !holds {
+		// The episode ended. Clearing the latch lets the next hold fire again
+		// without needing an explicit repeat interval.
+		next.Since, next.Reported = 0, false
+		res.State = encodeState(next)
+		return res
 	}
 
 	since := st.Since
-	switch {
-	case !holds:
-		since, pending = 0, ""
-	case since == 0 || pending != st.Pending:
-		// The condition (or, for a change, the new value) just started.
+	if since == 0 {
 		since = now.Unix()
 	}
-	ready := holds && now.Sub(time.Unix(since, 0)) >= spec.Debounce
-	cooled := spec.Cooldown <= 0 || st.Fired == 0 || now.Sub(time.Unix(st.Fired, 0)) >= spec.Cooldown
+	next.Since = since
+	ready := now.Sub(time.Unix(since, 0)) >= spec.HoldFor
 
-	next := state{Value: obs, Pending: pending, Since: since, Fired: st.Fired}
-	if spec.Trigger == nil || spec.Trigger.Kind == "changed" {
-		// For a change trigger the stored value is the comparison baseline, not the
-		// last observation: it moves only when the change is reported.
-		next.Value = st.Value
-		if next.Value == "" {
-			next.Value = obs
-		}
+	allowed := false
+	if spec.RepeatAfter > 0 {
+		// A repeating condition re-alerts on its own interval, regardless of how
+		// many probes observed it in between.
+		allowed = st.Fired == 0 || now.Sub(time.Unix(st.Fired, 0)) >= spec.RepeatAfter
+	} else {
+		// No repeat interval: once per continuous episode. This is the safe
+		// default; otherwise a level condition would wake the model on every
+		// probe forever.
+		allowed = !st.Reported
 	}
-	if ready && cooled {
+	if ready && allowed {
 		res.Fire = true
-		res.Summary = truncate(spec.Name+": "+detail, maxSummary)
+		res.Summary = summaryOr(summary)
 		next.Fired = now.Unix()
-		if spec.Trigger == nil || spec.Trigger.Kind == "changed" {
-			// Rebase a change trigger on what was just reported; the condition is
-			// consumed, so the next change needs a fresh debounce window.
-			next.Value, next.Pending, next.Since = obs, "", 0
-		}
+		next.Reported = true
 	}
 	res.State = encodeState(next)
 	return res
@@ -115,27 +116,28 @@ func Probe(ctx context.Context, spec config.WatcherSpec, dir, prev string, now t
 
 // failed reports a probe failure. A distinct failure wakes the model once (so a
 // silently broken probe does not go unnoticed), while the same failure repeats
-// only into last_error.
+// only into last_error. The hold window and the episode latch survive, so a
+// transient failure neither restarts the debounce nor re-alerts.
 func failed(spec config.WatcherSpec, st state, cause error, now time.Time, res Result) Result {
 	msg := truncate(cause.Error(), maxSummary)
 	res.Err = cause
 	res.Fire = st.Error != msg
-	res.Summary = truncate(spec.Name+": probe failed: "+msg, maxSummary)
-	next := state{Value: st.Value, Error: msg}
+	res.Summary = msg
+	next := state{Since: st.Since, Fired: st.Fired, Reported: st.Reported, Error: msg}
 	if res.Fire {
 		next.Fired = now.Unix()
-	} else {
-		next.Pending, next.Since, next.Fired = st.Pending, st.Since, st.Fired
 	}
 	res.State = encodeState(next)
 	return res
 }
 
-// observe runs the probe command and returns its canonical observation.
-func observe(ctx context.Context, spec config.WatcherSpec, dir string) (string, error) {
+// observe runs the probe and returns its decision plus the summary text. A
+// command that cannot answer (nonzero exit, timeout, empty output, or an
+// unrecognized decision token) is a probe failure, not a quiet "no".
+func observe(ctx context.Context, spec config.WatcherSpec, dir string) (bool, string, error) {
 	timeout := spec.Timeout
 	if timeout <= 0 {
-		timeout = min(10*time.Second, spec.Every)
+		timeout = min(10*time.Second, spec.Interval)
 	}
 	if timeout <= 0 {
 		timeout = 10 * time.Second
@@ -143,156 +145,74 @@ func observe(ctx context.Context, spec config.WatcherSpec, dir string) (string, 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	res, err := tool.ExecuteCommandAt(ctx, spec.Cmd, dir, nil)
+	// Probes run without a confirmation prompt: the command was approved when
+	// the service was created, and a resident check cannot wait for a human.
+	res, err := tool.ExecuteCommandAt(ctx, spec.Command, dir, nil)
 	if err != nil {
-		return "", err
+		return false, "", err
 	}
 	if res.TimedOut {
-		return "", fmt.Errorf("timed out after %s", timeout)
+		return false, "", fmt.Errorf("timed out after %s", timeout)
 	}
 	if res.ExitCode != 0 {
-		return "", fmt.Errorf("exit %d: %s", res.ExitCode, truncate(strings.TrimSpace(res.Output), 200))
+		return false, "", fmt.Errorf("exit %d: %s", res.ExitCode, truncate(strings.TrimSpace(res.Output), 200))
 	}
 	out := strings.TrimSpace(res.Output)
 	if out == "" {
-		return "", errors.New("probe produced no output")
+		return false, "", errors.New("probe printed no decision")
 	}
 	if len(out) > maxObservation {
-		out = out[:maxObservation]
+		out = truncate(out, maxObservation)
 	}
-	// Whitespace-only reformatting is not a change: compact valid JSON so a
-	// pretty-printed probe does not wake the model on every run.
-	var compact bytes.Buffer
-	if json.Compact(&compact, []byte(out)) == nil {
-		out = compact.String()
+	holds, summary, ok := splitDecision(out)
+	if !ok {
+		return false, "", fmt.Errorf("probe decision must be 1/0 or true/false, got %q", firstToken(out))
 	}
-	return out, nil
+	return holds, summary, nil
 }
 
-// evaluate reports whether the observation crossed the trigger. pending is the
-// observed value a "changed" trigger is debouncing.
-func evaluate(t *config.WatchTrigger, obs string, st state) (holds bool, pending, detail string, err error) {
-	if t == nil || t.Kind == "changed" {
-		if st.Value == "" {
-			return false, "", "first observation", nil
-		}
-		if obs == st.Value {
-			return false, "", "unchanged", nil
-		}
-		return true, obs, "changed to " + truncate(obs, 200), nil
+// splitDecision reads the boolean on the first line and everything after the
+// token as the summary. Additional lines are appended, so a probe can print a
+// short decision followed by a richer explanation.
+func splitDecision(out string) (holds bool, summary string, ok bool) {
+	line, rest, _ := strings.Cut(out, "\n")
+	line = strings.TrimSpace(line)
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false, "", false
 	}
-
-	value, err := fieldValue(obs, t.Field)
-	if err != nil {
-		return false, "", "", err
+	switch strings.ToLower(fields[0]) {
+	case "1", "true":
+		holds = true
+	case "0", "false":
+		holds = false
+	default:
+		return false, "", false
 	}
-	holds, detail, err = matches(t, value)
-	return holds, "", detail, err
+	var parts []string
+	if tail := strings.TrimSpace(strings.TrimPrefix(line, fields[0])); tail != "" {
+		parts = append(parts, tail)
+	}
+	if extra := strings.TrimSpace(rest); extra != "" {
+		parts = append(parts, extra)
+	}
+	return holds, truncate(strings.Join(parts, "\n"), maxSummary), true
 }
 
-// fieldValue walks a dot-separated path into a JSON observation. UseNumber keeps
-// integers and floats distinguishable until they are compared.
-func fieldValue(obs, field string) (any, error) {
-	dec := json.NewDecoder(strings.NewReader(obs))
-	dec.UseNumber()
-	var root any
-	if err := dec.Decode(&root); err != nil {
-		return nil, fmt.Errorf("probe output is not JSON: %w", err)
+func firstToken(s string) string {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
 	}
-	if field == "" {
-		return root, nil
-	}
-	cur := root
-	for _, seg := range strings.Split(field, ".") {
-		obj, ok := cur.(map[string]any)
-		if !ok {
-			return nil, fmt.Errorf("field %q is not an object", field)
-		}
-		cur, ok = obj[seg]
-		if !ok {
-			return nil, fmt.Errorf("field %q is missing", field)
-		}
-	}
-	return cur, nil
+	return truncate(fields[0], 40)
 }
 
-func matches(t *config.WatchTrigger, value any) (bool, string, error) {
-	switch t.Kind {
-	case "json_number":
-		got, ok := number(value)
-		if !ok {
-			return false, "", fmt.Errorf("field %q is not a number", t.Field)
-		}
-		want, ok := number(t.Value)
-		if !ok {
-			return false, "", errors.New("trigger value is not a number")
-		}
-		detail := fmt.Sprintf("%s = %v (%s %v)", t.Field, got, t.Op, want)
-		switch t.Op {
-		case ">":
-			return got > want, detail, nil
-		case ">=":
-			return got >= want, detail, nil
-		case "<":
-			return got < want, detail, nil
-		case "<=":
-			return got <= want, detail, nil
-		case "==":
-			return got == want, detail, nil
-		case "!=":
-			return got != want, detail, nil
-		}
-	case "json_string":
-		got, ok := value.(string)
-		if !ok {
-			return false, "", fmt.Errorf("field %q is not a string", t.Field)
-		}
-		want, ok := t.Value.(string)
-		if !ok {
-			return false, "", errors.New("trigger value is not a string")
-		}
-		detail := fmt.Sprintf("%s = %q (%s %q)", t.Field, got, t.Op, want)
-		switch t.Op {
-		case "==":
-			return got == want, detail, nil
-		case "!=":
-			return got != want, detail, nil
-		case "contains":
-			return strings.Contains(got, want), detail, nil
-		}
-	case "json_bool":
-		got, ok := value.(bool)
-		if !ok {
-			return false, "", fmt.Errorf("field %q is not a bool", t.Field)
-		}
-		want, ok := t.Value.(bool)
-		if !ok {
-			return false, "", errors.New("trigger value is not a bool")
-		}
-		detail := fmt.Sprintf("%s = %v (%s %v)", t.Field, got, t.Op, want)
-		switch t.Op {
-		case "==":
-			return got == want, detail, nil
-		case "!=":
-			return got != want, detail, nil
-		}
+// summaryOr keeps the situation readable when the probe printed only a decision.
+func summaryOr(summary string) string {
+	if strings.TrimSpace(summary) == "" {
+		return "triggered"
 	}
-	return false, "", fmt.Errorf("unsupported trigger %s %q", t.Kind, t.Op)
-}
-
-func number(v any) (float64, bool) {
-	switch n := v.(type) {
-	case json.Number:
-		f, err := n.Float64()
-		return f, err == nil
-	case float64:
-		return n, true
-	case int64:
-		return float64(n), true
-	case int:
-		return float64(n), true
-	}
-	return 0, false
+	return summary
 }
 
 func decodeState(s string) state {
@@ -315,5 +235,5 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return strings.ToValidUTF8(s[:n], "") + "…"
 }

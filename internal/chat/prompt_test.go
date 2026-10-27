@@ -117,6 +117,42 @@ func TestComposeHeadPlacesProjectContext(t *testing.T) {
 	}
 }
 
+// A service's standing goal sits after the role and project guidance and before
+// the tool reference, so it is present on every wake and never compacted.
+func TestComposeHeadPlacesServiceGoal(t *testing.T) {
+	rp := &RolePrompt{
+		Name:           "devops",
+		Intro:          "You are an SRE.",
+		ProjectContext: "Always run make fmt.",
+		ContextSource:  "/repo/AGENTS.md",
+		Tools:          []ToolSpec{{Name: "execute", Description: "run a command"}},
+		standing:       "Watch the river and report a flood.",
+	}
+	head := composeHead(rp, testHostInfo)
+
+	if !strings.Contains(head, "## Service goal") || !strings.Contains(head, "Watch the river") {
+		t.Fatalf("head is missing the service goal:\n%s", head)
+	}
+	intro := strings.Index(head, "You are an SRE.")
+	ctx := strings.Index(head, "## Project instructions")
+	goal := strings.Index(head, "## Service goal")
+	tool := strings.Index(head, "## Tool: execute")
+	if !(intro < ctx && ctx < goal && goal < tool) {
+		t.Errorf("wrong ordering: intro=%d context=%d goal=%d tool=%d", intro, ctx, goal, tool)
+	}
+	if strings.Index(head, "## Response format") < tool {
+		t.Error("the output contract must stay after the tool reference")
+	}
+}
+
+// No standing text means no section, and no stray heading.
+func TestComposeHeadWithoutServiceGoal(t *testing.T) {
+	rp := &RolePrompt{Name: "devops", Intro: "You are an SRE."}
+	if head := composeHead(rp, testHostInfo); strings.Contains(head, "Service goal") {
+		t.Errorf("unexpected service goal section:\n%s", head)
+	}
+}
+
 // No context file means no section, and no stray heading.
 func TestComposeHeadWithoutProjectContext(t *testing.T) {
 	rp := &RolePrompt{Name: "devops", Intro: "You are an SRE."}

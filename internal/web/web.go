@@ -549,6 +549,62 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", "GET, POST")
 			fail(w, 405, "method not allowed")
 		}
+	case "/api/service/edit":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Name            string `json:"name"`
+			Manifest        string `json:"manifest"`
+			ApproveCommands bool   `json:"approve_commands"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+			fail(w, 400, "service name must contain 1–256 bytes")
+			return
+		}
+		if strings.TrimSpace(body.Manifest) == "" {
+			fail(w, 400, "manifest is required")
+			return
+		}
+		view, err := h.manager.EditService(body.Name, body.Manifest, body.ApproveCommands)
+		if err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, view)
+	case "/api/service/stop", "/api/service/start":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Name string `json:"name"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+			fail(w, 400, "service name must contain 1–256 bytes")
+			return
+		}
+		var err error
+		if strings.HasSuffix(r.URL.Path, "/stop") {
+			err = h.manager.StopService(body.Name)
+		} else {
+			err = h.manager.StartService(body.Name)
+		}
+		if err != nil {
+			managerError(w, err)
+			return
+		}
+		view, err := h.manager.ServiceView(body.Name)
+		if err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, view)
 	case "/api/events":
 		if !method(w, r, http.MethodGet) {
 			return
@@ -905,6 +961,8 @@ func managerError(w http.ResponseWriter, err error) {
 	case errors.Is(err, runner.ErrNotFound):
 		status = 404
 	case errors.Is(err, runner.ErrPrompt), errors.Is(err, runner.ErrBusy):
+		status = 409
+	case errors.Is(err, runner.ErrStopped):
 		status = 409
 	case errors.Is(err, runner.ErrCapacity), errors.Is(err, runner.ErrQueueFull):
 		status = 429

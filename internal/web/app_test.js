@@ -370,6 +370,15 @@ for (const action of ['done', 'ask', 'terminate']) {
   assert.equal(marked[0].textContent, 'sanitized');
   assert.ok(!descendants(wiring.get('history')).some(n => n.className === 'prose'), action + ' payload is not left as plain text');
 }
+// A service's report and its "nothing to do" yield get their own heading and
+// card treatment, so they stand out from an ordinary chat answer.
+for (const [action, heading] of [['inform', '📢 PAI'], ['yield', '⏸️ PAI']]) {
+  wiring.run("$('history').replaceChildren(); renderTurns(" + JSON.stringify([{Role:'assistant', Content:JSON.stringify({action, payload:'notice'})}]) + ")");
+  const card = wiring.get('history').children[0];
+  assert.ok(card.classes.has('action-' + action), action + ' has its own card class');
+  const title = descendants(card).find(n => /\bturn-heading\b/.test(n.className));
+  assert.equal(title.textContent, heading, action + ' heading names the action');
+}
 // A tool payload is a command, not prose: it never becomes Markdown.
 wiring.run("$('history').replaceChildren(); renderTurns(" + JSON.stringify([{Role:'assistant', Content:JSON.stringify({action:'tool', toolname:'execute', payload:'echo **hi**'})}]) + ")");
 assert.ok(!descendants(wiring.get('history')).some(n => n.className === 'markdown'), 'a tool payload stays a command');
@@ -867,7 +876,7 @@ async function verifySessionList() {
   assert.equal(rows.length, 2, 'each saved session renders a row');
   assert.ok(rows[0].classes.has('selected'), 'the open session row is marked selected');
   assert.ok(!rows[1].classes.has('selected'));
-  assert.deepEqual(rows[0].children.map(node => node.textContent), ['one', '🗑']);
+  assert.deepEqual(rows[0].children.map(node => node.textContent), ['one', '✕']);
   assert.equal(rows[0].children[1].title, 'Delete this session');
   p.run("globalThis.del=[]; api=async(path,body)=>{del.push([path,body]);return {ok:true};}; sessions=async()=>{}; confirm=()=>false");
   await rows[1].children[1].onclick({stopPropagation(){}});
@@ -1321,19 +1330,26 @@ async function verifyServiceMode() {
     next_wake: '2026-10-27T12:00:00Z', status: 'level 3.8 m, above the warning band',
     spec: '{"goal":"watch the river","role":"devops"}',
     watchers: [
-      {name: '_report', enabled: true, spec: '{"kind":"timer","every":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
-      {name: 'river', enabled: true, spec: '{"kind":"command","every":"60s"}', last_state: '{"value":"3.8"}', last_error: 'courier failed'},
+      {name: '_report', enabled: true, spec: '{"type":"timer","interval":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
+      {name: 'river', enabled: true, spec: '{"type":"command","interval":"60s"}', last_state: '{"since":1}', last_error: 'courier failed'},
     ],
   };
-  p.run('serviceView=' + JSON.stringify(view) + '; paintService();');
+  p.run("selected='river'; serviceView=" + JSON.stringify(view) + '; paintService();');
   assert.equal(p.get('service-panel').hidden, false, 'the service panel appears');
-  assert.equal(p.get('service-state').textContent, 'parked', 'the state is labelled once');
+  assert.equal(p.get('service-state').textContent, 'Parked', 'the state is labelled once, in the shared vocabulary');
   assert.match(p.get('service-next').textContent, /next wake/, 'the next wake is shown');
   assert.match(p.get('service-status').textContent, /level 3\.8/, 'the last report is shown');
-  assert.equal(p.get('service-watchers').children.length, 2, 'every probe is listed');
-  assert.equal(p.get('service-watchers').children[0].children[0].textContent, 'report (heartbeat)', 'the reserved probe is labelled');
-  assert.match(p.get('service-watchers').children[1].children[3].textContent, /courier failed/, 'a probe error is shown');
+  assert.equal(p.get('service-watchers').children.length, 3, 'a header plus every probe');
+  assert.equal(p.get('service-watchers').children[0].children[0].textContent, 'Watcher', 'the probe table has aligned columns');
+  assert.equal(p.get('service-watchers').children[1].children[0].textContent, 'report (heartbeat)', 'the reserved probe is labelled');
+  assert.match(p.get('service-watchers').children[2].children[4].textContent, /courier failed/, 'a probe error is shown');
   assert.match(p.get('service-manifest-view').textContent, /"goal": "watch the river"/, 'the manifest is pretty-printed');
+
+  // The bar is explicitly collapsible, and the details are a bounded panel.
+  p.run('applyServiceExpanded(true)');
+  assert.equal(p.get('service-body').hidden, false, 'Details opens the service body');
+  p.run('applyServiceExpanded(false)');
+  assert.equal(p.get('service-body').hidden, true, 'the chevron collapses it again');
 
   // The create panel has one form per mode, and the service form starts from a
   // manifest skeleton rather than a blank box.

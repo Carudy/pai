@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
@@ -46,6 +47,12 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 	conv.history = append([]provider.Message(nil), history...)
 	rt.promptTokens = chat.ScaleTokens(chat.EstimateTokens(rp.Messages(chat.ServedHistory(conv.history, cfg.Context))), rt.TokenScale)
 
+	// A user instruction is a real turn, not just a wake annotation: recording it
+	// keeps it in the transcript and in the history the model reads on later wakes.
+	// The event id is the in-process dedupe key, so a nacked/retried wake does not
+	// duplicate the turn.
+	delivered := make(map[int64]bool)
+
 	for {
 		wake, err := inbox.Next(ctx)
 		if err != nil {
@@ -54,6 +61,7 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 			}
 			return fmt.Errorf("service inbox: %w", err)
 		}
+		recordUserInput(rt, conv, wake.Events, delivered)
 
 		// One situation per activation; the frozen head and the stored history
 		// are shared across wakes.
@@ -74,6 +82,40 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 		if actErr != nil {
 			return actErr
 		}
+	}
+}
+
+// recordUserInput turns durable user events into conversation turns. A service
+// wake otherwise carries its input only in the situation projection, which is
+// neither stored nor replayed; recording it keeps the transcript truthful and
+// lets a later wake refer to what the user asked. The event id dedupes a retried
+// wake in this process, and the last-message check covers a turn already replayed
+// from the store after a restart.
+func recordUserInput(rt *Runtime, conv *conversation, events []core.Event, delivered map[int64]bool) {
+	for _, ev := range events {
+		if ev.Class != core.EventUser || ev.Kind != "user_input" {
+			continue
+		}
+		text := strings.TrimSpace(ev.Payload)
+		if text == "" {
+			continue
+		}
+		if ev.ID != 0 {
+			if delivered[ev.ID] {
+				continue
+			}
+			delivered[ev.ID] = true
+		}
+		if n := len(conv.history); n > 0 {
+			last := conv.history[n-1]
+			if last.Role == provider.RoleUser && last.Kind == core.KindInput && last.Content == text {
+				continue
+			}
+		}
+		conv.history = append(conv.history, provider.Message{
+			Role: provider.RoleUser, Kind: core.KindInput, Content: text,
+		})
+		rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: text})
 	}
 }
 

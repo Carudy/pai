@@ -30,28 +30,25 @@ type configKey struct {
 }
 
 var configKeys = map[string]configKey{
-	"default_model":         {section: "app", key: "default_model", kind: "model"},
-	"default_role":          {section: "app", key: "default_role", kind: "role"},
-	"preset_models":         {section: "app", key: "preset_models", kind: "model_list"},
-	"streaming":             {section: "app", key: "streaming", kind: "bool"},
-	"reasoning":             {section: "app", key: "reasoning", kind: "reasoning"},
-	"interactive":           {section: "app", key: "interactive", kind: "bool"},
-	"session.persist":       {section: "session", key: "persist", kind: "bool"},
-	"session.max_turns":     {section: "session", key: "max_turns", kind: "int"},
-	"session.recap_turns":   {section: "session", key: "recap_turns", kind: "int"},
-	"session.rewind_backup": {section: "session", key: "rewind_backup", kind: "bool"},
-	"tavily_api_key":        {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
-	"papersearch_source":    {section: "tool", key: "papersearch_source", kind: "paper_source"},
-	"papersearch_email":     {section: "tool", key: "papersearch_email", kind: "string"},
-	"remote_shell":          {section: "tool", key: "remote_shell", kind: "string"},
-	"cmd_timeout_seconds":   {section: "tool", key: "cmd_timeout_seconds", kind: "int"},
-	"confirm_read":          {section: "tool", key: "confirm_read", kind: "bool"},
-	"conn.url":              {section: "conn", key: "url", kind: "url"},
-	"conn.origin":           {section: "conn", key: "origin", kind: "url"},
-	"conn.token":            {section: "conn", key: "token", kind: "string", secret: true},
-	// Deprecated aliases: [context] exec_limit/search_limit replaced these [app] keys.
-	"truncate_exec_limit":            {section: "app", key: "truncate_exec_limit", kind: "int"},
-	"truncate_search_limit":          {section: "app", key: "truncate_search_limit", kind: "int"},
+	"default_model":                  {section: "app", key: "default_model", kind: "model"},
+	"default_role":                   {section: "app", key: "default_role", kind: "role"},
+	"preset_models":                  {section: "app", key: "preset_models", kind: "model_list"},
+	"streaming":                      {section: "app", key: "streaming", kind: "bool"},
+	"reasoning":                      {section: "app", key: "reasoning", kind: "reasoning"},
+	"interactive":                    {section: "app", key: "interactive", kind: "bool"},
+	"session.persist":                {section: "session", key: "persist", kind: "bool"},
+	"session.max_turns":              {section: "session", key: "max_turns", kind: "int"},
+	"session.recap_turns":            {section: "session", key: "recap_turns", kind: "int"},
+	"session.rewind_backup":          {section: "session", key: "rewind_backup", kind: "bool"},
+	"tavily_api_key":                 {section: "tool", key: "tavily_api_key", kind: "string", secret: true},
+	"papersearch_source":             {section: "tool", key: "papersearch_source", kind: "paper_source"},
+	"papersearch_email":              {section: "tool", key: "papersearch_email", kind: "string"},
+	"remote_shell":                   {section: "tool", key: "remote_shell", kind: "string"},
+	"cmd_timeout_seconds":            {section: "tool", key: "cmd_timeout_seconds", kind: "int"},
+	"confirm_read":                   {section: "tool", key: "confirm_read", kind: "bool"},
+	"conn.url":                       {section: "conn", key: "url", kind: "url"},
+	"conn.origin":                    {section: "conn", key: "origin", kind: "url"},
+	"conn.token":                     {section: "conn", key: "token", kind: "string", secret: true},
 	"context.exec_limit":             {section: "context", key: "exec_limit", kind: "int"},
 	"context.search_limit":           {section: "context", key: "search_limit", kind: "int"},
 	"context.paper_limit":            {section: "context", key: "paper_limit", kind: "int"},
@@ -323,10 +320,6 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return string(cfg.ReasoningEffort)
 	case "interactive":
 		return strconv.FormatBool(cfg.Interactive)
-	case "truncate_exec_limit":
-		return strconv.Itoa(cfg.Context.ExecLimit)
-	case "truncate_search_limit":
-		return strconv.Itoa(cfg.Context.SearchLimit)
 	case "context.exec_limit":
 		return strconv.Itoa(cfg.Context.ExecLimit)
 	case "context.search_limit":
