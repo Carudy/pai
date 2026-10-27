@@ -11,9 +11,10 @@ See the [module map](../organization.md) for dependency rules.
 - `command.go` owns subcommand dispatch; `config.go`, `role.go`, `tool.go`,
   `service.go`, and `session.go` implement the corresponding command families.
 - `service.go` creates resident sessions from a validated manifest, lists their
-  state, status, watchers, and next wake, edits a stopped service's manifest, and
-  stops or starts them (`svc` is an alias). Stop/start/edit only work while the
-  server is down, because they need the store lock; the web API exposes the same
+  state, status, watchers, and next wake, edits a stopped service's manifest,
+  stops or starts them, and deletes one with its history (`svc` is an alias).
+  Stop/start/edit/delete only work while the server is down, because they need
+  the store lock; the web API exposes the same transitions.
 transitions. A service is run by `pai serve`, which registers every
   `mode=service` session with the scheduler at startup — except one persisted as
   `stopped`.

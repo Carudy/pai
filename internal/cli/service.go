@@ -28,6 +28,7 @@ func serviceHelp() string {
   show, cat <name>               Show the manifest, status, watchers, and next wake
   create, new <name> --file F    Create a service from a manifest [--yes]
   edit, update <name> --file F   Replace a stopped service's manifest [--yes]
+  rm, delete <name>              Delete the service, its history, and its watchers
   stop, disable <name>           Stop scheduling; the stopped state survives restarts
   start, enable <name>           Resume a stopped service and probe immediately
 
@@ -40,7 +41,9 @@ silently. A command name already trusted for the session counts as a grant.
 A manifest edit is only allowed while the service is stopped; the role, workspace,
 spec, and watcher set are replaced, while the session's history and queued events
 are kept. report_interval is stored as the reserved timer watcher _report and
-shown with the others.
+shown with the others. Deleting is the one irreversible action: it removes the
+service's transcript, queued events, and watcher grants as well as the row, so a
+recreate starts clean. A chat session is refused here; use ` + "`pai session rm`" + `.
 
 The session store is exclusive, so stop ` + "`pai serve`" + ` before running create/show/list.
 While a server is running, GET /api/service?name=<name> returns the same view.`
@@ -63,6 +66,12 @@ func runServiceCmd(_ context.Context, args []string, stdout io.Writer, log *tui.
 		return serviceCreate(args[1:], stdout, log)
 	case "edit", "update":
 		return serviceEdit(args[1:], stdout, log)
+	case "rm", "delete", "del":
+		if len(args) < 2 {
+			log.Errorf("Usage: pai service rm <name>\n")
+			return 1
+		}
+		return serviceDelete(args[1], stdout, log)
 	case "stop", "disable":
 		if len(args) < 2 {
 			log.Errorf("Usage: pai service stop <name>\n")
@@ -79,7 +88,7 @@ func runServiceCmd(_ context.Context, args []string, stdout io.Writer, log *tui.
 		fmt.Fprintln(stdout, serviceHelp())
 		return 0
 	default:
-		log.Errorf("Unknown service command %q; try: list | show | create | edit | stop | start\n", args[0])
+		log.Errorf("Unknown service command %q; try: list | show | create | edit | rm | stop | start\n", args[0])
 		return 1
 	}
 }
@@ -91,6 +100,38 @@ func openServiceStore(log *tui.Logger) (session.Store, bool) {
 		return nil, false
 	}
 	return store, true
+}
+
+// serviceDelete removes a service and everything attached to it. The store is
+// exclusive, so no scheduler is running; watchers, queued events, and turns
+// follow the row through ON DELETE CASCADE. A chat session is refused: deleting
+// the wrong kind by a typo should not be easy.
+func serviceDelete(name string, stdout io.Writer, log *tui.Logger) int {
+	store, ok := openServiceStore(log)
+	if !ok {
+		return 1
+	}
+	defer store.Close()
+	ss, ok := store.(session.ServiceStore)
+	if !ok {
+		log.Errorf("Error: this session store does not expose service state\n")
+		return 1
+	}
+	info, err := ss.ServiceInfo(name)
+	if err != nil {
+		log.Errorf("Error: %v\n", err)
+		return 1
+	}
+	if info.Mode != session.ModeService {
+		log.Errorf("Error: %q is not a service; use `pai session rm %s`\n", name, name)
+		return 1
+	}
+	if err := store.Delete(name); err != nil {
+		log.Errorf("Error: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "deleted service %s\n", name)
+	return 0
 }
 
 func serviceList(stdout io.Writer, log *tui.Logger) int {

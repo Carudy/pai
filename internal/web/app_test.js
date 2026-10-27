@@ -1334,7 +1334,16 @@ async function verifyServiceMode() {
   p.run("setMode('service',{url:false,load:false})");
   assert.equal(p.run("$('tab-service').attributes['aria-selected']"), 'true', 'the services tab is selected');
   assert.equal(p.run("$('tab-chat').attributes['aria-selected']"), 'false');
-  assert.equal(p.get('sessions-heading').textContent, 'Services', 'the heading follows the tab');
+  assert.equal(p.get('sessions-heading').textContent, '', 'the tab no longer rewrites the heading');
+  assert.match(fs.readFileSync(__dirname + '/index.html', 'utf8'), /<h2 id="sessions-heading">Session list<\/h2>/, 'the list heading is fixed in the markup');
+
+  // A history refresh for the open chat session records its kind but must not
+  // switch the sidebar back: the tab is the reader's choice, and a periodic
+  // refresh used to yank it to Chat after a few seconds.
+  p.run("selected='one'; sessionMetadata({name:'one', mode:'chat'})");
+  assert.equal(p.run('sessionMode'), 'service', 'a history refresh keeps the chosen tab');
+  assert.equal(p.run('selectedMode'), 'chat', 'the open session keeps its own kind');
+  p.run("selected=''");
 
   const view = {
     name: 'river', mode: 'service', state: 'parked', phase: 'parked',

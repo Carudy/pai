@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -203,6 +204,82 @@ command = "true"
 		t.Fatalf("--yes still left a pending grant: %q", out.String())
 	}
 	checkApproval("granted", true)
+}
+
+// Deleting a service is a whole-row operation: the transcript, queued events, and
+// watcher grants go with it. A chat session is refused so a typo cannot hit it.
+func TestServiceDelete(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	workspace := t.TempDir()
+	path := writeManifest(t, t.TempDir(), `
+[service]
+goal = "probe"
+role = "devops"
+workspace = "`+workspace+`"
+
+[[watcher]]
+name = "level"
+interval = "30s"
+command = "true"
+`)
+	var out bytes.Buffer
+	log := tui.NewLogger(&out, false)
+	if code := runServiceCmd(context.Background(), []string{"create", "probe", "--file", path, "--yes"}, &out, log); code != 0 {
+		t.Fatalf("create: %s", out.String())
+	}
+
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss, ok := store.(session.ServiceStore)
+	if !ok {
+		t.Fatal("store does not expose service state")
+	}
+	if _, err := store.Create(session.Meta{Name: "chatty", Role: "devops"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := ss.ServiceInfo("probe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	// A chat session is not a service: refuse, and leave it in place.
+	out.Reset()
+	if code := runServiceCmd(context.Background(), []string{"rm", "chatty"}, &out, log); code == 0 {
+		t.Fatalf("a chat session was deleted by service rm: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "not a service") {
+		t.Fatalf("refusal is unclear: %q", out.String())
+	}
+
+	out.Reset()
+	if code := runServiceCmd(context.Background(), []string{"rm", "probe"}, &out, log); code != 0 {
+		t.Fatalf("rm: %s", out.String())
+	}
+
+	store, err = session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := store.Get("probe"); !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("deleted service still resolves: %v", err)
+	}
+	if _, err := store.Get("chatty"); err != nil {
+		t.Fatalf("unrelated chat session removed: %v", err)
+	}
+	ss, _ = store.(session.ServiceStore)
+	watchers, err := ss.Watchers(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(watchers) != 0 {
+		t.Fatalf("watchers survived the delete: %+v", watchers)
+	}
 }
 
 func TestServiceStopStart(t *testing.T) {

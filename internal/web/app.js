@@ -10,6 +10,10 @@ let selected = '', generation = 0, stream = null, retry = null, lastEventAt = 0,
 // service. It is URL state (/dashboard vs /dashboard/service), never local
 // storage, for the same reason the selected session is.
 let sessionMode = 'chat';
+// The open session's own kind. The tab is the reader's filter and may disagree —
+// browsing Services while a chat session is open — so controls that belong to the
+// session use this, never the tab.
+let selectedMode = '';
 // The service view for the open session, and the request counter that keeps a
 // slow refresh from painting over a newer one. serviceError keeps the bar stable
 // when a view cannot be loaded instead of hiding it.
@@ -122,8 +126,9 @@ async function applyModel(e) {
 function workingDirControls() {
   const input = $('session-working-dir');
   // A service's workspace is part of its manifest: probes and the model both run
-  // there, so moving it is a recreate, not a setting.
-  const service = sessionMode === 'service';
+  // there, so moving it is a recreate, not a setting. Follow the session's kind,
+  // not the sidebar tab: a service stays manifest-owned while browsing Chat.
+  const service = selectedMode === 'service';
   const disabled = !selected || modelBlocked || cwdApplying || service;
   input.disabled = disabled;
   input.title = service
@@ -572,7 +577,6 @@ function applyModeUI() {
   $('tab-service').setAttribute('aria-selected', String(service));
   $('tab-chat').classList.toggle('selected', !service);
   $('tab-service').classList.toggle('selected', service);
-  $('sessions-heading').textContent = service ? 'Services' : 'Chat';
   $('sessions').setAttribute('aria-label', service ? 'Services' : 'Chat sessions');
   if (!service) { $('service-panel').hidden = true; serviceView = null; serviceError = ''; }
   else { paintService(); if (selected) loadService().catch(() => {}); }
@@ -1226,13 +1230,11 @@ function paintConversation() {
 }
 // ── History and session metadata ────────────────────────────
 function sessionMetadata(meta = {}) {
-  // A service is inspected, not chatted with in the usual sense, so the sidebar
-  // mode follows the session's own mode instead of whichever tab was open. A call
-  // without metadata (clearing the workspace) leaves the mode alone.
-  if (typeof meta.mode === 'string' && meta.mode) {
-    const mode = meta.mode === 'service' ? 'service' : 'chat';
-    if (mode !== sessionMode) { sessionMode = mode; applyModeUI(); }
-  }
+  // The open session's kind is a fact about the session; the sidebar tab is the
+  // reader's choice. They may disagree, so this records the kind instead of
+  // switching the tab — a periodic history refresh must not yank the reader back
+  // to Chat (or Services).
+  if (typeof meta.mode === 'string' && meta.mode) selectedMode = meta.mode === 'service' ? 'service' : 'chat';
   modelMetadata(meta.model);
   savedCwd = typeof meta.cwd === 'string' ? meta.cwd : '';
   if (!cwdDirty) $('session-working-dir').value = savedCwd;
@@ -1882,7 +1884,7 @@ function jumpContextBottom() {
 }
 // ── Session actions ─────────────────────────────────────────
 async function select(name, cwd, replaceURL = false) {
-  disconnect(); generation++; const version = generation; selected = name; historyOffset = 0; sessionBusy = false;
+  disconnect(); generation++; const version = generation; selected = name; selectedMode = ''; historyOffset = 0; sessionBusy = false;
   setSessionURL(name, replaceURL);
   clearReasoning(); contextEstimate = null; usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = true; sessionMetadata();
     $('title').textContent = name; $('title').title = name;
@@ -2087,7 +2089,7 @@ async function deleteSession(name) {
 }
 // Return the workspace to its pre-selection state once the open session is gone.
 function clearWorkspace() {
-  disconnect(); generation++; selected = '';
+  disconnect(); generation++; selected = ''; selectedMode = '';
   setSessionURL('', true);
   durable = []; liveSteps = []; currentStep = null; thinking = '';
   liveCard = null; liveType = ''; liveText = ''; historyOffset = 0; historyTotal = 0; followTail = true;

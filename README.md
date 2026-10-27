@@ -627,8 +627,14 @@ approval never silently covers code you have not seen. A timer needs none.
 ```bash
 pai service stop demo     # stop scheduling; the state survives a restart
 pai service start demo    # resume and probe immediately
+pai service rm demo       # delete the service, its transcript, and its watchers
 pai service list          # state column shows suspended / parked / stopped
 ```
+
+`rm` is the one irreversible command: it drops the stored manifest, transcript,
+queued events, and watcher grants, so a later `create` with the same name starts
+clean. It refuses a chat session by name — use `pai session rm` for those. While
+the server runs, the sidebar's ✕ does the same thing for either kind.
 
 While `pai serve` is running the store is locked, so use the **Stop** / **Start**
 button in the service panel (or `POST /api/service/stop|start`). A stopped
