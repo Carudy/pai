@@ -611,6 +611,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.events(w, r)
+	case "/api/diagnostics":
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		h.diagnostics(w, r)
 	case "/api/create":
 		if !method(w, r, http.MethodPost) {
 			return
@@ -1007,6 +1012,28 @@ func (h *handler) events(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer unsubscribe()
+	streamSSE(w, r, events)
+}
+
+// diagnostics streams host-side facts (probe verdicts, scheduler decisions,
+// model usage) to the Logs tab. It is the browser counterpart of
+// `pai serve --debug-log`; unlike events there is no replay, because the pane
+// accumulates while the page is open and the CLI also starts at its own launch.
+func (h *handler) diagnostics(w http.ResponseWriter, r *http.Request) {
+	diagnostics, unsubscribe, err := h.manager.SubscribeDiagnostics()
+	if err != nil {
+		managerError(w, err)
+		return
+	}
+	defer unsubscribe()
+	streamSSE(w, r, diagnostics)
+}
+
+// streamSSE copies a typed channel to an event-stream response until the client
+// leaves, the credential's lifetime ends, or the channel closes. Session events
+// and host diagnostics share these transport rules, so the heartbeat, deadline,
+// and flush behaviour cannot drift between them.
+func streamSSE[T any](w http.ResponseWriter, r *http.Request, values <-chan T) {
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
@@ -1024,11 +1051,11 @@ func (h *handler) events(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-ticker.C:
 			frame = ": heartbeat\n\n"
-		case event, ok := <-events:
+		case value, ok := <-values:
 			if !ok {
 				return
 			}
-			data, err := json.Marshal(event)
+			data, err := json.Marshal(value)
 			if err != nil {
 				return
 			}

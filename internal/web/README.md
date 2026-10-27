@@ -312,6 +312,13 @@ rejected; there is no URL authentication.
   that session's failure. Returns 404 when neither live nor retained state exists.
 - `GET /api/events?name=...`: SSE `data: <runner.Event>` frames, default message
   event; heartbeat comments. No Last-Event-ID replay. 404 for no live worker.
+- `GET /api/diagnostics`: SSE `data: <runner.Diagnostic>` frames (lowercase
+  fields), heartbeat comments. The browser counterpart of
+  `pai serve --debug-log`: probe verdicts, scheduler decisions, and model usage,
+  each naming its session. Global rather than per-session, no replay (the pane
+  accumulates while the page is open, like the CLI does from launch), and it
+  ends with the request context or after the same 30-minute credential lifetime
+  as `/api/events`. Read-only; the usual auth and method rules apply.
 - `POST /api/create`: `{ "name": "...", "working_dir": "/path", "role": "...",
   "model": "provider:model", "reasoning": "none|low|medium|high" }`; 201 with
   direct metadata fields `name`, `role`, `model`, `cwd`, `updated_at`. Saves an
@@ -381,12 +388,16 @@ bounded live event pane, renders assistant JSON readably, displays tool-call
 Diff previews and reply cards, and replaces history on state refresh rather
 than treating transient SSE output as durable turns. Turn cards show their
 `turn.At` timestamp, and token counts are compacted to `k`/`M`. The right-hand
-panel has two tabs: **Context** holds the context figure and **Compress now**;
-**Logs** holds the bounded activity feed. Switching to Logs scrolls it to the
-latest event, and the choice is remembered per browser (`pai.activity-pane`).
-The log records only context-lifecycle events — finished reasoning blocks and
-context notices such as compaction — never tools or run progress, so the
-context's evolution stays legible. Switching sessions shows a loading placeholder
+panel has two tabs. **Context** holds the context figure, **Compress now**, and
+the context feed — finished reasoning blocks and the model output stream, never
+tools or run progress — so the context's evolution stays legible. **Logs** is the
+host-side audit stream, rendered as one timestamped line per fact in the same
+shape as `pai serve --debug-log` (`watcher <name>: result "…", triggered, next
+…`, activation decisions, model usage); it is global with the session named on
+each line, keeps the newest 500 lines in the page, and follows the tail unless
+the reader has scrolled back. Switching to Logs scrolls to the latest line, and
+the tab is remembered per browser (`pai.activity-pane`). Switching sessions shows
+a loading placeholder
 in the conversation until the transcript arrives, rather than an empty pane.
 A chained command in a card is numbered at its operators (as the CLI prints it),
 so the piece that failed is identifiable at a glance. A `read` card carries its

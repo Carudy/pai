@@ -1592,18 +1592,64 @@ header p {
 #context-pane {
     flex: 1 1 auto;
     min-height: 0;
-    overflow: auto;
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 16px;
+    padding: 16px 0 0;
 }
 
-#context-pane > p {
+#context-pane > p,
+#context-pane > .context-usage {
+    margin: 0 16px;
+}
+
+/* The figure stays put; the context feed scrolls under it. */
+#context-pane #events {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: auto;
+    padding: 0 16px 12px;
+}
+
+/* Logs is the browser counterpart of `pai serve --debug-log`: one timestamped
+   line per host fact, monospaced so the fields line up and stay copyable. */
+#log-pane {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: 12px 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.55;
+}
+
+#log-pane > p {
     margin: 0;
 }
 
-#activity[data-pane='context'] #events,
+.log-line {
+    padding: 1px 0;
+    color: var(--muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.log-line[data-kind='watcher'] {
+    color: var(--ink);
+}
+
+.log-line[data-kind='error'],
+.log-line[data-outcome='failed'],
+.log-line[data-outcome='denied'] {
+    color: var(--red);
+}
+
+.log-line[data-outcome='fired'] {
+    color: var(--accent);
+}
+
+#activity[data-pane='context'] #log-pane,
 #activity[data-pane='logs'] #context-pane {
     display: none;
 }

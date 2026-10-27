@@ -1169,7 +1169,7 @@ func TestPageLayoutNesting(t *testing.T) {
 		"to-bottom": "conversation-wrapper", "session-role": "role-fieldset",
 		"session-title-row": "header", "token-usage": "session-config", "state": "status-row",
 		"toggle-config": "session-config", "context-pane": "activity", "context-usage": "context-pane", "context-detail": "context-usage", "compress-now": "context-usage",
-		"activity-tabs": "header", "events": "activity",
+		"activity-tabs": "header", "events": "context-pane", "log-pane": "activity", "diagnostics": "log-pane", "diagnostics-empty": "log-pane",
 	} {
 		if parents[child] != parent {
 			t.Errorf("%s parent = %q, want %q", child, parents[child], parent)
@@ -1515,6 +1515,38 @@ type failedDeadlineWriter struct{ *httptest.ResponseRecorder }
 
 func (*failedDeadlineWriter) SetWriteDeadline(time.Time) error {
 	return errors.New("connection no longer writable")
+}
+
+// The diagnostics stream is the browser counterpart of `pai serve --debug-log`:
+// read-only, authenticated like every other API, and it ends with its request
+// context rather than outliving the page.
+func TestDiagnosticsStream(t *testing.T) {
+	m := runner.New(context.Background(), backend{}, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest("GET", "http://pai.test/api/diagnostics", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		h.ServeHTTP(w, r)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("diagnostics stream did not end with its context")
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("content type = %q, want text/event-stream", ct)
+	}
+	if w := request(h, "POST", "/api/diagnostics", "", nil, "http://pai.test"); w.Code != 405 {
+		t.Fatalf("POST = %d, want 405", w.Code)
+	}
+	if w := request(New(m, Options{Token: "secret"}), "GET", "/api/diagnostics", "", nil, ""); w.Code != 401 {
+		t.Fatalf("unauthenticated = %d, want 401", w.Code)
+	}
 }
 
 func TestActionsAndSSEReconnect(t *testing.T) {

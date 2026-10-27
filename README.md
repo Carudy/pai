@@ -856,7 +856,9 @@ logs for up to 250 ms; a blocked writer may lose the remaining logs.
 
 `pai serve --debug-log` is the operator's audit trail: one timestamped line per
 host-side fact, including probes that did **not** fire and durably queued work.
-It is independent of `--activity-log`, so either or both can be on.
+It is independent of `--activity-log`, so either or both can be on. The web UI's
+**Logs** tab subscribes to the same diagnostics, so it shows these lines whether
+or not this flag is set.
 
 ```text
 2026-10-27T14:30:00 [river] watcher <level>: result "1 level=6.4 mode=danger", triggered, next 14:30:30

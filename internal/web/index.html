@@ -295,9 +295,15 @@
                             Compress now
                         </button>
                     </div>
+                    <div id="events" role="log" aria-label="Context events">
+                        <div id="live-progress"></div>
+                    </div>
                 </div>
-                <div id="events" role="log" aria-label="Activities">
-                    <div id="live-progress"></div>
+                <div id="log-pane" class="log-pane" role="log" aria-label="Host diagnostics">
+                    <p id="diagnostics-empty" class="muted">
+                        No host events yet. Probe verdicts, scheduler decisions, and model usage appear here as they happen.
+                    </p>
+                    <div id="diagnostics"></div>
                 </div>
             </aside>
         </div>

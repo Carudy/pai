@@ -20,6 +20,10 @@ let selectedMode = '';
 let serviceView = null, serviceRequest = 0, serviceTimer = null, serviceError = '';
 const SERVICE_EXPANDED_KEY = 'pai.service-expanded';
 const ACTIVITY_PANE_KEY = 'pai.activity-pane';
+// The Logs tab keeps the newest lines; older ones fall out exactly like the
+// bounded live pane, so a long-running page cannot grow without limit.
+const DIAGNOSTIC_LIMIT = 500;
+let diagnosticsStream = null;
 let serviceExpanded = false;
 let serverCwd = '';
 let createMode = 'chat';
@@ -439,8 +443,8 @@ function notify(message) {
 }
 function error(e) { notify(e.message || String(e)); }
 function toast(message) { notify(message); }
-function showApp() { $('login').hidden = true; $('app').hidden = false; }
-function loginNeeded() { $('login').hidden = false; $('app').hidden = true; disconnect(); }
+function showApp() { $('login').hidden = true; $('app').hidden = false; connectDiagnostics(); }
+function loginNeeded() { $('login').hidden = false; $('app').hidden = true; disconnect(); disconnectDiagnostics(); }
 // The workspace shell starts hidden (see index.html), so a signed-out load never
 // flashes it before the first request is answered. A 401 needs the login form; any
 // other failure reveals the shell, so the user keeps the UI and the error toast
@@ -520,7 +524,8 @@ function applyActivityPane(pane) {
     tab.classList.toggle('selected', name === value);
   }
   try { localStorage.setItem(ACTIVITY_PANE_KEY, value); } catch (_) {}
-  activityScroll();
+  if (value === 'logs') { const pane = $('log-pane'); if (pane) pane.scrollTop = pane.scrollHeight; }
+  else activityScroll();
 }
 async function api(path, body) {
   const options = body === undefined ? {} : { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) };
@@ -2167,6 +2172,78 @@ function activity(event) {
   else if (type === 'notice') toast(typeof data === 'string' ? data : String(data));
   else if (['done','terminate','ask','user'].includes(type)) scheduleHistory();
   else if (type !== 'output') return;
+}
+// ── Host diagnostics (Logs tab) ─────────────────────────────
+// `pai serve --debug-log` and this pane read the same stream: probe verdicts,
+// scheduler decisions, model usage. It is global rather than per-session because
+// each line already names its session, and one page-wide stream outlives session
+// switches. There is no replay, matching the CLI, which also starts at launch.
+function connectDiagnostics() {
+  if (typeof EventSource !== 'function' || diagnosticsStream) return;
+  diagnosticsStream = new EventSource('/api/diagnostics');
+  diagnosticsStream.onmessage = event => {
+    let diagnostic;
+    try { diagnostic = JSON.parse(event.data); } catch (_) { return; }
+    appendDiagnostic(diagnostic);
+  };
+}
+function disconnectDiagnostics() {
+  if (!diagnosticsStream) return;
+  diagnosticsStream.close();
+  diagnosticsStream = null;
+}
+// One line, one fact: whitespace and terminal controls collapse so a probe's
+// multi-line output cannot break the log's shape or inject formatting.
+function diagnosticField(value) {
+  return String(value == null ? '' : value)
+    .replace(/\s+/g, ' ')
+    .replace(/[\u0000-\u001f\u007f\u200b-\u200f\u202a-\u202e]/g, '')
+    .trim();
+}
+function diagnosticTime(value) {
+  const d = new Date(value);
+  if (isNaN(d.getTime()) || d.getFullYear() <= 1) return '';
+  return formatTimeExact(value).replace(' ', 'T');
+}
+// Keep this in step with cli.serveDiagnosticLine: the CLI and the browser should
+// read the same way, but each adapter owns its own rendering.
+function diagnosticLine(d) {
+  const kind = diagnosticField(d.kind), outcome = diagnosticField(d.outcome), detail = diagnosticField(d.detail);
+  const parts = [diagnosticTime(d.time) || '-', '[' + diagnosticField(d.session) + ']'];
+  if (kind === 'watcher') {
+    parts.push('watcher <' + diagnosticField(d.subject) + '>:');
+    if (['fired', 'quiet', 'held'].includes(outcome)) {
+      parts.push('result ' + JSON.stringify(detail) + ', ' + (outcome === 'fired' ? 'triggered' : 'not triggered'));
+      if (d.reason) parts.push('(' + diagnosticField(d.reason) + ')');
+    } else {
+      parts.push(outcome + (detail ? ': ' + detail : ''));
+    }
+  } else {
+    parts.push(kind);
+    if (d.subject) parts.push(diagnosticField(d.subject));
+    if (outcome) parts.push(outcome);
+  }
+  let line = parts.join(' ');
+  if (kind !== 'watcher' && detail) line += ': ' + detail;
+  const next = diagnosticTime(d.next);
+  if (next) line += ', next ' + next.slice(-8);
+  return line.length > 600 ? line.slice(0, 599) + '…' : line;
+}
+function appendDiagnostic(d) {
+  const host = $('diagnostics');
+  if (!host) return;
+  const pane = $('log-pane');
+  // Follow the tail only when the reader is already there, so scrolling back to
+  // compare two probes is not undone by the next quiet check.
+  const follow = !pane || pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 40;
+  const line = text('div', diagnosticLine(d), 'log-line');
+  line.dataset.kind = diagnosticField(d.kind);
+  if (d.outcome) line.dataset.outcome = diagnosticField(d.outcome);
+  host.append(line);
+  const empty = $('diagnostics-empty');
+  if (empty) empty.hidden = true;
+  while (host.children.length > DIAGNOSTIC_LIMIT) host.firstElementChild.remove();
+  if (follow && pane) pane.scrollTop = pane.scrollHeight;
 }
 // Presentation only: never feed these segments back into execution or copying.
 function shellSegments(command) {

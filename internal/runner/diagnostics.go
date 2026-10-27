@@ -7,14 +7,14 @@ import "time"
 // separate from Activity: Activity is the live story a browser renders, while
 // diagnostics repeat on every probe and would drown that stream.
 type Diagnostic struct {
-	Time    time.Time
-	Session string
-	Kind    string    // watcher | activation | event | service | model | notice | error
-	Subject string    // the watcher or model the fact is about, when it has one
-	Outcome string    // fired, quiet, failed, skipped, granted, …
-	Detail  string    // what happened; the adapter collapses it to one line
-	Reason  string    // why, when the outcome alone is ambiguous (e.g. "reminder not due")
-	Next    time.Time // zero when nothing is scheduled
+	Time    time.Time `json:"time"`
+	Session string    `json:"session,omitempty"`
+	Kind    string    `json:"kind"`              // watcher | activation | event | service | model | notice | error
+	Subject string    `json:"subject,omitempty"` // the watcher or model the fact is about, when it has one
+	Outcome string    `json:"outcome,omitempty"` // fired, quiet, failed, skipped, granted, …
+	Detail  string    `json:"detail,omitempty"`  // what happened; the adapter collapses it to one line
+	Reason  string    `json:"reason,omitempty"`  // why, when the outcome alone is ambiguous (e.g. "reminder not due")
+	Next    time.Time `json:"next"`              // zero when nothing is scheduled
 }
 
 // SubscribeDiagnostics observes host-side diagnostics without replay. Like

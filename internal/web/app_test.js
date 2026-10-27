@@ -1046,6 +1046,46 @@ async function verifyContext() {
   assert.equal(p.run('calls.length'), 0, 'the top of the transcript is not refetched');
 }
 
+// Logs is the CLI's audit stream, not the model's output: one timestamped line
+// per host fact, rendered from the same structured Diagnostic.
+function verifyDiagnostics() {
+  const p = browser();
+  const at = '2026-10-27T12:00:00Z', next = '2026-10-27T12:00:30Z';
+  const line = d => p.run('diagnosticLine(' + JSON.stringify(d) + ')');
+  assert.match(line({time: at, session: 'demo', kind: 'watcher', subject: 'level', outcome: 'fired', detail: '1 level=4.4 mode=danger', next}),
+    /^\S+ \[demo\] watcher <level>: result "1 level=4.4 mode=danger", triggered, next \d\d:\d\d:\d\d$/, 'a fired probe reads like the CLI line');
+  assert.match(line({time: at, session: 'demo', kind: 'watcher', subject: 'level', outcome: 'quiet', detail: '0', next}),
+    /watcher <level>: result "0", not triggered, next /, 'a quiet probe says so');
+  assert.match(line({time: at, session: 'demo', kind: 'activation', outcome: 'skipped', detail: 'nothing substantive to report', next}),
+    /\[demo\] activation skipped: nothing substantive to report, next \d\d:\d\d:\d\d$/, 'a skipped activation matches the CLI');
+  assert.match(line({time: at, session: 'demo', kind: 'model', subject: 'deepseek:flash', outcome: 'usage', detail: 'in 10, out 2'}),
+    /\[demo\] model deepseek:flash usage: in 10, out 2$/, 'model usage has no next field');
+  assert.doesNotMatch(line({time: at, session: 'demo', kind: 'error', detail: 'a\nb'}), /\n/, 'a multi-line detail stays one line');
+  assert.match(line({time: at, session: 'demo', kind: 'error', detail: 'boom'}), /\S+ \[demo\] error: boom$/);
+
+  // Appending is bounded and retires the empty note.
+  assert.equal(p.get('diagnostics-empty').hidden, false);
+  p.run('appendDiagnostic(' + JSON.stringify({time: at, session: 'demo', kind: 'error', outcome: 'failed', detail: 'boom'}) + ')');
+  assert.equal(p.get('diagnostics').children.length, 1, 'a diagnostic becomes one line');
+  assert.equal(p.get('diagnostics-empty').hidden, true, 'the empty note leaves after the first line');
+  assert.equal(p.get('diagnostics').children[0].dataset.outcome, 'failed', 'the line carries its outcome for styling');
+  p.run('for (let i = 0; i < 505; i++) appendDiagnostic({time: "2026-10-27T12:00:00Z", session: "demo", kind: "notice", detail: "n" + i})');
+  assert.equal(p.get('diagnostics').children.length, 500, 'older lines are dropped');
+
+  // One page-wide stream, opened on login and closed when signed out.
+  p.run('connectDiagnostics(); connectDiagnostics()');
+  assert.equal(p.connections.length, 1, 'diagnostics opens one stream');
+  p.connections[0].onmessage({data: JSON.stringify({time: at, session: 'demo', kind: 'activation', outcome: 'start', detail: 'timer: 2 event(s)'})});
+  assert.match(p.get('diagnostics').children[p.get('diagnostics').children.length - 1].textContent, /activation start: timer: 2 event\(s\)/);
+  p.run('disconnectDiagnostics()');
+  assert.equal(p.connections[0].closed, true, 'signing out closes the stream');
+  assert.equal(p.run('diagnosticsStream'), null);
+  p.run('connectDiagnostics()');
+  assert.equal(p.connections.length, 2, 'a later login can open it again');
+  p.run("applyActivityPane('logs')");
+  assert.equal(p.get('log-pane').scrollTop, p.get('log-pane').scrollHeight, 'switching to Logs follows the tail');
+}
+
 // The open session is named in the URL, so a reload or a shared link opens the
 // same conversation and back/forward move between sessions.
 async function verifySessionURL() {
@@ -1349,7 +1389,7 @@ async function verifyIdentity() {
   assert.equal(p.get('identity').hidden, true, 'an empty identity keeps the line hidden');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
 
 // The sidebar has one list with a URL-backed mode filter, and a service shows the
 // durable view (state, last report, probes, manifest) above its transcript.
