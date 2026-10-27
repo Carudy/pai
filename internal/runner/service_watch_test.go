@@ -71,6 +71,19 @@ func (b *watchTestBackend) SetWatcherState(id string, lastRun, nextRun *time.Tim
 	return fmt.Errorf("unknown watcher %q", id)
 }
 
+func (b *watchTestBackend) SetWatcherApproval(id string, at time.Time, nextRun *time.Time) error {
+	b.wmu.Lock()
+	defer b.wmu.Unlock()
+	for i, w := range b.watchers {
+		if w.ID != id {
+			continue
+		}
+		b.watchers[i].ApprovedAt, b.watchers[i].NextRun = &at, nextRun
+		return nil
+	}
+	return fmt.Errorf("unknown watcher %q", id)
+}
+
 func (b *watchTestBackend) DueEvents(string, time.Time, int) ([]core.Event, error) {
 	b.wmu.Lock()
 	defer b.wmu.Unlock()
@@ -141,7 +154,7 @@ func TestServiceProbeSkipsModelWhenNothingChanged(t *testing.T) {
 	fp := &serviceTestProvider{done: make(chan int, 1)}
 	m, backend := newWatchService(t, fp, WatcherState{
 		ID: "w1", SessionID: "sid-w", Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
-		Enabled: true, NextRun: &past,
+		Enabled: true, ApprovedAt: &past, NextRun: &past,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -183,7 +196,7 @@ func TestServiceProbeWakesOnChange(t *testing.T) {
 	}
 	m, backend := newWatchService(t, fp, WatcherState{
 		ID: "w1", SessionID: "sid-w", Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
-		Enabled: true, NextRun: &past,
+		Enabled: true, ApprovedAt: &past, NextRun: &past,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -209,6 +222,87 @@ func TestServiceProbeWakesOnChange(t *testing.T) {
 	state := backend.watcher(t, spec.Name)
 	if _, open := watcher.Open(state.LastState); open {
 		t.Fatalf("watcher state = %s, want the handled fire to be closed", state.LastState)
+	}
+}
+
+// A due command probe without a grant does not run: scheduled code needs an
+// explicit decision. It keeps its cadence and is not recorded as run, so the row
+// stays visible as "awaiting approval" instead of looking broken.
+func TestServiceProbeWaitsForApproval(t *testing.T) {
+	skipWithoutPOSIXShell(t)
+	past := time.Now().Add(-time.Minute)
+	spec := config.WatcherSpec{
+		Name: "probe", Command: "echo ran > probe-ran; echo 0",
+		Interval: time.Minute, Timeout: 5 * time.Second,
+	}
+	fp := &serviceTestProvider{done: make(chan int, 1)}
+	m, backend := newWatchService(t, fp, WatcherState{
+		ID: "w1", SessionID: "sid-w", Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
+		Enabled: true, NextRun: &past,
+	})
+	marker := filepath.Join(backend.meta.Cwd, "probe-ran")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	next, err := m.Activate(ctx, "svc", clockWake())
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("an unapproved probe ran")
+	}
+	if fp.CallCount() != 0 {
+		t.Fatalf("model calls = %d, want none", fp.CallCount())
+	}
+	w := backend.watcher(t, spec.Name)
+	if w.ApprovedAt != nil || w.LastRun != nil {
+		t.Fatalf("watcher = %+v, want neither a grant nor a run", w)
+	}
+	if next == nil || !next.After(time.Now()) {
+		t.Fatalf("next wake = %v, want the retry cadence", next)
+	}
+
+	// The grant is the only thing that changes the outcome.
+	if err := backend.SetWatcherApproval(w.ID, time.Now(), &past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Activate(ctx, "svc", clockWake()); err != nil {
+		t.Fatalf("Activate (approved): %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("the approved probe did not run: %v", err)
+	}
+}
+
+// A command name the session already trusts is a grant: the probe runs and the
+// grant is recorded once instead of asking again on every pass.
+func TestServiceProbeRunsWhenTheNameIsTrusted(t *testing.T) {
+	skipWithoutPOSIXShell(t)
+	past := time.Now().Add(-time.Minute)
+	spec := config.WatcherSpec{
+		Name: "probe", Command: "echo 0",
+		Interval: time.Minute, Timeout: 5 * time.Second,
+	}
+	fp := &serviceTestProvider{done: make(chan int, 1)}
+	m, backend := newWatchService(t, fp, WatcherState{
+		ID: "w1", SessionID: "sid-w", Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
+		Enabled: true, NextRun: &past,
+	})
+	if err := m.SetCommandTrust("svc", "echo", true); err != nil {
+		t.Fatalf("SetCommandTrust: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := m.Activate(ctx, "svc", clockWake()); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	w := backend.watcher(t, spec.Name)
+	if w.LastRun == nil {
+		t.Fatal("a trusted probe did not run")
+	}
+	if w.ApprovedAt == nil {
+		t.Fatal("the trust-based grant was not recorded")
 	}
 }
 
@@ -587,7 +681,7 @@ func TestServiceUserInputSkipsProbes(t *testing.T) {
 	}
 	m, backend := newWatchService(t, fp, WatcherState{
 		ID: "w1", SessionID: "sid-w", Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
-		Enabled: true, NextRun: &past,
+		Enabled: true, ApprovedAt: &past, NextRun: &past,
 	})
 	marker := filepath.Join(backend.meta.Cwd, "probe-ran")
 

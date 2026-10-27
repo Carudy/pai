@@ -1331,7 +1331,7 @@ async function verifyServiceMode() {
     spec: '{"goal":"watch the river","role":"devops"}',
     watchers: [
       {name: '_report', enabled: true, spec: '{"interval":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
-      {name: 'river', enabled: true, spec: '{"command":"cat state.json","interval":"60s"}', last_state: '{"fired":1793000000,"reported":true}', last_error: 'courier failed'},
+      {name: 'river', enabled: true, approved_at: '2026-10-27T10:00:00Z', spec: '{"command":"cat state.json","interval":"60s"}', last_state: '{"fired":1793000000,"reported":true}', last_error: 'courier failed'},
     ],
   };
   p.run("selected='river'; serviceView=" + JSON.stringify(view) + '; paintService();');
@@ -1352,6 +1352,15 @@ async function verifyServiceMode() {
   assert.match(p.run('humanizeWatcherState({last_state:\'{"fired":1793000000,"handled":1793000060,"reported":true,"acknowledged":true}\'})'),
     /^handled · fired .* · handled /, 'a handled fire reads as handled');
   assert.equal(p.run('humanizeWatcherState({last_state:"{}"})'), '', 'an ended episode says nothing');
+
+  // A probe saved without a grant offers the grant instead of a state: approval
+  // happens when the probe would run, not when the manifest is written.
+  const unapproved = JSON.parse(JSON.stringify(view));
+  unapproved.watchers[1].approved_at = null;
+  unapproved.watchers[1].last_error = '';
+  p.run('serviceView=' + JSON.stringify(unapproved) + '; paintService();');
+  assert.equal(p.get('service-watchers').children[2].children[4].textContent, 'awaiting approval · approve',
+    'an unapproved command probe offers its grant');
 
   // The bar is explicitly collapsible, and the details are a bounded panel.
   p.run('applyServiceExpanded(true)');

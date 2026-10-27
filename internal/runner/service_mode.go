@@ -253,6 +253,29 @@ func (m *Manager) EditService(name, manifest string, approveCommands bool) (Serv
 	return view, nil
 }
 
+// ApproveWatcher grants one command probe. The grant is durable and scoped to
+// the probe: it lives on the watcher row, survives a restart, and is dropped if
+// the probe's command changes. An idle service is woken so the first run happens
+// now rather than at the stored schedule; a probe that finds nothing changed
+// still costs no model call.
+func (m *Manager) ApproveWatcher(name, watcher string) (ServiceView, error) {
+	backend, ok := m.backend.(ServiceApprover)
+	if !ok {
+		return ServiceView{}, errors.New("this backend cannot approve watchers")
+	}
+	view, err := backend.ApproveWatcher(name, watcher)
+	if err != nil {
+		return ServiceView{}, err
+	}
+	m.mu.Lock()
+	stopped := m.stoppedServices[name]
+	m.mu.Unlock()
+	if !stopped {
+		m.scheduler.Wake(name, core.Wake{Reason: "watcher approved"})
+	}
+	return view, nil
+}
+
 // ServiceView reports one resident session: durable state from the store, plus
 // the live phase and last error when the worker is prepared. It is the read side
 // of `pai service show`, available while a server holds the store lock.
@@ -417,6 +440,7 @@ func (w *worker) runService() {
 			w.rt = rt
 			rt.TrustedCmds = w.m.commandTrustLocked(w.name)
 			rt.TrustedTools = w.m.toolTrustLocked(w.name)
+			w.cfgTrusted = append([]string(nil), copyCfg.TrustedCmds...)
 			w.model = copyCfg.DefaultModel
 			w.workingDir = cwd
 			w.contextTokens = copyCfg.Context.SummarizeAfterTokens

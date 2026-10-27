@@ -205,12 +205,17 @@ func (s *sqliteStore) PutWatcher(w Watcher) error {
 	if version <= 0 {
 		version = 1
 	}
+	// approved_at is part of the replacement, not preserved from the old row:
+	// the caller computed it (kept for an unchanged probe, cleared for a changed
+	// command), and an upsert that silently kept an old grant would let an edit
+	// bless code the user never approved.
 	_, err := s.db.Exec(`
 INSERT INTO watchers(id, session_id, name, spec, enabled, approved_at, last_run, next_run, last_state, last_error, version)
 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(session_id, name) DO UPDATE SET
   spec = excluded.spec,
   enabled = excluded.enabled,
+  approved_at = excluded.approved_at,
   next_run = excluded.next_run,
   last_state = excluded.last_state,
   last_error = excluded.last_error,
@@ -252,6 +257,12 @@ FROM watchers WHERE session_id = ? ORDER BY name`, sessionID)
 func (s *sqliteStore) SetWatcherState(id string, lastRun, nextRun *time.Time, lastState, lastErr string) error {
 	_, err := s.db.Exec(`UPDATE watchers SET last_run = ?, next_run = ?, last_state = ?, last_error = ? WHERE id = ?`,
 		timeArg(lastRun), timeArg(nextRun), lastState, lastErr, id)
+	return err
+}
+
+func (s *sqliteStore) SetWatcherApproval(id string, at time.Time, nextRun *time.Time) error {
+	_, err := s.db.Exec(`UPDATE watchers SET approved_at = ?, next_run = ? WHERE id = ?`,
+		at.Unix(), timeArg(nextRun), id)
 	return err
 }
 

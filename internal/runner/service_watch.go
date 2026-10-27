@@ -8,6 +8,7 @@ import (
 
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
+	"github.com/Carudy/pai/internal/tool"
 	"github.com/Carudy/pai/internal/watcher"
 )
 
@@ -85,6 +86,25 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 			// Out of budget: keep it due so the next activation retries it.
 			next = earlier(next, &now)
 			continue
+		}
+
+		if spec.Command != "" && ws.ApprovedAt == nil {
+			if !m.probeTrusted(w, spec.Command) {
+				// Scheduled code never runs on its own authority. Keeping the cadence
+				// leaves the row visible as "awaiting approval" and ready to run the
+				// moment it is granted, without spinning the scheduler.
+				nextRun := now.Add(spec.Interval)
+				if err := wb.SetWatcherState(ws.ID, ws.LastRun, &nextRun, ws.LastState, ws.LastError); err != nil {
+					w.emit("error", fmt.Sprintf("could not reschedule watcher %q: %v", ws.Name, err))
+				}
+				next = earlier(next, &nextRun)
+				continue
+			}
+			// A name the session already trusts is a grant; record it instead of
+			// re-deriving it on every probe.
+			if err := wb.SetWatcherApproval(ws.ID, now, ws.NextRun); err != nil {
+				w.emit("error", fmt.Sprintf("could not approve watcher %q: %v", ws.Name, err))
+			}
 		}
 
 		res := watcher.Probe(probeCtx, spec, dir, ws.LastState, now)
@@ -232,6 +252,20 @@ func (m *Manager) serviceManifest(name string) *config.ServiceManifest {
 type openItem struct {
 	Name  string
 	Fired time.Time
+}
+
+// probeTrusted reports whether a probe's command may run without a fresh grant.
+// It is the same name-based test the shell tool uses: every segment's command
+// name must be trusted, with navigation exempt. A construct or a redirection has
+// no name and is therefore never trusted, so those probes need an explicit
+// grant. Trust-all is the session's own switch and outranks the list.
+func (m *Manager) probeTrusted(w *worker, command string) bool {
+	m.mu.Lock()
+	trustAll := m.trustAll[w.name]
+	trusted := append([]string(nil), w.cfgTrusted...)
+	trusted = append(trusted, commandTrustNames(m.commandTrust[w.name])...)
+	m.mu.Unlock()
+	return trustAll || tool.IsTrusted(command, trusted)
 }
 
 // openWatchers lists outstanding watcher work for the situation. It is a

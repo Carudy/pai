@@ -127,7 +127,10 @@ interval = "45s"
 	}
 }
 
-func TestServiceCreateRequiresApprovalForCommandWatchers(t *testing.T) {
+// A command watcher no longer blocks the write: the manifest is stored, the
+// probe is left unapproved, and the operator is told. `--yes` is the
+// pre-approval switch; the panel (or `pai service edit --yes`) can grant later.
+func TestServiceCreateDefersCommandApproval(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
@@ -146,16 +149,60 @@ command = "true"
 	var out bytes.Buffer
 	log := tui.NewLogger(&out, false)
 
-	if code := runServiceCmd(context.Background(), []string{"create", "probe", "--file", path}, &out, log); code == 0 {
-		t.Fatalf("command watcher was accepted without --yes: %s", out.String())
+	if code := runServiceCmd(context.Background(), []string{"create", "probe", "--file", path}, &out, log); code != 0 {
+		t.Fatalf("create without --yes: %s", out.String())
 	}
-	if !strings.Contains(out.String(), "requires --yes") && !strings.Contains(out.String(), "--yes") {
-		t.Fatalf("approval error is unclear: %q", out.String())
+	if !strings.Contains(out.String(), "awaiting approval") {
+		t.Fatalf("the pending grant is not reported: %q", out.String())
 	}
+	checkApproval := func(name string, want bool) {
+		t.Helper()
+		store, err := session.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer store.Close()
+		ss, ok := store.(session.ServiceStore)
+		if !ok {
+			t.Fatal("store does not expose service state")
+		}
+		info, err := ss.ServiceInfo(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		watchers, err := ss.Watchers(info.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range watchers {
+			if w.Name != "level" {
+				continue
+			}
+			if got := w.ApprovedAt != nil; got != want {
+				t.Fatalf("%s: approved = %v, want %v", name, got, want)
+			}
+			return
+		}
+		t.Fatalf("%s: the level watcher was not stored", name)
+	}
+	checkApproval("probe", false)
+
+	// A never-started service is idle enough to edit, so --yes is the documented
+	// way to grant the probes it already stored.
 	out.Reset()
-	if code := runServiceCmd(context.Background(), []string{"create", "probe", "--file", path, "--yes"}, &out, log); code != 0 {
+	if code := runServiceCmd(context.Background(), []string{"edit", "probe", "--file", path, "--yes"}, &out, log); code != 0 {
+		t.Fatalf("edit with --yes: %s", out.String())
+	}
+	checkApproval("probe", true)
+
+	out.Reset()
+	if code := runServiceCmd(context.Background(), []string{"create", "granted", "--file", path, "--yes"}, &out, log); code != 0 {
 		t.Fatalf("create with --yes: %s", out.String())
 	}
+	if strings.Contains(out.String(), "awaiting approval") {
+		t.Fatalf("--yes still left a pending grant: %q", out.String())
+	}
+	checkApproval("granted", true)
 }
 
 func TestServiceStopStart(t *testing.T) {
@@ -241,7 +288,21 @@ interval = "30s"
 		t.Fatalf("create: %s", out.String())
 	}
 
-	// A live (or at least not stopped) service refuses the edit.
+	// A started service refuses the edit; a never-run one (no state yet) does not,
+	// because there is no activation to race.
+	stateStore, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateSS, ok := stateStore.(session.ServiceStore)
+	if !ok {
+		t.Fatal("store does not expose service state")
+	}
+	if err := stateSS.SetServiceState("svc", "suspended", ""); err != nil {
+		t.Fatal(err)
+	}
+	stateStore.Close()
+
 	newWorkspace := t.TempDir()
 	edited := writeManifest(t, t.TempDir(), `
 [service]
@@ -256,7 +317,7 @@ command = "echo 1"
 `)
 	out.Reset()
 	if code := runServiceCmd(context.Background(), []string{"edit", "svc", "--file", edited, "--yes"}, &out, log); code == 0 {
-		t.Fatalf("editing a service that is not stopped was accepted: %s", out.String())
+		t.Fatalf("editing a started service was accepted: %s", out.String())
 	}
 
 	out.Reset()
@@ -340,8 +401,9 @@ workspace = "` + workspace + `"
 	}
 }
 
-// The HTTP path and `pai service create` share one creation rule set: a command
-// watcher needs approval, and the stored service is immediately inspectable.
+// The HTTP path and `pai service create` share one rule set: a manifest is
+// stored as written, a command watcher that was not pre-approved waits for a
+// grant, and approval is a separate targeted write.
 func TestServeBackendCreateService(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_DATA_HOME", home)
@@ -366,8 +428,31 @@ command = "echo 1"
 	defer store.Close()
 	backend := &serveBackend{store: store, cwd: workspace}
 
-	if _, err := backend.CreateService("svc", manifest, false); err == nil || !strings.Contains(err.Error(), "approval") {
-		t.Fatalf("unapproved command watcher: %v", err)
+	// Without pre-approval the service is saved anyway; the probe is the thing
+	// that waits.
+	pending, err := backend.CreateService("pending", manifest, false)
+	if err != nil {
+		t.Fatalf("create without approval: %v", err)
+	}
+	for _, w := range pending.Watchers {
+		if w.Name == "level" && w.ApprovedAt != nil {
+			t.Fatal("a command watcher was approved without being asked")
+		}
+		if w.Name == config.ReportWatcherName && w.ApprovedAt == nil {
+			t.Fatal("a timer runs no command, so it must not wait for a grant")
+		}
+	}
+	approved, err := backend.ApproveWatcher("pending", "level")
+	if err != nil {
+		t.Fatalf("ApproveWatcher: %v", err)
+	}
+	for _, w := range approved.Watchers {
+		if w.Name == "level" && w.ApprovedAt == nil {
+			t.Fatal("approval was not stored")
+		}
+	}
+	if _, err := backend.ApproveWatcher("pending", config.ReportWatcherName); err == nil || !strings.Contains(err.Error(), "timer") {
+		t.Fatalf("approving a timer: %v", err)
 	}
 
 	view, err := backend.CreateService("svc", manifest, true)

@@ -1611,8 +1611,9 @@ func TestSessionsModeFilter(t *testing.T) {
 // handler's validation and status code can be pinned without a store.
 type serviceCreateBackend struct {
 	backend
-	created string
-	approve bool
+	created         string
+	approve         bool
+	approvedWatcher string
 }
 
 func (b *serviceCreateBackend) CreateService(name, manifest string, approve bool) (runner.ServiceView, error) {
@@ -1622,6 +1623,32 @@ func (b *serviceCreateBackend) CreateService(name, manifest string, approve bool
 		Status: "",
 		Spec:   `{"goal":"g"}`,
 	}, nil
+}
+
+func (b *serviceCreateBackend) ApproveWatcher(name, watcher string) (runner.ServiceView, error) {
+	b.approvedWatcher = watcher
+	return runner.ServiceView{Meta: runner.Meta{Name: name, ID: "sid-new", Mode: runner.ModeService}}, nil
+}
+
+func TestServiceApproveAPI(t *testing.T) {
+	b := &serviceCreateBackend{}
+	m := runner.New(context.Background(), b, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+
+	w := request(h, http.MethodPost, "/api/service/approve", `{"name":"river","watcher":"level"}`, nil, "http://pai.test")
+	if w.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", w.Code, w.Body.String())
+	}
+	if b.approvedWatcher != "level" {
+		t.Fatalf("backend saw watcher %q", b.approvedWatcher)
+	}
+	if w := request(h, http.MethodPost, "/api/service/approve", `{"name":"river"}`, nil, "http://pai.test"); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing watcher = %d, want 400", w.Code)
+	}
+	if w := request(h, http.MethodGet, "/api/service/approve", "", nil, "http://pai.test"); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET = %d, want 405", w.Code)
+	}
 }
 
 func TestServiceCreateAPI(t *testing.T) {

@@ -35,7 +35,8 @@ type worker struct {
 	usage         core.Usage
 	totalUsage    core.Usage
 	usageCalls    int
-	contextTokens int // compaction trigger from config; 0 = disabled
+	contextTokens int      // compaction trigger from config; 0 = disabled
+	cfgTrusted    []string // config trusted_cmds as of the last prepare, for the probe gate
 	activeTool    *core.ToolCall
 	failure       string
 	instruction   bool

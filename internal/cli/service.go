@@ -33,8 +33,10 @@ func serviceHelp() string {
 
 A service is a resident session. ` + "`pai serve`" + ` starts the scheduler and registers
 every service it finds; this command only creates, inspects, and edits the durable
-state. Creating or editing a manifest with command watchers requires --yes: a
-command probe is persistent code execution on a schedule, so review it first.
+state. A manifest that defines command watchers is saved as written: --yes
+pre-approves them, and without it each probe waits for a grant (the web service
+panel's Approve button, or a later edit --yes), so scheduled code never starts
+silently. A command name already trusted for the session counts as a grant.
 A manifest edit is only allowed while the service is stopped; the role, workspace,
 spec, and watcher set are replaced, while the session's history and queued events
 are kept. report_interval is stored as the reserved timer watcher _report and
@@ -187,13 +189,27 @@ func serviceShow(name string, stdout io.Writer, log *tui.Logger) int {
 	fmt.Fprintln(tw, "  NAME\tENABLED\tLAST RUN\tNEXT RUN\tSTATE\tERROR")
 	for _, w := range watchers {
 		fmt.Fprintf(tw, "  %s\t%v\t%s\t%s\t%s\t%s\n",
-			w.Name, w.Enabled, formatWake(w.LastRun), formatWake(w.NextRun), emptyOr(w.LastState, "-"), w.LastError)
+			w.Name, w.Enabled, formatWake(w.LastRun), formatWake(w.NextRun), watcherStateText(w), w.LastError)
 	}
 	if err := tw.Flush(); err != nil {
 		log.Errorf("Error writing watchers: %v\n", err)
 		return 1
 	}
+	if len(pendingApprovals(store, name)) > 0 {
+		fmt.Fprintln(stdout, "\ncommand watchers are awaiting approval; they do not run until approved")
+	}
 	return 0
+}
+
+// watcherStateText names a probe that cannot run yet. Without it an unapproved
+// command watcher is indistinguishable from one that simply has not fired.
+func watcherStateText(w session.Watcher) string {
+	if w.ApprovedAt == nil {
+		if spec, err := config.ParseWatcherSpec(w.Spec); err == nil && spec.Command != "" {
+			return "awaiting approval"
+		}
+	}
+	return emptyOr(w.LastState, "-")
 }
 
 // serviceSetState stops or resumes a service in the durable store. It requires
@@ -294,14 +310,6 @@ func serviceCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error: %v\n", err)
 		return 1
 	}
-	if commands := commandWatchers(manifest); len(commands) > 0 && !yes {
-		log.Errorf("Error: this manifest defines command watchers, which run persistently on a schedule:\n")
-		for _, c := range commands {
-			log.Errorf("  %s\n", c)
-		}
-		log.Errorf("Re-run with --yes after reviewing them.\n")
-		return 1
-	}
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
 		log.Errorf("Error loading config: %v\n", err)
@@ -324,7 +332,7 @@ func serviceCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error: %v\n", err)
 		return 1
 	}
-	created, next, err := newService(store, name, manifest, cfg.DefaultModel, time.Now())
+	created, next, err := newService(store, name, manifest, cfg.DefaultModel, time.Now(), yes)
 	if err != nil {
 		log.Errorf("Error creating service: %v\n", err)
 		return 1
@@ -335,6 +343,7 @@ func serviceCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 	}
 	fmt.Fprintf(stdout, "created service %s (id %s)\n", name, created.ID)
 	fmt.Fprintf(stdout, "workspace: %s\nrole: %s\nnext wake: %s\n", manifest.Workspace, manifest.Role, when)
+	printPendingApprovals(stdout, store, name)
 	fmt.Fprintln(stdout, "run `pai serve` to start the scheduler")
 	return 0
 }
@@ -388,23 +397,16 @@ func serviceEdit(args []string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error: %v\n", err)
 		return 1
 	}
-	if commands := commandWatchers(manifest); len(commands) > 0 && !yes {
-		log.Errorf("Error: this manifest defines command watchers, which run persistently on a schedule:\n")
-		for _, c := range commands {
-			log.Errorf("  %s\n", c)
-		}
-		log.Errorf("Re-run with --yes after reviewing them.\n")
-		return 1
-	}
 	store, ok := openServiceStore(log)
 	if !ok {
 		return 1
 	}
 	defer store.Close()
-	if err := updateService(store, name, manifest, time.Now()); err != nil {
+	if err := updateService(store, name, manifest, time.Now(), yes); err != nil {
 		log.Errorf("Error updating service: %v\n", err)
 		return 1
 	}
+	printPendingApprovals(stdout, store, name)
 	fmt.Fprintf(stdout, "updated service %s; start it to apply the new manifest\n", name)
 	return 0
 }
@@ -425,24 +427,51 @@ func prepareServiceManifest(manifest *config.ServiceManifest) error {
 	return nil
 }
 
-// commandWatchers names the probes that execute code on a schedule. Creation
-// requires explicit approval for these, from --yes or the HTTP form, so a pasted
-// manifest cannot silently start running commands.
-func commandWatchers(manifest *config.ServiceManifest) []string {
+// pendingApprovals names the command probes that still need a grant, as
+// "name: command". A manifest saves without one; the probe simply does not run
+// until it is approved, so the entry points must say so rather than let a
+// correctly stored service look broken.
+func pendingApprovals(store session.Store, name string) []string {
+	ss, ok := store.(session.ServiceStore)
+	if !ok {
+		return nil
+	}
+	info, err := ss.ServiceInfo(name)
+	if err != nil {
+		return nil
+	}
+	watchers, err := ss.Watchers(info.ID)
+	if err != nil {
+		return nil
+	}
 	var out []string
-	for _, w := range manifest.Watchers {
-		if w.Command != "" {
-			out = append(out, fmt.Sprintf("%s: %s", w.Name, w.Command))
+	for _, w := range watchers {
+		spec, err := config.ParseWatcherSpec(w.Spec)
+		if err != nil || spec.Command == "" || w.ApprovedAt != nil {
+			continue
 		}
+		out = append(out, fmt.Sprintf("%s: %s", w.Name, spec.Command))
 	}
 	return out
 }
 
+func printPendingApprovals(stdout io.Writer, store session.Store, name string) {
+	pending := pendingApprovals(store, name)
+	if len(pending) == 0 {
+		return
+	}
+	fmt.Fprintln(stdout, "command watchers awaiting approval (they do not run until approved):")
+	for _, p := range pending {
+		fmt.Fprintln(stdout, "  "+p)
+	}
+	fmt.Fprintln(stdout, "approve them in the web service panel, or re-apply the manifest with --yes")
+}
+
 // newService writes the durable half of a resident session: the row, its
 // manifest, one watcher per probe (plus the reserved report tick), and the
-// initial next wake. Approval and output belong to the entry point, so the CLI
-// and the HTTP API share every rule here.
-func newService(store session.Store, name string, manifest *config.ServiceManifest, model string, now time.Time) (session.Meta, *time.Time, error) {
+// initial next wake. approveCommands is the entry point's "pre-approve now";
+// without it a command probe is stored unapproved and waits for its grant.
+func newService(store session.Store, name string, manifest *config.ServiceManifest, model string, now time.Time, approveCommands bool) (session.Meta, *time.Time, error) {
 	ss, ok := store.(session.ServiceStore)
 	if !ok {
 		return session.Meta{}, nil, errors.New("this session store does not expose service state")
@@ -456,7 +485,7 @@ func newService(store session.Store, name string, manifest *config.ServiceManife
 	if err := ss.SetServiceSpec(name, manifest.JSON); err != nil {
 		return session.Meta{}, nil, fmt.Errorf("store manifest: %w", err)
 	}
-	if err := reconcileWatchers(ss, created.Meta.ID, manifest, now, nil, false); err != nil {
+	if err := reconcileWatchers(ss, created.Meta.ID, manifest, now, nil, false, approveCommands); err != nil {
 		return session.Meta{}, nil, err
 	}
 	var next *time.Time
@@ -480,10 +509,15 @@ func reportWatcherSpec(every time.Duration) config.WatcherSpec {
 }
 
 // reconcileWatchers makes the stored watcher set match a manifest: unchanged
-// specs keep their observation state, changed or new ones start clean, and rows
-// no longer in the manifest are removed. dueNow is for an edit: the service is
-// stopped, so the next run is left unset and the first start probes at once.
-func reconcileWatchers(ss session.ServiceStore, sessionID string, manifest *config.ServiceManifest, now time.Time, existing []session.Watcher, dueNow bool) error {
+// specs keep their observation state and their grant, changed or new ones start
+// clean, and rows no longer in the manifest are removed. dueNow is for an edit:
+// the service is stopped, so the next run is left unset and the first start
+// probes at once.
+//
+// A command probe is approved only by approveCommands or by an existing grant on
+// an unchanged spec. A changed command needs a new grant: the old approval was
+// about code that no longer runs.
+func reconcileWatchers(ss session.ServiceStore, sessionID string, manifest *config.ServiceManifest, now time.Time, existing []session.Watcher, dueNow, approveCommands bool) error {
 	specs := append([]config.WatcherSpec(nil), manifest.Watchers...)
 	if manifest.ReportInterval > 0 {
 		specs = append(specs, reportWatcherSpec(manifest.ReportInterval))
@@ -497,13 +531,20 @@ func reconcileWatchers(ss session.ServiceStore, sessionID string, manifest *conf
 		keep[spec.Name] = true
 		encoded := config.MarshalWatcherSpec(spec)
 		w := session.Watcher{
-			SessionID: sessionID, Name: spec.Name, Spec: encoded,
-			Enabled: true, ApprovedAt: &now,
+			SessionID: sessionID, Name: spec.Name, Spec: encoded, Enabled: true,
 		}
-		if old, ok := byName[spec.Name]; ok && old.Spec == encoded {
-			// An unchanged probe keeps what it last observed; a changed one starts
-			// clean rather than inheriting a state its new command does not share.
-			w.LastState, w.LastError = old.LastState, old.LastError
+		// A timer runs no code, so there is nothing to approve.
+		if spec.Command == "" || approveCommands {
+			w.ApprovedAt = &now
+		}
+		if old, ok := byName[spec.Name]; ok {
+			if old.Spec == encoded {
+				// An unchanged probe keeps what it last observed and its grant.
+				w.LastState, w.LastError = old.LastState, old.LastError
+				if old.ApprovedAt != nil {
+					w.ApprovedAt = old.ApprovedAt
+				}
+			}
 		}
 		if !dueNow {
 			next := now.Add(spec.Interval)
@@ -528,7 +569,7 @@ func reconcileWatchers(ss session.ServiceStore, sessionID string, manifest *conf
 // history, and queued events stay; role, workspace, spec, and the watcher set
 // are reconciled. Editing a live service would race its next activation, so it
 // is refused rather than silently deferred.
-func updateService(store session.Store, name string, manifest *config.ServiceManifest, now time.Time) error {
+func updateService(store session.Store, name string, manifest *config.ServiceManifest, now time.Time, approveCommands bool) error {
 	ss, ok := store.(session.ServiceStore)
 	if !ok {
 		return errors.New("this session store does not expose service state")
@@ -540,7 +581,9 @@ func updateService(store session.Store, name string, manifest *config.ServiceMan
 	if info.Mode != session.ModeService {
 		return fmt.Errorf("%q is not a service", name)
 	}
-	if info.State != runner.StateStopped {
+	// A service that has never run has no state yet; it is as idle as a stopped
+	// one, so an immediate edit after creation is allowed.
+	if info.State != runner.StateStopped && info.State != "" {
 		return errors.New("stop the service before editing its manifest")
 	}
 	if err := store.SetRole(name, manifest.Role); err != nil {
@@ -556,7 +599,7 @@ func updateService(store session.Store, name string, manifest *config.ServiceMan
 	if err != nil {
 		return err
 	}
-	if err := reconcileWatchers(ss, info.ID, manifest, now, watchers, true); err != nil {
+	if err := reconcileWatchers(ss, info.ID, manifest, now, watchers, true, approveCommands); err != nil {
 		return err
 	}
 	if err := ss.SetNextWake(name, nil); err != nil {

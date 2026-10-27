@@ -145,6 +145,10 @@ type ServiceWatcherBackend interface {
 	PutWatcher(w WatcherState) error
 	// SetWatcherState records one probe run. id is the stored watcher id.
 	SetWatcherState(id string, lastRun, nextRun *time.Time, lastState, lastErr string) error
+	// SetWatcherApproval grants one probe and, optionally, brings its next run
+	// forward. It is a targeted write, so a grant cannot clobber a concurrent
+	// observation of the same watcher.
+	SetWatcherApproval(id string, at time.Time, nextRun *time.Time) error
 }
 
 // WatcherState mirrors one persisted probe. Spec is config.MarshalWatcherSpec's
@@ -186,7 +190,9 @@ type ServiceBackend interface {
 // it cannot add services to a running server; the CLI writes them directly.
 type ServiceCreator interface {
 	// CreateService validates and stores the manifest, then returns the created
-	// view. approveCommands is the HTTP equivalent of `--yes`.
+	// view. approveCommands pre-approves its command watchers, the HTTP
+	// equivalent of `--yes`; without it they are stored unapproved and wait for
+	// a grant.
 	CreateService(name, manifest string, approveCommands bool) (ServiceView, error)
 }
 
@@ -195,6 +201,13 @@ type ServiceCreator interface {
 // role, workspace, spec, and watcher set are reconciled.
 type ServiceEditor interface {
 	EditService(name, manifest string, approveCommands bool) (ServiceView, error)
+}
+
+// ServiceApprover grants one command probe. A probe without a grant does not
+// run: scheduled code still needs an explicit decision, but that decision can be
+// made when the probe first comes up rather than when the manifest is saved.
+type ServiceApprover interface {
+	ApproveWatcher(name, watcher string) (ServiceView, error)
 }
 
 // WorkspaceBackend resolves the immutable workspace when preparing a runtime.

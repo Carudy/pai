@@ -76,7 +76,9 @@ first closes a fire, the second reads whether one is still open.
 
 This package knows no sessions, scheduling, or model. It imports `config` for the
 spec and `tool` only to run the bounded command. The command is **not** confirmed
-at probe time: creation approved it once, and a resident check cannot wait for a
-human.
+at probe time: a resident check cannot wait for a human, so the grant must exist
+before the probe runs. The runner enforces that — a probe with no grant is
+skipped and the host presents it as outstanding work — and treats a command
+name the session already trusts as a grant.
 
 Suggested validation from the repository root: `go test ./internal/watcher`.

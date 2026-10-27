@@ -242,18 +242,23 @@ rejected; there is no URL authentication.
   report), `spec` (the stored manifest as canonical JSON), `manifest_toml` (the
   same manifest rendered for an editor), `phase` and `error`
   when a runtime is live, and one `watchers` entry per probe with its spec,
-  last/next run, last state, and last error. Read-only, and available while the
+  `approved_at` (empty = waiting for a grant), last/next run, last state, and
+  last error. Read-only, and available while the
   server holds the store lock that `pai service show` needs.
 - `POST /api/service`: `{ "name": "...", "manifest": "<TOML>",
   "approve_commands": bool }` → 201 with the same view. Runs the same
-  validation as `pai service create`; a manifest with command watchers is
-  refused unless `approve_commands` is true. The new service is registered with
-  the scheduler immediately, so it starts without a restart.
+  validation as `pai service create`. `approve_commands` pre-approves the
+  manifest's command watchers; without it they are stored unapproved and wait
+  for `POST /api/service/approve` (or a trust grant). The new service is
+  registered with the scheduler immediately, so it starts without a restart.
 - `POST /api/service/edit`: the same body → 200 with the updated view. Only a
   service whose state is `stopped` can be edited. It replaces the role,
   workspace, spec, and watcher set, keeps the session identity/history/events and
-  the model, preserves the latched state of unchanged probes, and leaves the
-  service stopped. Command watchers need the same approval as creation.
+  the model, preserves the latched state and grant of unchanged probes, and
+  leaves the service stopped. A changed command loses its grant.
+- `POST /api/service/approve`: `{ "name": "...", "watcher": "..." }` → the
+  updated view. Grants one command probe and brings its next run forward, so an
+  idle service probes at once. A timer runs no code and is rejected with 400.
 - `POST /api/service/stop` and `/api/service/start`: `{ "name": "..." }` → the
   updated view. Stop cancels a live activation, unregisters the service from the
   scheduler, persists `state = stopped`, and clears its next wake; the state
@@ -405,15 +410,17 @@ only authority, so a reload or bookmark keeps the tab, and a session URL
 (`/session/<name>`) switches the tab to that session's own mode. Creating is one
 flow with two forms behind **+ New session**: chat asks for a name, workspace,
 and role; service asks for a name and a manifest (TOML, prefilled), because
-the manifest has an exact textual form and a half-built form would hide it. The
-service form requires ticking the command-watcher approval box, mirroring
-`--yes`.
+the manifest has an exact textual form and a half-built form would hide it. Ticking
+the command-watcher box is the form's `--yes`: it pre-approves the probes. Without
+it the manifest is still saved and each probe waits for its grant.
 
 Opening a service shows a **stable bar above the transcript**, collapsed to one
 line by default: **Details** expands the state, last report, a table of watchers
 (name, schedule, last/next run, humanized latch state), the stored manifest, and —
 while the service is stopped — an **Edit manifest** box, and the choice is
-remembered per browser. The bar shows the shared state
+remembered per browser. A command probe saved without a grant shows
+**awaiting approval · approve** in the state column instead of a latch; the button
+grants it. The bar shows the shared state
 word (`Idle`, `Parked`, `Working`, `Stopped`), the next wake to the second, and
 **Stop** / **Start**; it never disappears on a failed refresh. The sidebar's
 service rows use the same vocabulary in two lines: name, then a state dot with the

@@ -2474,6 +2474,27 @@ header p {
     white-space: nowrap;
 }
 
+/* A probe saved without a grant: the grant is the button, so the state column
+   stays actionable instead of reading as an error. */
+.watcher-approve {
+    justify-self: start;
+    align-self: center;
+    padding: 1px 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--muted);
+    font: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.watcher-approve:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
 .watcher-state.error {
     color: var(--red);
 }

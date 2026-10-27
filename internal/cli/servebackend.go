@@ -39,6 +39,7 @@ var _ runner.ServiceWatcherBackend = (*serveBackend)(nil)
 var _ runner.ServiceStateBackend = (*serveBackend)(nil)
 var _ runner.ServiceBackend = (*serveBackend)(nil)
 var _ runner.ServiceCreator = (*serveBackend)(nil)
+var _ runner.ServiceApprover = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 	store, ok := b.store.(session.ServiceStore)
@@ -169,8 +170,9 @@ func (b *serveBackend) serviceViewLocked(name string) (runner.ServiceView, error
 }
 
 // CreateService validates a manifest exactly like `pai service create`, then
-// writes it through the shared newService helper. Command watchers need explicit
-// approval: a pasted manifest must not be able to start scheduled code silently.
+// writes it through the shared newService helper. A pasted manifest may define
+// command watchers: they are stored unapproved unless approveCommands is set,
+// and a probe without a grant does not run.
 func (b *serveBackend) CreateService(name, manifestText string, approveCommands bool) (runner.ServiceView, error) {
 	if !session.ValidName(name) {
 		return runner.ServiceView{}, fmt.Errorf("invalid session name %q (allowed: letters, digits, . _ -)", name)
@@ -181,9 +183,6 @@ func (b *serveBackend) CreateService(name, manifestText string, approveCommands 
 	}
 	if err := prepareServiceManifest(manifest); err != nil {
 		return runner.ServiceView{}, err
-	}
-	if commands := commandWatchers(manifest); len(commands) > 0 && !approveCommands {
-		return runner.ServiceView{}, fmt.Errorf("command watchers need approval: %s", strings.Join(commands, "; "))
 	}
 	cfg, err := config.LoadUserConfig()
 	if err != nil {
@@ -203,15 +202,15 @@ func (b *serveBackend) CreateService(name, manifestText string, approveCommands 
 	} else if !errors.Is(err, session.ErrNotFound) {
 		return runner.ServiceView{}, err
 	}
-	if _, _, err := newService(b.store, name, manifest, cfg.DefaultModel, time.Now()); err != nil {
+	if _, _, err := newService(b.store, name, manifest, cfg.DefaultModel, time.Now(), approveCommands); err != nil {
 		return runner.ServiceView{}, err
 	}
 	return b.serviceViewLocked(name)
 }
 
 // EditService replaces a stopped service's manifest through the shared CLI
-// helper, so validation, command approval, and watcher reconciliation cannot
-// drift between the two entry points.
+// helper, so validation, grants, and watcher reconciliation cannot drift between
+// the two entry points.
 func (b *serveBackend) EditService(name, manifestText string, approveCommands bool) (runner.ServiceView, error) {
 	if !session.ValidName(name) {
 		return runner.ServiceView{}, fmt.Errorf("invalid session name %q (allowed: letters, digits, . _ -)", name)
@@ -222,9 +221,6 @@ func (b *serveBackend) EditService(name, manifestText string, approveCommands bo
 	}
 	if err := prepareServiceManifest(manifest); err != nil {
 		return runner.ServiceView{}, err
-	}
-	if commands := commandWatchers(manifest); len(commands) > 0 && !approveCommands {
-		return runner.ServiceView{}, fmt.Errorf("command watchers need approval: %s", strings.Join(commands, "; "))
 	}
 
 	b.mu.Lock()
@@ -238,10 +234,55 @@ func (b *serveBackend) EditService(name, manifestText string, approveCommands bo
 		}
 		return runner.ServiceView{}, err
 	}
-	if err := updateService(b.store, name, manifest, time.Now()); err != nil {
+	if err := updateService(b.store, name, manifest, time.Now(), approveCommands); err != nil {
 		return runner.ServiceView{}, err
 	}
 	return b.serviceViewLocked(name)
+}
+
+// ApproveWatcher grants one command probe and brings its next run forward, so a
+// grant made while the service is idle is visible at the next tick instead of
+// after a full interval. It is a targeted write: a concurrent probe may be
+// updating the same row's observation.
+func (b *serveBackend) ApproveWatcher(name, watcher string) (runner.ServiceView, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	if _, err := b.store.Get(name); err != nil {
+		if errors.Is(err, session.ErrNotFound) {
+			return runner.ServiceView{}, fmt.Errorf("%w: %s", runner.ErrNotFound, name)
+		}
+		return runner.ServiceView{}, err
+	}
+	info, err := store.ServiceInfo(name)
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	stored, err := store.Watchers(info.ID)
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	for _, w := range stored {
+		if w.Name != watcher {
+			continue
+		}
+		spec, err := config.ParseWatcherSpec(w.Spec)
+		if err != nil {
+			return runner.ServiceView{}, err
+		}
+		if spec.Command == "" {
+			return runner.ServiceView{}, fmt.Errorf("watcher %q is a timer: it runs no command and needs no approval", watcher)
+		}
+		now := time.Now()
+		if err := store.SetWatcherApproval(w.ID, now, &now); err != nil {
+			return runner.ServiceView{}, err
+		}
+		return b.serviceViewLocked(name)
+	}
+	return runner.ServiceView{}, fmt.Errorf("%w: watcher %q", runner.ErrNotFound, watcher)
 }
 
 func (b *serveBackend) Watchers(sessionID string) ([]runner.WatcherState, error) {
@@ -288,6 +329,16 @@ func (b *serveBackend) SetWatcherState(id string, lastRun, nextRun *time.Time, l
 		return err
 	}
 	return store.SetWatcherState(id, lastRun, nextRun, lastState, lastErr)
+}
+
+func (b *serveBackend) SetWatcherApproval(id string, at time.Time, nextRun *time.Time) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return err
+	}
+	return store.SetWatcherApproval(id, at, nextRun)
 }
 
 func (b *serveBackend) List() ([]runner.Meta, error) {

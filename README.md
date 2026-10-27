@@ -604,6 +604,24 @@ may carry a `prompt` — for a command probe it is extra guidance appended to th
 output when the probe fires. The built-in `_report` heartbeat created by
 `report_interval` carries one.
 
+### Approving a command probe
+
+A command watcher runs code on a schedule, so it needs a grant. The manifest is
+stored either way; without `--yes` (or the form's checkbox) the probe is saved
+unapproved and does not run:
+
+- the web service panel shows the row as **awaiting approval · approve**; the
+  button grants that one probe and it runs on the next tick;
+- `pai service show` prints `awaiting approval`, and re-applying the manifest
+  with `--yes` grants every command watcher it defines;
+- a command name already trusted for the session — the trust-all switch, a
+  **Trust session** answer, or `trusted_cmds` — counts as a grant and is recorded
+  once. A probe built from a construct or a redirection has no command name, so
+  it always needs the explicit grant.
+
+A grant belongs to the probe's command: editing it clears the grant, so an
+approval never silently covers code you have not seen. A timer needs none.
+
 ### Stop and start
 
 ```bash
@@ -636,8 +654,8 @@ pai service start demo
 The web panel offers the same under **Details → Edit manifest** when the service
 is stopped. The session's identity, history, queued events, and model are kept;
 role, workspace, spec, and the watcher set are replaced. A probe whose spec did
-not change keeps its latched state; a changed or new one starts clean. Command
-watchers require the same explicit approval as creation.
+not change keeps its latched state and its grant; a changed command starts clean
+and needs a new approval (see above).
 
 A user instruction is an immediate wake, not a wait for the next timer. The
 head-of-activation probe pass is deferred for that wake, so the reply is not
