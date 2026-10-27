@@ -1035,6 +1035,11 @@ func (h *handler) diagnostics(w http.ResponseWriter, r *http.Request) {
 // and flush behaviour cannot drift between them.
 func streamSSE[T any](w http.ResponseWriter, r *http.Request, values <-chan T) {
 	rc := http.NewResponseController(w)
+	// ServeHTTP arms a request read deadline. A streaming response never reads
+	// again, and the expired deadline tears the connection down — which is why an
+	// event stream used to end every ten seconds. The write path re-arms its own
+	// deadline per frame, so clearing the read side is safe here.
+	_ = rc.SetReadDeadline(time.Time{})
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("X-Accel-Buffering", "no")
 	ticker := time.NewTicker(10 * time.Second)

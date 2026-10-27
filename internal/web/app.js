@@ -2181,11 +2181,19 @@ function activity(event) {
 function connectDiagnostics() {
   if (typeof EventSource !== 'function' || diagnosticsStream) return;
   diagnosticsStream = new EventSource('/api/diagnostics');
+  // Until the first fact arrives the pane is empty, so it is also where a
+  // connection problem is visible; after that the lines speak for themselves.
+  diagnosticsStream.onopen = () => diagnosticNote('Connected. Host events appear here as they happen.');
+  diagnosticsStream.onerror = () => diagnosticNote('Host log connection lost; retrying…');
   diagnosticsStream.onmessage = event => {
     let diagnostic;
     try { diagnostic = JSON.parse(event.data); } catch (_) { return; }
     appendDiagnostic(diagnostic);
   };
+}
+function diagnosticNote(message) {
+  const note = $('diagnostics-empty'), host = $('diagnostics');
+  if (note && host && !host.children.length) note.textContent = message;
 }
 function disconnectDiagnostics() {
   if (!diagnosticsStream) return;

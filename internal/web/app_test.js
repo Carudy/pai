@@ -1063,20 +1063,26 @@ function verifyDiagnostics() {
   assert.doesNotMatch(line({time: at, session: 'demo', kind: 'error', detail: 'a\nb'}), /\n/, 'a multi-line detail stays one line');
   assert.match(line({time: at, session: 'demo', kind: 'error', detail: 'boom'}), /\S+ \[demo\] error: boom$/);
 
-  // Appending is bounded and retires the empty note.
+  // One page-wide stream, opened on login and closed when signed out. The empty
+  // pane is also the connection status until the first line arrives.
   assert.equal(p.get('diagnostics-empty').hidden, false);
-  p.run('appendDiagnostic(' + JSON.stringify({time: at, session: 'demo', kind: 'error', outcome: 'failed', detail: 'boom'}) + ')');
-  assert.equal(p.get('diagnostics').children.length, 1, 'a diagnostic becomes one line');
+  p.run('connectDiagnostics(); connectDiagnostics()');
+  assert.equal(p.connections.length, 1, 'diagnostics opens one stream');
+  p.connections[0].onopen();
+  assert.match(p.get('diagnostics-empty').textContent, /Connected/, 'the empty pane reports a live stream');
+  p.connections[0].onerror();
+  assert.match(p.get('diagnostics-empty').textContent, /retrying/, 'a lost stream says so while it reconnects');
+  p.connections[0].onmessage({data: JSON.stringify({time: at, session: 'demo', kind: 'activation', outcome: 'start', detail: 'timer: 2 event(s)'})});
   assert.equal(p.get('diagnostics-empty').hidden, true, 'the empty note leaves after the first line');
-  assert.equal(p.get('diagnostics').children[0].dataset.outcome, 'failed', 'the line carries its outcome for styling');
+  assert.match(p.get('diagnostics').children[p.get('diagnostics').children.length - 1].textContent, /activation start: timer: 2 event\(s\)/);
+
+  // Appending is bounded, and the line carries its outcome for styling.
+  p.run('appendDiagnostic(' + JSON.stringify({time: at, session: 'demo', kind: 'error', outcome: 'failed', detail: 'boom'}) + ')');
+  assert.equal(p.get('diagnostics').children.length, 2, 'a diagnostic becomes one line');
+  assert.equal(p.get('diagnostics').children[1].dataset.outcome, 'failed', 'the line carries its outcome for styling');
   p.run('for (let i = 0; i < 505; i++) appendDiagnostic({time: "2026-10-27T12:00:00Z", session: "demo", kind: "notice", detail: "n" + i})');
   assert.equal(p.get('diagnostics').children.length, 500, 'older lines are dropped');
 
-  // One page-wide stream, opened on login and closed when signed out.
-  p.run('connectDiagnostics(); connectDiagnostics()');
-  assert.equal(p.connections.length, 1, 'diagnostics opens one stream');
-  p.connections[0].onmessage({data: JSON.stringify({time: at, session: 'demo', kind: 'activation', outcome: 'start', detail: 'timer: 2 event(s)'})});
-  assert.match(p.get('diagnostics').children[p.get('diagnostics').children.length - 1].textContent, /activation start: timer: 2 event\(s\)/);
   p.run('disconnectDiagnostics()');
   assert.equal(p.connections[0].closed, true, 'signing out closes the stream');
   assert.equal(p.run('diagnosticsStream'), null);

@@ -1520,6 +1520,32 @@ func (*failedDeadlineWriter) SetWriteDeadline(time.Time) error {
 // The diagnostics stream is the browser counterpart of `pai serve --debug-log`:
 // read-only, authenticated like every other API, and it ends with its request
 // context rather than outliving the page.
+// A streaming response must clear the request read deadline ServeHTTP arms for
+// ordinary requests; otherwise the connection dies when that deadline expires
+// (it used to cut every SSE stream at ten seconds).
+func TestSSEClearsReadDeadline(t *testing.T) {
+	w := &deadlineWriter{ResponseRecorder: httptest.NewRecorder()}
+	r := httptest.NewRequest("GET", "http://pai.test/api/diagnostics", nil)
+	values := make(chan runner.Event)
+	close(values)
+	streamSSE(w, r, values)
+	if !w.readDeadline.IsZero() {
+		t.Fatalf("read deadline = %v, want cleared", w.readDeadline)
+	}
+}
+
+type deadlineWriter struct {
+	*httptest.ResponseRecorder
+	readDeadline time.Time
+}
+
+func (w *deadlineWriter) SetReadDeadline(t time.Time) error {
+	w.readDeadline = t
+	return nil
+}
+
+func (w *deadlineWriter) SetWriteDeadline(time.Time) error { return nil }
+
 func TestDiagnosticsStream(t *testing.T) {
 	m := runner.New(context.Background(), backend{}, 1)
 	t.Cleanup(m.Close)
