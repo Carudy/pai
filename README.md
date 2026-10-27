@@ -588,7 +588,6 @@ interval     = "60s"        # 10s .. 24h
 timeout      = "10s"        # default min(10s, interval)
 command      = "scripts/check_river"
 prompt       = "If the level is high, say so and suggest checking the gate."
-hold_for     = "2m"         # stay true this long before firing
 repeat_after = "10m"        # re-alert while true; omit = once per episode
 severity     = "high"       # info|low|medium|high|critical
 
@@ -665,10 +664,19 @@ mode=$(python3 -c 'import json; print(json.load(open("state.json"))["mode"])')
 [ "$mode" = "normal" ] && echo 0 || echo "1 mode=$mode"
 ```
 
-`hold_for` filters flaps; `repeat_after` is the re-alert interval while the
-condition keeps holding. With neither set, a watcher fires once per continuous
-episode, so a level condition cannot wake the model on every probe by accident.
+`repeat_after` is the re-alert interval while the condition keeps holding; it is
+measured from whichever came last, the fire or the model finishing with it, so a
+long activation is not immediately re-alerted. Without it a watcher fires once
+per continuous episode: the latch clears when the predicate goes false, so a
+level condition cannot wake the model on every probe by accident. Debouncing a
+flappy signal belongs in the probe script, where the condition's shape is known.
 `report_on_change` makes `report_interval` mean "only when something changed".
+
+While a fire is **outstanding** — it woke the model but that wake has not been
+handled — the next situation lists it under `### Open items`. The watcher keeps
+probing; with no `repeat_after` it stays quiet, and a due reminder refreshes the
+still-pending event instead of queueing another. The list is derived from the
+probe state, so there is no second queue to keep in sync.
 
 The `goal` becomes a `## Service goal` block in the prompt head, after the role
 and project guidance and before the tool reference, so every wake carries the

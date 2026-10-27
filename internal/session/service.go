@@ -16,9 +16,9 @@ type ServiceInfo struct {
 }
 
 // Watcher is one host-side periodic check attached to a service session. Spec
-// is the manifest JSON (type, interval, hold_for, repeat_after); LastState is the
-// predicate's persisted window/latch state, so a wake happens only when the
-// condition stays true long enough and the episode has not already fired.
+// is the manifest JSON (interval, command, prompt, repeat_after); LastState is
+// the predicate's persisted episode/latch document, so a wake happens once per
+// episode and an unhandled fire stays visible as outstanding work.
 type Watcher struct {
 	ID         string
 	SessionID  string

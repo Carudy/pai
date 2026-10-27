@@ -58,8 +58,7 @@ type WatcherSpec struct {
 	Prompt      string // wake context: a timer's instruction, or extra guidance for a command probe
 	Interval    time.Duration
 	Timeout     time.Duration
-	HoldFor     time.Duration // the predicate must hold this long before firing
-	RepeatAfter time.Duration // re-alert interval while it keeps holding; 0 = once per episode
+	RepeatAfter time.Duration // reminder while it keeps holding, counted from the fire or from handling; 0 = once per episode
 	Severity    string
 }
 
@@ -82,7 +81,6 @@ type watchSection struct {
 	Timeout     string `toml:"timeout,omitempty"`
 	Command     string `toml:"command,omitempty"`
 	Prompt      string `toml:"prompt,omitempty"`
-	HoldFor     string `toml:"hold_for,omitempty"`
 	RepeatAfter string `toml:"repeat_after,omitempty"`
 	Severity    string `toml:"severity,omitempty"`
 }
@@ -129,8 +127,8 @@ func RenderServiceManifestTOML(m *ServiceManifest) (string, error) {
 		raw.Watchers = append(raw.Watchers, watchSection{
 			Name: w.Name, Interval: durationString(w.Interval),
 			Timeout: durationString(w.Timeout), Command: w.Command, Prompt: w.Prompt,
-			HoldFor: durationString(w.HoldFor), RepeatAfter: durationString(w.RepeatAfter),
-			Severity: w.Severity,
+			RepeatAfter: durationString(w.RepeatAfter),
+			Severity:    w.Severity,
 		})
 	}
 	var buf bytes.Buffer
@@ -209,9 +207,6 @@ func watcherFromJSON(raw watcherJSON) (WatcherSpec, error) {
 	}
 	if w.Timeout, err = parseDuration(raw.Timeout); err != nil {
 		return WatcherSpec{}, fmt.Errorf("timeout: %w", err)
-	}
-	if w.HoldFor, err = parseDuration(raw.HoldFor); err != nil {
-		return WatcherSpec{}, fmt.Errorf("hold_for: %w", err)
 	}
 	if w.RepeatAfter, err = parseDuration(raw.RepeatAfter); err != nil {
 		return WatcherSpec{}, fmt.Errorf("repeat_after: %w", err)
@@ -297,9 +292,6 @@ func normalizeWatcher(raw watchSection) (WatcherSpec, error) {
 	if w.Timeout > w.Interval {
 		return WatcherSpec{}, fmt.Errorf("watcher %q: timeout must not exceed interval", w.Name)
 	}
-	if w.HoldFor, err = parseDuration(raw.HoldFor); err != nil {
-		return WatcherSpec{}, fmt.Errorf("watcher %q: hold_for: %w", w.Name, err)
-	}
 	if w.RepeatAfter, err = parseDuration(raw.RepeatAfter); err != nil {
 		return WatcherSpec{}, fmt.Errorf("watcher %q: repeat_after: %w", w.Name, err)
 	}
@@ -352,7 +344,6 @@ type watcherJSON struct {
 	Timeout     string `json:"timeout,omitempty"`
 	Command     string `json:"command,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
-	HoldFor     string `json:"hold_for,omitempty"`
 	RepeatAfter string `json:"repeat_after,omitempty"`
 	Severity    string `json:"severity,omitempty"`
 }
@@ -382,7 +373,7 @@ func watcherJSONOf(w WatcherSpec) watcherJSON {
 	return watcherJSON{
 		Name: w.Name, Interval: durationString(w.Interval),
 		Timeout: durationString(w.Timeout), Command: w.Command, Prompt: w.Prompt,
-		HoldFor: durationString(w.HoldFor), RepeatAfter: durationString(w.RepeatAfter),
-		Severity: w.Severity,
+		RepeatAfter: durationString(w.RepeatAfter),
+		Severity:    w.Severity,
 	}
 }

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Carudy/pai/internal/config"
@@ -225,6 +226,50 @@ func (m *Manager) serviceManifest(name string) *config.ServiceManifest {
 		return nil
 	}
 	return manifest
+}
+
+// openItem is work a watcher opened that the model has not closed yet.
+type openItem struct {
+	Name  string
+	Fired time.Time
+}
+
+// openWatchers lists outstanding watcher work for the situation. It is a
+// projection of the persisted probe state, not a second queue: an item is open
+// exactly while its fire has not been handled. Items whose event is already in
+// this wake are skipped — the fired line describes them, and repeating them
+// would read as two separate incidents.
+func (m *Manager) openWatchers(w *worker, wake core.Wake) []openItem {
+	wb, ok := m.backend.(ServiceWatcherBackend)
+	if !ok {
+		return nil
+	}
+	m.mu.Lock()
+	id := w.sessionID
+	m.mu.Unlock()
+	if id == "" {
+		return nil
+	}
+	watchers, err := wb.Watchers(id)
+	if err != nil {
+		return nil
+	}
+	inWake := make(map[string]bool, len(wake.Events))
+	for _, ev := range wake.Events {
+		if name, ok := strings.CutPrefix(ev.Source, "watch:"); ok {
+			inWake[name] = true
+		}
+	}
+	var open []openItem
+	for _, ws := range watchers {
+		if !ws.Enabled || inWake[ws.Name] {
+			continue
+		}
+		if fired, yes := watcher.Open(ws.LastState); yes {
+			open = append(open, openItem{Name: ws.Name, Fired: fired})
+		}
+	}
+	return open
 }
 
 // nextServiceWake picks the next time the scheduler should look at this service:

@@ -41,15 +41,20 @@ type Result struct {
 }
 
 // state is what a watcher remembers between probes. It is JSON so it survives
-// in the store's single last_state column: Since when the predicate started
-// holding, Fired when the model was last woken, Reported whether this episode
-// has already fired (the latch that makes the default once-per-episode), and
-// Error the last probe failure.
+// in the store's single last_state column.
+//
+// Fired is when the model was last woken and Handled when it last finished with
+// that wake; a repeat reminder counts from whichever came last, so a long
+// activation is not re-alerted the moment it ends. Reported is the episode
+// latch that makes the default once-per-episode, and Acknowledged distinguishes
+// "queued but still outstanding" from "done", which is what the situation's
+// open-items block projects. Error is the last probe failure.
 type state struct {
-	Since    int64  `json:"since,omitempty"`
-	Fired    int64  `json:"fired,omitempty"`
-	Reported bool   `json:"reported,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Fired        int64  `json:"fired,omitempty"`
+	Handled      int64  `json:"handled,omitempty"`
+	Reported     bool   `json:"reported,omitempty"`
+	Acknowledged bool   `json:"acknowledged,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 // Probe runs one watcher once. prev is the watcher's last persisted State; now
@@ -77,53 +82,76 @@ func Probe(ctx context.Context, spec config.WatcherSpec, dir, prev string, now t
 		return failed(spec, st, err, now, res)
 	}
 
-	next := state{Fired: st.Fired, Reported: st.Reported}
 	if !holds {
-		// The episode ended. Clearing the latch lets the next hold fire again
-		// without needing an explicit repeat interval.
-		next.Since, next.Reported = 0, false
-		res.State = encodeState(next)
+		// The episode ended. Forgetting the whole document — the latch, the
+		// acknowledgment, and the reminder clocks — lets the next hold fire
+		// immediately, without a timer to outlive the condition it describes.
+		res.State = encodeState(state{})
 		return res
 	}
 
-	since := st.Since
-	if since == 0 {
-		since = now.Unix()
-	}
-	next.Since = since
-	ready := now.Sub(time.Unix(since, 0)) >= spec.HoldFor
-
+	next := st
+	next.Error = ""
 	allowed := false
 	if spec.RepeatAfter > 0 {
-		// A repeating condition re-alerts on its own interval, regardless of how
-		// many probes observed it in between.
-		allowed = st.Fired == 0 || now.Sub(time.Unix(st.Fired, 0)) >= spec.RepeatAfter
+		// A repeating condition re-alerts on its own interval. Measuring from the
+		// later of the fire and the handling means a long activation does not
+		// collect a reminder it has already earned by working.
+		last := max(st.Fired, st.Handled)
+		allowed = last == 0 || now.Sub(time.Unix(last, 0)) >= spec.RepeatAfter
 	} else {
 		// No repeat interval: once per continuous episode. This is the safe
 		// default; otherwise a level condition would wake the model on every
 		// probe forever.
 		allowed = !st.Reported
 	}
-	if ready && allowed {
+	if allowed {
 		res.Fire = true
 		res.Summary = summaryOr(summary)
 		next.Fired = now.Unix()
 		next.Reported = true
+		next.Acknowledged = false
 	}
 	res.State = encodeState(next)
 	return res
 }
 
+// MarkHandled records that the model finished with the wake a watcher fired. It
+// is a no-op for a watcher that has nothing outstanding, so a retried or
+// duplicated ack cannot invent work. The error survives: it describes the probe,
+// not the wake.
+func MarkHandled(prev string, now time.Time) string {
+	st := decodeState(prev)
+	if !st.Reported {
+		return prev
+	}
+	st.Handled = now.Unix()
+	st.Acknowledged = true
+	return encodeState(st)
+}
+
+// Open reports when a watcher fired without the model handling it, so the host
+// can show outstanding work. It is derived, not stored separately: the durable
+// event queue remains the source of truth for what still has to be done.
+func Open(prev string) (time.Time, bool) {
+	st := decodeState(prev)
+	if !st.Reported || st.Acknowledged || st.Fired == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(st.Fired, 0), true
+}
+
 // failed reports a probe failure. A distinct failure wakes the model once (so a
 // silently broken probe does not go unnoticed), while the same failure repeats
-// only into last_error. The hold window and the episode latch survive, so a
-// transient failure neither restarts the debounce nor re-alerts.
+// only into last_error. The episode's latch is left alone: the failure is news
+// about the probe, not the end of the condition it watches.
 func failed(spec config.WatcherSpec, st state, cause error, now time.Time, res Result) Result {
 	msg := truncate(cause.Error(), maxSummary)
 	res.Err = cause
 	res.Fire = st.Error != msg
 	res.Summary = msg
-	next := state{Since: st.Since, Fired: st.Fired, Reported: st.Reported, Error: msg}
+	next := st
+	next.Error = msg
 	if res.Fire {
 		next.Fired = now.Unix()
 	}

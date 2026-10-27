@@ -1331,7 +1331,7 @@ async function verifyServiceMode() {
     spec: '{"goal":"watch the river","role":"devops"}',
     watchers: [
       {name: '_report', enabled: true, spec: '{"interval":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
-      {name: 'river', enabled: true, spec: '{"command":"cat state.json","interval":"60s"}', last_state: '{"since":1}', last_error: 'courier failed'},
+      {name: 'river', enabled: true, spec: '{"command":"cat state.json","interval":"60s"}', last_state: '{"fired":1793000000,"reported":true}', last_error: 'courier failed'},
     ],
   };
   p.run("selected='river'; serviceView=" + JSON.stringify(view) + '; paintService();');
@@ -1344,6 +1344,14 @@ async function verifyServiceMode() {
   assert.equal(p.get('service-watchers').children[1].children[0].textContent, 'report (heartbeat)', 'the reserved probe is labelled');
   assert.match(p.get('service-watchers').children[2].children[4].textContent, /courier failed/, 'a probe error is shown');
   assert.match(p.get('service-manifest-view').textContent, /"goal": "watch the river"/, 'the manifest is pretty-printed');
+
+  // last_state is a probe document: reported without acknowledged is work still
+  // open, and a handled fire is closed until the condition ends.
+  assert.match(p.run('humanizeWatcherState({last_state:\'{"fired":1793000000,"reported":true}\'})'),
+    /^open · fired /, 'an unhandled fire reads as open');
+  assert.match(p.run('humanizeWatcherState({last_state:\'{"fired":1793000000,"handled":1793000060,"reported":true,"acknowledged":true}\'})'),
+    /^handled · fired .* · handled /, 'a handled fire reads as handled');
+  assert.equal(p.run('humanizeWatcherState({last_state:"{}"})'), '', 'an ended episode says nothing');
 
   // The bar is explicitly collapsible, and the details are a bounded panel.
   p.run('applyServiceExpanded(true)');

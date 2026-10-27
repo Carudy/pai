@@ -15,6 +15,7 @@ import (
 	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/provider"
+	"github.com/Carudy/pai/internal/watcher"
 )
 
 func skipWithoutPOSIXShell(t *testing.T) {
@@ -203,6 +204,12 @@ func TestServiceProbeWakesOnChange(t *testing.T) {
 	if len(acked) != 1 || acked[0] != appended[0].ID {
 		t.Fatalf("acked = %v, want the delivered watch event %d", acked, appended[0].ID)
 	}
+	// The fire is closed once its wake is acknowledged; that timestamp is the
+	// baseline a repeat_after reminder counts from.
+	state := backend.watcher(t, spec.Name)
+	if _, open := watcher.Open(state.LastState); open {
+		t.Fatalf("watcher state = %s, want the handled fire to be closed", state.LastState)
+	}
 }
 
 // The stored goal is the service's standing instruction: it must reach the
@@ -269,7 +276,7 @@ func TestRenderSituationNamesWatchers(t *testing.T) {
 		{Class: core.EventTimer, Kind: "timer", Source: "watch:tick", Payload: "Report the state in one line."},
 		{Class: core.EventUser, Kind: "user_input", Payload: "check the gate"},
 	}}
-	got := renderSituation(wake)
+	got := renderSituation(wake, nil)
 	for _, want := range []string{
 		`- watcher "river-level" fired: [high] mode=flood level=3.7`,
 		"- periodic report is due: Report what changed.",
@@ -284,6 +291,24 @@ func TestRenderSituationNamesWatchers(t *testing.T) {
 	}
 	if strings.Contains(got, "clock") {
 		t.Fatalf("the scheduler's clock tick leaked into the situation:\n%s", got)
+	}
+}
+
+// One activation may be woken for watcher A while watcher B is still open. The
+// situation names B so the model does not restart work that is already queued.
+func TestRenderSituationListsOpenItems(t *testing.T) {
+	wake := core.Wake{Reason: "timer", Events: []core.Event{
+		{Class: core.EventWatcher, Kind: "watch", Source: "watch:river-level", Payload: "level=3.7"},
+	}}
+	got := renderSituation(wake, []openItem{{Name: "gate", Fired: time.Unix(1_700_000_000, 0)}})
+	for _, want := range []string{"### Open items", `- watcher "gate": open since`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("open-items block is missing %q:\n%s", want, got)
+		}
+	}
+	if n := strings.Count(got, "river-level"); n != 1 {
+		// The watcher in the wake is described once, by its fired line.
+		t.Fatalf("river-level appears %d times, want 1:\n%s", n, got)
 	}
 }
 

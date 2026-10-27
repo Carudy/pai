@@ -13,6 +13,7 @@ import (
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/provider"
 	"github.com/Carudy/pai/internal/role"
+	"github.com/Carudy/pai/internal/watcher"
 )
 
 type serviceResult struct {
@@ -118,7 +119,7 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	}
 
 	if strings.TrimSpace(wake.Situation) == "" {
-		wake.Situation = renderSituation(wake)
+		wake.Situation = renderSituation(wake, m.openWatchers(w, wake))
 	}
 	_, err = w.activate(ctx, wake)
 	if err != nil {
@@ -483,6 +484,11 @@ func (w *worker) activate(ctx context.Context, wake core.Wake) (*time.Time, erro
 // and returns the worker to suspended or parked.
 func (w *worker) serviceDone(wake core.Wake, res core.WakeResult) error {
 	ackErr := w.ackWake(wake, res.Err)
+	if ackErr == nil && res.Err == nil {
+		// The events are gone from the queue, so the watchers behind them have
+		// nothing outstanding. A nacked wake must stay open: it will be retried.
+		w.markWatchersHandled(wake)
+	}
 
 	state, phase, status := StateSuspended, "suspended", res.Status
 	switch res.Outcome {
@@ -550,6 +556,49 @@ func (w *worker) ackWake(wake core.Wake, cause error) error {
 		}
 	}
 	return first
+}
+
+// markWatchersHandled closes the loop the probe opened: the wake's events were
+// acknowledged, so their watchers record when the model finished with them. That
+// timestamp is what a repeat_after reminder counts from.
+func (w *worker) markWatchersHandled(wake core.Wake) {
+	wb, ok := w.m.backend.(ServiceWatcherBackend)
+	if !ok {
+		return
+	}
+	names := make(map[string]bool, len(wake.Events))
+	for _, ev := range wake.Events {
+		if name, ok := strings.CutPrefix(ev.Source, "watch:"); ok {
+			names[name] = true
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	w.m.mu.Lock()
+	id := w.sessionID
+	w.m.mu.Unlock()
+	if id == "" {
+		return
+	}
+	watchers, err := wb.Watchers(id)
+	if err != nil {
+		w.emit("error", "could not read watchers: "+err.Error())
+		return
+	}
+	now := time.Now()
+	for _, ws := range watchers {
+		if !names[ws.Name] {
+			continue
+		}
+		next := watcher.MarkHandled(ws.LastState, now)
+		if next == ws.LastState {
+			continue
+		}
+		if err := wb.SetWatcherState(ws.ID, ws.LastRun, ws.NextRun, next, ws.LastError); err != nil {
+			w.emit("error", fmt.Sprintf("could not record watcher %q as handled: %v", ws.Name, err))
+		}
+	}
 }
 
 // StopService stops scheduling a resident session and persists the stopped
@@ -700,7 +749,7 @@ func (m *Manager) nextWatcherRun(w *worker, now time.Time) *time.Time {
 // tell a watcher apart from a user instruction. A probe's output is whatever it
 // printed after its 1/0 decision, capped so one noisy script cannot dominate the
 // prompt.
-func renderSituation(wake core.Wake) string {
+func renderSituation(wake core.Wake, open []openItem) string {
 	var b strings.Builder
 	b.WriteString("## Situation\n")
 	if wake.Reason != "" {
@@ -738,6 +787,15 @@ func renderSituation(wake core.Wake) string {
 			fmt.Fprintf(&b, "- user: %s\n", boundedPayload(ev.Payload, "instruction"))
 		default:
 			fmt.Fprintf(&b, "- [%s] %s: %s\n", ev.Class, ev.Source, boundedPayload(ev.Payload, ""))
+		}
+	}
+	if len(open) > 0 {
+		// A service may be woken for one thing while another is still in flight.
+		// Naming the outstanding work stops a second activation from redoing it.
+		b.WriteString("### Open items\n")
+		b.WriteString("Fired earlier and not closed yet; their events are retried, so do not repeat work you already finished.\n")
+		for _, it := range open {
+			fmt.Fprintf(&b, "- watcher %q: open since %s\n", it.Name, it.Fired.Local().Format(time.RFC3339))
 		}
 	}
 	const limit = 4 << 10

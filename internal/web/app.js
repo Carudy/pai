@@ -670,8 +670,9 @@ async function serviceControl(kind) {
 function specOf(watcher) {
   try { return JSON.parse(watcher.spec || '{}'); } catch { return {}; }
 }
-// last_state is the watcher's debounce/latch document; show what it means rather
-// than the raw JSON. Unix seconds become the same compact clock as the schedule.
+// last_state is the watcher's probe document; show what it means rather than the
+// raw JSON. reported+acknowledged is the useful pair: a fire the model has not
+// handled is still open, and a handled one is closed until the condition ends.
 function humanizeWatcherState(w) {
   if (w.last_error) return w.last_error;
   const raw = String(w.last_state || '').trim();
@@ -682,10 +683,12 @@ function humanizeWatcherState(w) {
   const stamp = seconds => formatWakeShort(new Date(Number(seconds) * 1000).toISOString());
   const parts = [];
   if (st.error) parts.push('error: ' + st.error);
-  if (st.since) parts.push('holding since ' + stamp(st.since));
-  if (st.fired) parts.push('fired ' + stamp(st.fired));
-  if (st.reported && !st.fired) parts.push('reported');
-  return parts.join(' · ') || raw;
+  if (st.reported) {
+    parts.push(st.acknowledged ? 'handled' : 'open');
+    if (st.fired) parts.push('fired ' + stamp(st.fired));
+    if (st.acknowledged && st.handled) parts.push('handled ' + stamp(st.handled));
+  }
+  return parts.join(' · ') || (Object.keys(st).length ? raw : '');
 }
 function paintService() {
   const panel = $('service-panel');
@@ -787,7 +790,7 @@ function paintService() {
 function starterManifest() {
   const role = selectedRole() || 'devops';
   const workspace = serverCwd || '/path/to/workspace';
-  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\nreport_interval = "1h"\n# report_on_change = true\n\n# [[watcher]]\n# name = "river-level"\n# interval = "60s"\n# command = "scripts/check_river"\n# prompt = "Say what changed and whether it needs action."\n# hold_for = "2m"\n# repeat_after = "15m"\n# severity = "high"\n\n# [[watcher]]\n# name = "tick"\n# interval = "5m"\n# prompt = "Report the current state in one line."\n';
+  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\nreport_interval = "1h"\n# report_on_change = true\n\n# [[watcher]]\n# name = "river-level"\n# interval = "60s"\n# command = "scripts/check_river"\n# prompt = "Say what changed and whether it needs action."\n# repeat_after = "15m"\n# severity = "high"\n\n# [[watcher]]\n# name = "tick"\n# interval = "5m"\n# prompt = "Report the current state in one line."\n';
 }
 function paintCreateTabs() {
   for (const mode of ['chat', 'service']) {

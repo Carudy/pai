@@ -128,28 +128,88 @@ func TestBareDecisionHasAFallbackSummary(t *testing.T) {
 	}
 }
 
-func TestHoldForDebounces(t *testing.T) {
+// A repeat_after reminder counts from when the model finished handling the wake,
+// not from when it fired: a long activation must not come back with a reminder
+// it has already earned by working.
+func TestRepeatAfterMeasuresFromHandling(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	spec := config.WatcherSpec{
 		Name: "river", Command: "cat value.txt",
-		Interval: time.Minute, Timeout: 5 * time.Second, HoldFor: 30 * time.Second,
+		Interval: time.Minute, Timeout: 5 * time.Second, RepeatAfter: 2 * time.Minute,
 	}
 	ctx := context.Background()
 	now := time.Unix(1_700_000_000, 0)
 	writeValue(t, dir, "1")
 
 	first := Probe(ctx, spec, dir, "", now)
-	if first.Fire {
-		t.Fatal("the first observation starts the hold window, it does not fire")
+	if !first.Fire {
+		t.Fatal("the first true observation should fire")
 	}
-	early := Probe(ctx, spec, dir, first.State, now.Add(10*time.Second))
-	if early.Fire {
-		t.Fatal("a condition younger than hold_for must not fire")
+	if _, open := Open(first.State); !open {
+		t.Fatal("a fire is open until it is handled")
 	}
-	late := Probe(ctx, spec, dir, early.State, now.Add(41*time.Second))
-	if !late.Fire {
-		t.Fatal("a condition that held for the window should fire")
+
+	handled := MarkHandled(first.State, now.Add(90*time.Second))
+	if _, open := Open(handled); open {
+		t.Fatal("a handled fire is closed")
+	}
+
+	// 100s after the fire but only 10s after handling: no reminder yet.
+	if res := Probe(ctx, spec, dir, handled, now.Add(100*time.Second)); res.Fire {
+		t.Fatal("repeat_after must be measured from handling, not from firing")
+	}
+	// 120s after handling: the reminder is due, and it reopens the item.
+	res := Probe(ctx, spec, dir, handled, now.Add(210*time.Second))
+	if !res.Fire {
+		t.Fatal("the reminder should fire once repeat_after elapsed from handling")
+	}
+	if _, open := Open(res.State); !open {
+		t.Fatal("a reminder reopens the item")
+	}
+}
+
+// A false sample ends the episode and forgets its acknowledgment, so the next
+// true sample is a new incident rather than a suppressed repeat.
+func TestFalseClosesAnAcknowledgedEpisode(t *testing.T) {
+	skipOnWindows(t)
+	dir := t.TempDir()
+	spec := config.WatcherSpec{
+		Name: "river", Command: "cat value.txt",
+		Interval: time.Minute, Timeout: 5 * time.Second,
+	}
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0)
+	writeValue(t, dir, "1")
+
+	first := Probe(ctx, spec, dir, "", now)
+	handled := MarkHandled(first.State, now.Add(5*time.Second))
+	writeValue(t, dir, "0")
+	closed := Probe(ctx, spec, dir, handled, now.Add(time.Minute))
+	if closed.Fire {
+		t.Fatal("a false predicate does not fire")
+	}
+	if st := readState(t, closed.State); st.Reported || st.Acknowledged || st.Handled != 0 || st.Fired != 0 {
+		t.Fatalf("a false sample must forget the episode: %+v", st)
+	}
+
+	writeValue(t, dir, "1")
+	if reopened := Probe(ctx, spec, dir, closed.State, now.Add(2*time.Minute)); !reopened.Fire {
+		t.Fatal("a new episode should fire again")
+	}
+}
+
+// MarkHandled is fed whatever the store holds, including a timer's empty state
+// or a stale row; it must not invent work out of either.
+func TestMarkHandledIgnoresIdleWatcher(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	for _, prev := range []string{"", "{}", `{"error":"boom"}`} {
+		if got := MarkHandled(prev, now); got != prev {
+			t.Fatalf("MarkHandled(%q) = %q, want it unchanged", prev, got)
+		}
+		if _, open := Open(prev); open {
+			t.Fatalf("Open(%q) = true, want no outstanding work", prev)
+		}
 	}
 }
 

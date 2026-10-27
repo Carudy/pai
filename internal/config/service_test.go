@@ -20,7 +20,6 @@ interval = "60s"
 timeout = "10s"
 command = "hydroctl level"
 prompt = "Report the crossing and whether the gate needs checking."
-hold_for = "2m"
 repeat_after = "15m"
 severity = "high"
 
@@ -54,7 +53,7 @@ func TestParseServiceManifest(t *testing.T) {
 	if m.Watchers[1].Command != "" {
 		t.Fatalf("a watcher without a command must be a timer: %+v", m.Watchers[1])
 	}
-	if w.HoldFor != 2*time.Minute || w.RepeatAfter != 15*time.Minute || w.Severity != "high" {
+	if w.RepeatAfter != 15*time.Minute || w.Severity != "high" {
 		t.Fatalf("watcher timing = %+v", w)
 	}
 	if w.Command != "hydroctl level" {
@@ -79,7 +78,7 @@ func TestParseServiceManifest(t *testing.T) {
 		stored.Watchers[0].Interval != time.Minute {
 		t.Fatalf("stored manifest = %+v", stored)
 	}
-	if stored.Watchers[0].HoldFor != 2*time.Minute || stored.Watchers[0].RepeatAfter != 15*time.Minute {
+	if stored.Watchers[0].RepeatAfter != 15*time.Minute {
 		t.Fatalf("stored watcher timing = %+v", stored.Watchers[0])
 	}
 }
@@ -99,9 +98,6 @@ func TestServiceManifestRejectsBadInput(t *testing.T) {
 		{"short interval", func(s string) string { return strings.Replace(s, `interval = "60s"`, `interval = "1s"`, 1) }, "interval must be at least"},
 		{"long interval", func(s string) string { return strings.Replace(s, `interval = "60s"`, `interval = "48h"`, 1) }, "longer than 24h"},
 		{"bad timeout", func(s string) string { return strings.Replace(s, `timeout = "10s"`, `timeout = "2m"`, 1) }, "timeout must not exceed"},
-		{"bad hold_for", func(s string) string {
-			return strings.Replace(s, `hold_for = "2m"`, `hold_for = "soon"`, 1)
-		}, "hold_for"},
 		{"bad repeat_after", func(s string) string {
 			return strings.Replace(s, `repeat_after = "15m"`, `repeat_after = "later"`, 1)
 		}, "repeat_after"},
@@ -168,7 +164,7 @@ func TestWatcherSpecRoundTrip(t *testing.T) {
 	w := WatcherSpec{
 		Name: "river-level", Command: `cat /srv/hydro/level.json`,
 		Interval: time.Minute, Timeout: 5 * time.Second,
-		HoldFor: 2 * time.Minute, RepeatAfter: time.Hour, Severity: "high",
+		RepeatAfter: time.Hour, Severity: "high",
 		Prompt: "Report the crossing.",
 	}
 	back, err := ParseWatcherSpec(MarshalWatcherSpec(w))
@@ -176,7 +172,7 @@ func TestWatcherSpecRoundTrip(t *testing.T) {
 		t.Fatalf("ParseWatcherSpec: %v", err)
 	}
 	if back.Name != w.Name || back.Command != w.Command ||
-		back.Interval != w.Interval || back.Timeout != w.Timeout || back.HoldFor != w.HoldFor ||
+		back.Interval != w.Interval || back.Timeout != w.Timeout ||
 		back.RepeatAfter != w.RepeatAfter || back.Severity != w.Severity || back.Prompt != w.Prompt {
 		t.Fatalf("round trip = %+v, want %+v", back, w)
 	}
