@@ -1170,6 +1170,7 @@ func TestPageLayoutNesting(t *testing.T) {
 		"session-title-row": "header", "token-usage": "session-config", "state": "status-row",
 		"toggle-config": "session-config", "context-pane": "activity", "context-usage": "context-pane", "context-detail": "context-usage", "compress-now": "context-usage",
 		"activity-tabs": "header", "events": "context-pane", "log-pane": "activity", "diagnostics": "log-pane", "diagnostics-empty": "log-pane",
+		"service-queue-box": "service-body", "service-queue": "service-queue-box",
 	} {
 		if parents[child] != parent {
 			t.Errorf("%s parent = %q, want %q", child, parents[child], parent)
@@ -1637,6 +1638,9 @@ func (serviceViewBackend) ServiceView(name string) (runner.ServiceView, error) {
 		Watchers: []runner.WatcherState{
 			{ID: "w1", Name: "river", Enabled: true, LastState: `{"value":"3.8"}`},
 		},
+		Queue: []runner.QueuedEvent{
+			{ID: 7, Class: "peer", Kind: "mail", Source: "session:alice", Payload: "check the gate", At: time.Now()},
+		},
 	}, nil
 }
 
@@ -1660,6 +1664,9 @@ func TestServiceViewAPI(t *testing.T) {
 	}
 	if !strings.Contains(view.Status, "level 3.8") || len(view.Watchers) != 1 || view.Watchers[0].Name != "river" {
 		t.Fatalf("view detail = %+v", view)
+	}
+	if len(view.Queue) != 1 || view.Queue[0].Class != "peer" || view.Queue[0].Source != "session:alice" {
+		t.Fatalf("view queue = %+v", view.Queue)
 	}
 
 	if w := request(h, http.MethodGet, "/api/service?name=nope", "", nil, ""); w.Code != http.StatusNotFound {

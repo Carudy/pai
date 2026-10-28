@@ -26,6 +26,10 @@ type serveBackend struct {
 	cwd   string
 }
 
+// serviceQueueLimit bounds the pending-work list in a service view; it is for
+// inspection, not the delivery path.
+const serviceQueueLimit = 20
+
 func serveMeta(m session.Meta) runner.Meta {
 	return runner.Meta{Name: m.Name, ID: m.ID, Role: m.Role, Model: m.Model, Cwd: m.Cwd,
 		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Mode: m.Mode, State: m.State,
@@ -163,6 +167,18 @@ func (b *serveBackend) serviceViewLocked(name string) (runner.ServiceView, error
 			ID: w.ID, SessionID: w.SessionID, Name: w.Name, Spec: w.Spec,
 			Enabled: w.Enabled, ApprovedAt: w.ApprovedAt,
 			LastRun: w.LastRun, NextRun: w.NextRun, LastState: w.LastState, LastError: w.LastError,
+		})
+	}
+	// Pending work is part of the service's visible state: an operator needs to
+	// see mail or a probe event that has not been handled yet, not just a count.
+	queued, err := store.QueuedEvents(info.ID, serviceQueueLimit)
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	for _, ev := range queued {
+		view.Queue = append(view.Queue, runner.QueuedEvent{
+			ID: ev.ID, Class: ev.Class.String(), Kind: ev.Kind, Source: ev.Source,
+			Payload: ev.Payload, At: ev.At, Deadline: ev.Deadline, Attempts: ev.Attempts,
 		})
 	}
 	return view, nil

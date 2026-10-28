@@ -760,6 +760,7 @@ function paintService() {
     $('service-next').textContent = '';
     $('service-status').textContent = serviceError || 'Loading the service view…';
     $('service-watchers').replaceChildren();
+    $('service-queue').replaceChildren();
     $('service-manifest-view').textContent = '';
     if (toggle) toggle.hidden = true;
     $('service-edit').hidden = true;
@@ -815,6 +816,29 @@ function paintService() {
     if (w.last_error) tail.classList.toggle('error', true);
     row.append(tail);
     box.append(row);
+  }
+
+  const queue = $('service-queue');
+  queue.replaceChildren();
+  const queued = view.queue || [];
+  if (!queued.length) {
+    queue.append(text('p', 'Queue empty: nothing is waiting for this session.', 'muted'));
+  } else {
+    const head = text('div', '', 'queue-head');
+    for (const label of ['Class', 'Source', 'Queued', 'Tries', 'Detail']) head.append(text('span', label));
+    queue.append(head);
+  }
+  for (const ev of queued) {
+    const row = text('div', '', 'queue-row');
+    row.append(text('span', ev.class || 'event', 'queue-class'));
+    row.append(text('span', ev.source || '—', 'queue-source'));
+    row.append(text('span', formatTimeExact(ev.at) || '—', 'queue-time'));
+    row.append(text('span', ev.attempts ? String(ev.attempts) : '—', 'queue-attempts'));
+    const detail = String(ev.payload || '').replace(/\s+/g, ' ').trim() || ev.kind || '—';
+    const tail = text('span', detail.length > 120 ? detail.slice(0, 119) + '…' : detail, 'queue-detail');
+    if (detail.length > 120) tail.title = detail;
+    row.append(tail);
+    queue.append(row);
   }
 
   let manifest = view.spec || '';
@@ -2330,11 +2354,11 @@ async function applyRole(e) {
   if (!selected || !role || role === savedRole) return;
   const name = selected;
   try {
-    	await api('role', {name, role});
-    	if (selected !== name) return;
-    	roleDirty = false;
-    	await loadSnapshot();
-    	await refreshHistory();
+    await api('role', {name, role});
+    if (selected !== name) return;
+    roleDirty = false;
+    await loadSnapshot();
+    await refreshHistory();
   } catch (err) { error(err); }
 }
 async function renameSession() {

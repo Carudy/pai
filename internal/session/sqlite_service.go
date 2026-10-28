@@ -132,8 +132,31 @@ LIMIT ?`, sessionID, now.Unix(), limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	return scanEvents(rows)
+}
 
+// QueuedEvents lists what is waiting, including events whose retry time has not
+// arrived and events leased by a worker. The scheduler only ever acts on
+// DueEvents; this is for inspection.
+func (s *sqliteStore) QueuedEvents(sessionID string, limit int) ([]core.Event, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`
+SELECT id, session_id, class, kind, source, payload, COALESCE(dedup_key, ''),
+       created_at, deadline, attempts
+FROM events
+WHERE session_id = ? AND state IN ('pending', 'leased')
+ORDER BY class, (deadline IS NULL), deadline, created_at, id
+LIMIT ?`, sessionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
+}
+
+func scanEvents(rows *sql.Rows) ([]core.Event, error) {
+	defer rows.Close()
 	var events []core.Event
 	for rows.Next() {
 		var (

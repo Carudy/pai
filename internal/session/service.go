@@ -53,6 +53,9 @@ type ServiceStore interface {
 	AppendEvent(ev core.Event) (int64, error)
 	// DueEvents returns pending events whose At has arrived, most urgent first.
 	DueEvents(sessionID string, now time.Time, limit int) ([]core.Event, error)
+	// QueuedEvents returns pending and leased events whatever their retry time,
+	// most urgent first. It is the operator view; delivery uses DueEvents.
+	QueuedEvents(sessionID string, limit int) ([]core.Event, error)
 	// LeaseEvents marks events in flight, so a crash can distinguish them from
 	// pending work and reset them on the next open.
 	LeaseEvents(ids []int64, until time.Time) error

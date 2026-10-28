@@ -241,9 +241,11 @@ rejected; there is no URL authentication.
   resident session: metadata (mode, state, next wake), `status` (the last
   report), `spec` (the stored manifest as canonical JSON), `manifest_toml` (the
   same manifest rendered for an editor), `phase` and `error`
-  when a runtime is live, and one `watchers` entry per probe with its spec,
+  when a runtime is live, one `watchers` entry per probe with its spec,
   `approved_at` (set = pre-approved when the manifest was saved), last/next run,
-  last state, and last error. Read-only, and available while the
+  last state, and last error, and `queue` — up to 20 pending/leased events
+  (class, kind, source, payload, arrival, deadline, attempts), including mail and
+  events waiting for a retry. Read-only, and available while the
   server holds the store lock that `pai service show` needs.
 - `POST /api/service`: `{ "name": "...", "manifest": "<TOML>",
   "approve_commands": bool }` → 201 with the same view. Runs the same
@@ -433,7 +435,9 @@ confirmation card.
 
 Opening a service shows a **stable bar above the transcript**, collapsed to one
 line by default: **Details** expands the state, last report, a table of watchers
-(name, schedule, last/next run, humanized latch state), and the stored manifest.
+(name, schedule, last/next run, humanized latch state), the stored manifest, and
+the pending queue (class, sender/source, arrival, attempts, payload preview), so
+an unhandled mail or probe event is visible rather than a bare count.
 While the service is stopped the bar also carries **✎ Edit**, which opens the
 manifest in a dialog rather than a second inline copy of the text; saving keeps
 the service stopped and the session history. The expanded state is remembered per

@@ -204,6 +204,51 @@ func TestDueEventsOrdersByClassThenDeadline(t *testing.T) {
 	}
 }
 
+func TestQueuedEventsShowsWaitingWork(t *testing.T) {
+	s := openSQLiteStore(t)
+	created, err := s.Create(Meta{Name: "q", Role: "devops", Model: "test:model", Mode: "service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	watcher, err := s.AppendEvent(core.Event{
+		Session: created.Meta.ID, Class: core.EventWatcher, Kind: "watch",
+		Source: "watch:a", Payload: "due", At: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mail, err := s.AppendEvent(core.Event{
+		Session: created.Meta.ID, Class: core.EventPeer, Kind: "mail",
+		Source: "session:x", Payload: "later", At: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LeaseEvents([]int64{watcher}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.NackEvent(mail, now.Add(time.Hour), "retry later", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Neither event is deliverable now: one is leased, the other is waiting for
+	// its retry time. The operator view still lists both, most urgent first.
+	if due, err := s.DueEvents(created.Meta.ID, now, 10); err != nil || len(due) != 0 {
+		t.Fatalf("due = %+v, %v", due, err)
+	}
+	queued, err := s.QueuedEvents(created.Meta.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queued) != 2 || queued[0].ID != mail || queued[1].ID != watcher {
+		t.Fatalf("queued = %+v, want the peer before the watcher", queued)
+	}
+	if queued[0].Attempts != 1 {
+		t.Fatalf("attempts = %d, want the nack counted", queued[0].Attempts)
+	}
+}
+
 func TestNackRetriesThenDies(t *testing.T) {
 	s := openSQLiteStore(t)
 	created, err := s.Create(Meta{Name: "svc", Role: "devops", Model: "test:model", Mode: "service"})

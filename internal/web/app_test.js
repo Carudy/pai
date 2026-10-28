@@ -1426,6 +1426,9 @@ async function verifyServiceMode() {
     name: 'river', mode: 'service', state: 'parked', phase: 'parked',
     next_wake: '2026-10-27T12:00:00Z', status: 'level 3.8 m, above the warning band',
     spec: '{"goal":"watch the river","role":"devops"}',
+    queue: [
+      {id: 7, class: 'peer', kind: 'mail', source: 'session:alice', payload: 'check the gate', at: '2026-10-27T11:58:00Z', attempts: 0},
+    ],
     watchers: [
       {name: '_report', enabled: true, spec: '{"interval":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
       {name: 'river', enabled: true, approved_at: '2026-10-27T10:00:00Z', spec: '{"command":"cat state.json","interval":"60s"}', last_state: '{"fired":1793000000,"reported":true}', last_error: 'courier failed'},
@@ -1441,6 +1444,11 @@ async function verifyServiceMode() {
   assert.equal(p.get('service-watchers').children[1].children[0].textContent, 'report (heartbeat)', 'the reserved probe is labelled');
   assert.match(p.get('service-watchers').children[2].children[4].textContent, /courier failed/, 'a probe error is shown');
   assert.match(p.get('service-manifest-view').textContent, /"goal": "watch the river"/, 'the manifest is pretty-printed');
+  assert.equal(p.get('service-queue').children.length, 2, 'a header plus one queued message');
+  assert.equal(p.get('service-queue').children[0].children[0].textContent, 'Class', 'the queue has aligned columns');
+  assert.equal(p.get('service-queue').children[1].children[0].textContent, 'peer', 'the queued class is shown');
+  assert.equal(p.get('service-queue').children[1].children[1].textContent, 'session:alice', 'the sender is shown');
+  assert.match(p.get('service-queue').children[1].children[4].textContent, /check the gate/, 'the payload preview is shown');
 
   // last_state is a probe document: reported without acknowledged is work still
   // open, and a handled fire is closed until the condition ends.

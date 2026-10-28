@@ -162,9 +162,23 @@ type WatcherState struct {
 	LastError  string     `json:"last_error,omitempty"`
 }
 
+// QueuedEvent is one pending input, for inspection. The scheduler only delivers
+// due events; this projection also shows work waiting for a retry or lease.
+// Payload is bounded by the store; adapters decide how much to render.
+type QueuedEvent struct {
+	ID       int64     `json:"id"`
+	Class    string    `json:"class"`
+	Kind     string    `json:"kind"`
+	Source   string    `json:"source"`
+	Payload  string    `json:"payload,omitempty"`
+	At       time.Time `json:"at"`
+	Deadline time.Time `json:"deadline"`
+	Attempts int       `json:"attempts,omitempty"`
+}
+
 // ServiceView is the projection a client needs to inspect one resident session:
-// durable metadata, the last status document, the manifest, and the probes.
-// Phase and Error are filled from a live worker when one exists.
+// durable metadata, the last status document, the manifest, the probes, and the
+// queue. Phase and Error are filled from a live worker when one exists.
 type ServiceView struct {
 	Meta
 	Status       string         `json:"status,omitempty"`
@@ -173,6 +187,7 @@ type ServiceView struct {
 	Phase        string         `json:"phase,omitempty"`
 	Error        string         `json:"error,omitempty"`
 	Watchers     []WatcherState `json:"watchers,omitempty"`
+	Queue        []QueuedEvent  `json:"queue,omitempty"`
 }
 
 // ServiceBackend reads one service without requiring a live runtime. A backend

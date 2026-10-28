@@ -2549,6 +2549,62 @@ header p {
     color: var(--red);
 }
 
+.service-queue {
+    overflow-x: auto;
+}
+
+.queue-head,
+.queue-row {
+    display: grid;
+    grid-template-columns: 9ch minmax(12ch, 1.1fr) 19ch 6ch minmax(14ch, 2fr);
+    gap: 10px;
+    align-items: baseline;
+    min-width: 620px;
+    padding: 4px 0;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.queue-head {
+    padding-top: 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.queue-row {
+    border-top: 1px solid var(--border);
+}
+
+.queue-head + .queue-row {
+    border-top: 0;
+}
+
+.queue-class {
+    font-weight: 650;
+}
+
+.queue-source,
+.queue-time {
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.queue-attempts {
+    color: var(--muted);
+    text-align: right;
+}
+
+.queue-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 #service-manifest-view {
     max-height: 220px;
     overflow: auto;

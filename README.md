@@ -729,7 +729,8 @@ not a capability: it never extends trust, and the receiver's own tool
 confirmations still apply. Delivery rejects self-mail, unknown targets, and
 oversized messages, and bounds a mailbox's due peer events as cheap
 backpressure. Only roles that list `mail` can send; any resident session can
-receive.
+receive. `pai service show` and the web panel's **Queue** section list pending
+mail and probe events, including ones waiting for a retry.
 
 ## 🌐 Browser / server mode
 
