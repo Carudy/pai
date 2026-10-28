@@ -48,6 +48,9 @@ type Runtime struct {
 	// Sessions backs the in-session storage commands (/rename, /new). nil when no
 	// store is configured.
 	Sessions core.Sessions
+	// Mailer sends a message to another session. nil when the host cannot deliver
+	// session mail (for example a one-shot CLI run with no daemon).
+	Mailer core.Mailer
 	// SessionName is the conversation's initial storage name ("" = ephemeral).
 	SessionName string
 

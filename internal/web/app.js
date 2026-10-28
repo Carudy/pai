@@ -1040,7 +1040,7 @@ function completeProse(value) {
     return node;
   } catch { return literal(); }
 }
-const icons = {execute:'💻', remote:'🔐', read:'📖', write:'✍️', edit:'📝', websearch:'🔎', papersearch:'🧑‍🎓'};
+const icons = {execute:'💻', remote:'🔐', read:'📖', write:'✍️', edit:'📝', websearch:'🔎', papersearch:'🧑‍🎓', mail:'✉️'};
 // A read call reports its line window on the path ("main.go 100:249") rather than
 // as a separate offset and limit row, matching how a reader thinks about a range.
 function readPayload(node, value) {

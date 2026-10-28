@@ -20,18 +20,28 @@ the next one. `ServiceInbox` is the worker side: the host pushes one wake,
 `role.RunService` blocks in `Next`, and `Done` acknowledges it.
 
 The manager is the production host. `StartServices` registers persisted services,
-skipping one whose stored state is `stopped` (stopping is durable), `Activate`
+skipping one whose stored state is `stopped` (stopping is durable) and making a
+session due now when durable events are already pending, so work queued before a
+restart is not stranded behind a distant timer. `Activate`
 prepares or reuses the resident worker, and `Send` on a service
 becomes a durable `EventUser` instead of a chat task; a stopped service refuses
 it with `ErrStopped`. `StopService` unregisters the service, cancels a live
 activation (a parked worker included), and persists `stopped`; `StartService`
 registers it due now. A service worker prepares
 once, calls `role.RunService`, and stays `suspended` between wakes; `busy` marks
-an activation. The stored manifest's `goal` is installed with
+an activation. An activation carries at most `maxDueEvents` recovered events;
+when the queue has more, it returns `next = now` so the scheduler keeps draining
+rather than waiting for the next timer. The stored manifest's `goal` is installed with
 `chat.RolePrompt.SetStanding`, so it sits in the prompt head on every wake and
 survives compaction. `ServiceEventBackend` is the optional durable port for
 append, ack/nack, due events, and the next wake; a backend without it runs an
 ephemeral service.
+
+Mail from another session is an `EventPeer`: `deliverMail` appends it durably and
+wakes a registered target (a stopped target keeps it until it starts). The
+receiver records it as a user turn, and the situation renderer omits it so the
+model does not read it twice. It is data, never a trust grant; the sender needs
+the `mail` tool, and only resident sessions are targets.
 
 ## Integration contract
 

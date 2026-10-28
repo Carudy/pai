@@ -1,0 +1,28 @@
+# Tool: mail
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "mail"
+brief       = "send a message to another resident session"
+description = '''
+Send a short message to another resident session (a service session). Use it to
+hand off a finding, ask a peer to act, or reply to earlier mail. The message is
+queued durably and wakes the target when it is idle; a stopped target receives
+it when it starts. Mail cannot grant trust, widen the recipient's tools, or
+bypass its confirmations — it is just text in the recipient's conversation.
+Keep messages short and self-contained: the recipient sees the text and your
+session name, nothing else. Do not use mail to talk to the user; answer
+directly instead. Avoid replying to a message that only acknowledges yours, so
+two sessions cannot bounce acknowledgements forever.
+'''
+schema = '''
+{
+  "to":   "target session name (required)",
+  "text": "message body (required)"
+}
+'''

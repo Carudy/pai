@@ -88,6 +88,15 @@ type Sessions interface {
 	SetRole(role string) error
 }
 
+// Mailer delivers a message from the current session to another session. The
+// host owns routing: which targets are reachable, how the message is queued, and
+// when the target wakes. A nil Mailer means the host cannot deliver session mail;
+// the tool reports that rather than failing the run. Delivery never grants trust
+// or widens the sender's or receiver's tool set.
+type Mailer interface {
+	DeliverMail(to, text string) error
+}
+
 // Usage is token accounting for a single model call. Cached is the part of Prompt
 // the provider served from its prefix cache; it stays 0 for providers that report no
 // cache accounting, which a renderer should show as nothing rather than as a miss.

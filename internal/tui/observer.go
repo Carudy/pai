@@ -96,6 +96,9 @@ func (o *LineObserver) ToolCall(c core.ToolCall) {
 	case "websearch":
 		o.pair("TagAgent", "[WEB 🔍]", "Help", c.Reason)
 		o.pair("TagExec", "[WEB]", "Info", c.Detail)
+	case "mail":
+		o.pair("TagAgent", "[MAIL 💬]", "Help", c.Reason)
+		o.pair("TagExec", fmt.Sprintf("[MAIL ✉️ → %s]", c.Target), "Info", c.Detail)
 	case "read":
 		o.pair("TagAgent", "[READ 💬]", "Help", c.Reason)
 		o.pair("TagExec", fmt.Sprintf("[READ 📄 %s]", c.Target), "Info", c.Detail)

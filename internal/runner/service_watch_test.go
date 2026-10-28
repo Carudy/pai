@@ -632,6 +632,23 @@ func TestStartServicesSkipsStopped(t *testing.T) {
 	}
 }
 
+// Mail is recorded as a conversation turn, so the situation projection must not
+// repeat it: the model would read the same message twice.
+func TestRenderSituationOmitsRecordedMail(t *testing.T) {
+	s := renderSituation(core.Wake{
+		Reason: "mail from alice",
+		Events: []core.Event{{
+			Class: core.EventPeer, Kind: "mail", Source: "session:alice", Payload: "check the gate",
+		}},
+	}, nil)
+	if strings.Contains(s, "check the gate") {
+		t.Fatalf("mail repeated in the situation:\n%s", s)
+	}
+	if !strings.Contains(s, "mail from alice") {
+		t.Fatalf("wake reason missing:\n%s", s)
+	}
+}
+
 // A due event that survived a restart must wake the session even when no timer
 // would; otherwise mail or a queued probe result can sleep indefinitely.
 func TestStartNextPrefersDueEvents(t *testing.T) {

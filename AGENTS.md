@@ -140,6 +140,7 @@ HOME=/tmp/paihome /tmp/pai "list the current dir"
   execute      "df -h"
                or {"cmd": "df -h", "dir": "/var/log"}
   papersearch  {"source":..., "query":..., "limit":..., "year_from":..., "year_to":..., "sort":..., "match":..., "offset":...}
+  mail         {"to":..., "text":...}
   remote       {"host":..., "cmd":...}
   read         {"path":..., "offset":..., "limit":...}
   edit         {"path":..., "old_string":..., "new_string":..., "replace_all":...}

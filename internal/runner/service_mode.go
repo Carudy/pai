@@ -117,7 +117,7 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 
 	var probeEvents []core.Event
 	var probeNext *time.Time
-	if hasUserInput(wake.Events) {
+	if hasDirectInput(wake.Events) {
 		probeNext = m.nextWatcherRun(w, now)
 	} else {
 		probeEvents, probeNext = m.probeDue(ctx, w, now)
@@ -439,7 +439,7 @@ func (w *worker) runService() {
 		rt = &role.Runtime{
 			WorkingDir: cwd, SessionBirth: meta.CreatedAt, TokenScale: meta.TokenScale,
 			Provider: p, Recorder: rec, Observer: observer{w}, Prompter: w, Logger: w,
-			Interactive: false, SessionName: w.name,
+			Interactive: false, SessionName: w.name, Mailer: sessionMailer{m: w.m, from: w.name},
 		}
 		rp, err = chat.LoadRolePromptForSession(copyCfg.DefaultRole, copyCfg.RoleExtra, copyCfg.RoleExtraTools, copyCfg.TrustedProjects, cwd, meta.CreatedAt)
 		if err == nil {
@@ -734,11 +734,15 @@ func (m *Manager) StartService(name string) error {
 	return nil
 }
 
-// hasUserInput reports whether the wake carries an instruction from a person.
-// Such a wake takes priority over due probes: the user is waiting for a reply.
-func hasUserInput(events []core.Event) bool {
+// hasDirectInput reports whether the wake carries a message addressed to this
+// session: a person's instruction or a peer mail. Such a wake takes priority
+// over due probes, because someone is waiting for a reply.
+func hasDirectInput(events []core.Event) bool {
 	for _, ev := range events {
-		if ev.Class == core.EventUser && ev.Kind == "user_input" {
+		switch {
+		case ev.Class == core.EventUser && ev.Kind == "user_input":
+			return true
+		case ev.Class == core.EventPeer && ev.Kind == "mail":
 			return true
 		}
 	}
@@ -827,6 +831,10 @@ func renderSituation(wake core.Wake, open []openItem) string {
 				continue
 			}
 			fmt.Fprintf(&b, "- user: %s\n", boundedPayload(ev.Payload, "instruction"))
+		case ev.Class == core.EventPeer && ev.Kind == "mail":
+			// Mail is recorded as a user turn with its sender, so the history
+			// already carries it; this projection would duplicate it.
+			continue
 		default:
 			fmt.Fprintf(&b, "- [%s] %s: %s\n", ev.Class, ev.Source, boundedPayload(ev.Payload, ""))
 		}

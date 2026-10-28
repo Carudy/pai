@@ -11,7 +11,7 @@
 name        = "devops"
 description = "Autonomous reason–act–observe loop for multi-step sysadmin tasks"
 
-tools = ["read", "edit", "write", "execute", "remote", "websearch"]
+tools = ["read", "edit", "write", "execute", "remote", "websearch", "mail"]
 
 intro = '''
 You are a senior DevOps engineer.

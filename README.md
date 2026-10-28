@@ -711,6 +711,26 @@ model's working directory, resolved once at creation.
 See [`internal/watcher/README.md`](internal/watcher/README.md) for the probe and
 state contract.
 
+### Session mail
+
+A session whose role lists the `mail` tool can send a short message to another
+**resident** session (a service):
+
+```json
+{"action":"tool","toolname":"mail","payload":{"to":"river-gate","text":"level 4.4 m; please open the gate"},"reason":"hand off the check"}
+```
+
+The message is appended to the target's durable queue as an `EventPeer` before
+the scheduler is woken, so a busy target gets it at its next activation, a
+stopped target keeps it until it starts, and a crash does not lose it. The
+receiver records it as a user turn prefixed with the sender (`Mail from
+<name>:`), and it does not also appear in the situation block. Mail is text,
+not a capability: it never extends trust, and the receiver's own tool
+confirmations still apply. Delivery rejects self-mail, unknown targets, and
+oversized messages, and bounds a mailbox's due peer events as cheap
+backpressure. Only roles that list `mail` can send; any resident session can
+receive.
+
 ## 🌐 Browser / server mode
 
 ```bash

@@ -159,6 +159,7 @@ var toolHandlers = map[string]toolHandler{
 	"remote":      runRemote,
 	"websearch":   runWebsearch,
 	"papersearch": runPapersearch,
+	"mail":        runMail,
 	"read":        runRead,
 	"edit":        runEdit,
 	"write":       runWrite,
@@ -392,6 +393,39 @@ func runRemote(ctx context.Context, cfg *config.UserConfig, rt *Runtime, reason 
 	output, execErr := rt.Remote.ExecuteRemote(ctx, rp, toolStream(rt))
 	report(rt, output, execErr, "Remote command succeeded")
 	return observation("remote", execErr, output, execTruncate(cfg)), nil
+}
+
+// mailPayload is the mail tool's object payload.
+type mailPayload struct {
+	To   string `json:"to"`
+	Text string `json:"text"`
+}
+
+// runMail hands a short message to another session. The host decides which
+// targets exist and when they wake; this handler only validates the shape and
+// reports the queue outcome. Mail never grants trust: the receiver's own tools
+// and confirmations still apply.
+func runMail(_ context.Context, _ *config.UserConfig, rt *Runtime, reason string, payload json.RawMessage) (string, error) {
+	var p mailPayload
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return "", fmt.Errorf("mail payload: %w", err)
+	}
+	to, text := strings.TrimSpace(p.To), strings.TrimSpace(p.Text)
+	if to == "" || text == "" {
+		return "", errors.New(`mail needs both "to" and "text"`)
+	}
+
+	rt.Observer.ToolCall(core.ToolCall{Name: "mail", Target: to, Detail: text, Reason: reason})
+	if rt.Mailer == nil {
+		rt.Observer.ToolResult(core.ToolResult{Message: "Session mail is unavailable here"})
+		return "[tool error]\nTOOL: mail\nERROR: this run cannot deliver session mail", nil
+	}
+	if err := rt.Mailer.DeliverMail(to, text); err != nil {
+		rt.Observer.ToolResult(core.ToolResult{Message: "Mail failed: " + err.Error()})
+		return fmt.Sprintf("[tool error]\nTOOL: mail\nTO: %s\nERROR: %v", to, err), nil
+	}
+	rt.Observer.ToolResult(core.ToolResult{OK: true, Message: "queued mail to " + to})
+	return fmt.Sprintf("[mail queued]\nTO: %s\nTEXT:\n%s", to, text), nil
 }
 
 // runWebsearch searches the web for current information. A search failure is

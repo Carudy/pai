@@ -134,6 +134,43 @@ func TestRunServiceAcksWakesAndInjectsSituation(t *testing.T) {
 	}
 }
 
+// Mail is recorded as a user turn, prefixed with its sender, so the transcript
+// and the model both see who spoke; it is not repeated as an anonymous event.
+func TestRunServiceRecordsPeerMail(t *testing.T) {
+	rp, err := chat.LoadRolePromptForSession("devops", "", nil, nil, "", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fp := &sequenceProvider{replies: []string{`{"action":"yield","payload":{},"reason":"read"}`}}
+	inbox := &fakeInbox{wakes: []core.Wake{{
+		Reason: "mail from alice",
+		Events: []core.Event{{
+			ID: 7, Class: core.EventPeer, Kind: "mail",
+			Source: "session:alice", Payload: "check the gate",
+		}},
+	}}}
+	rt := &Runtime{Observer: &fakeObserver{}, Logger: nopLogger{}, Provider: fp}
+	cfg := &config.UserConfig{
+		DefaultRole:  "devops",
+		DefaultModel: "test:model",
+		Context:      config.ContextConfig{KeepTurns: 4, ExecLimit: 8000, HeadLines: 80, TailLines: 40},
+	}
+	if err := RunService(context.Background(), cfg, rt, rp, inbox, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(rt.transcript) != 2 {
+		t.Fatalf("transcript = %#v, want the mail and the reply", rt.transcript)
+	}
+	if got := rt.transcript[0]; got.Role != "user" || got.Kind != core.KindInput || got.Content != "Mail from alice:\ncheck the gate" {
+		t.Fatalf("mail turn = %#v", got)
+	}
+	if len(fp.seen) != 1 || !slices.ContainsFunc(fp.seen[0], func(m provider.Message) bool {
+		return m.Role == provider.RoleUser && m.Content == "Mail from alice:\ncheck the gate"
+	}) {
+		t.Fatalf("request does not carry the mail:\n%s", transcript(fp.seen[0]))
+	}
+}
+
 func TestOutcomeNames(t *testing.T) {
 	cases := map[outcome]string{
 		outcomeContinue: "continue", outcomeYield: "yield", outcomeDone: "done",

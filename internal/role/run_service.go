@@ -61,7 +61,7 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 			}
 			return fmt.Errorf("service inbox: %w", err)
 		}
-		recordUserInput(rt, conv, wake.Events, delivered)
+		recordDirectInput(rt, conv, wake.Events, delivered)
 
 		// One situation per activation; the frozen head and the stored history
 		// are shared across wakes.
@@ -85,18 +85,29 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 	}
 }
 
-// recordUserInput turns durable user events into conversation turns. A service
-// wake otherwise carries its input only in the situation projection, which is
-// neither stored nor replayed; recording it keeps the transcript truthful and
-// lets a later wake refer to what the user asked. The event id dedupes a retried
-// wake in this process, and the last-message check covers a turn already replayed
-// from the store after a restart.
-func recordUserInput(rt *Runtime, conv *conversation, events []core.Event, delivered map[int64]bool) {
+// recordDirectInput turns durable messages addressed to this session into
+// conversation turns. A service wake otherwise carries its input only in the
+// situation projection, which is neither stored nor replayed; recording it keeps
+// the transcript truthful and lets a later wake refer to what was asked. A peer
+// mail is recorded like a user turn, prefixed with the sender, and the situation
+// renderer skips it so the model does not read it twice. The event id dedupes a
+// retried wake in this process, and the last-message check covers a turn already
+// replayed from the store after a restart.
+func recordDirectInput(rt *Runtime, conv *conversation, events []core.Event, delivered map[int64]bool) {
 	for _, ev := range events {
-		if ev.Class != core.EventUser || ev.Kind != "user_input" {
+		var text string
+		switch {
+		case ev.Class == core.EventUser && ev.Kind == "user_input":
+			text = strings.TrimSpace(ev.Payload)
+		case ev.Class == core.EventPeer && ev.Kind == "mail":
+			body := strings.TrimSpace(ev.Payload)
+			if body == "" {
+				continue
+			}
+			text = "Mail from " + strings.TrimPrefix(ev.Source, "session:") + ":\n" + body
+		default:
 			continue
 		}
-		text := strings.TrimSpace(ev.Payload)
 		if text == "" {
 			continue
 		}
