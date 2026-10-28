@@ -53,14 +53,17 @@ func TestParseServiceManifest(t *testing.T) {
 	if m.Watchers[1].Command != "" {
 		t.Fatalf("a watcher without a command must be a timer: %+v", m.Watchers[1])
 	}
-	if w.RepeatAfter != 15*time.Minute || w.Severity != "high" {
-		t.Fatalf("watcher timing = %+v", w)
+	if w.RepeatAfter != 15*time.Minute || w.Priority != WatcherPriorityHigh || w.Severity != "" {
+		t.Fatalf("watcher timing/priority = %+v", w)
 	}
 	if w.Command != "hydroctl level" {
 		t.Fatalf("command = %q", w.Command)
 	}
 	if m.Watchers[1].Timeout != 10*time.Second {
 		t.Fatalf("default timeout = %v, want 10s", m.Watchers[1].Timeout)
+	}
+	if m.Watchers[1].Priority != WatcherPriorityTimer {
+		t.Fatalf("timer priority = %d, want %d", m.Watchers[1].Priority, WatcherPriorityTimer)
 	}
 	if m.Watchers[1].Prompt != "Report the current state in one line." {
 		t.Fatalf("timer prompt = %q", m.Watchers[1].Prompt)
@@ -102,6 +105,10 @@ func TestServiceManifestRejectsBadInput(t *testing.T) {
 			return strings.Replace(s, `repeat_after = "15m"`, `repeat_after = "later"`, 1)
 		}, "repeat_after"},
 		{"bad severity", func(s string) string { return strings.Replace(s, `severity = "high"`, `severity = "urgent"`, 1) }, "unknown severity"},
+		{"both priority and severity", func(s string) string {
+			return strings.Replace(s, `severity = "high"`, "priority = 70\nseverity = \"high\"", 1)
+		}, "not both"},
+		{"priority out of range", func(s string) string { return strings.Replace(s, `severity = "high"`, `priority = 101`, 1) }, "between 1 and 100"},
 		{"duplicate watcher", func(s string) string {
 			return s + "\n[[watcher]]\nname = \"river-level\"\ninterval = \"30s\"\n"
 		}, "duplicate watcher"},
@@ -160,11 +167,32 @@ func TestRenderServiceManifestTOMLRoundTrip(t *testing.T) {
 	}
 }
 
+func TestWatcherNumericPriority(t *testing.T) {
+	m, err := ParseServiceManifest([]byte(`
+[service]
+goal = "g"
+role = "devops"
+workspace = "/w"
+
+[[watcher]]
+name = "gate"
+interval = "30s"
+command = "true"
+priority = 85
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Watchers[0].Priority; got != 85 {
+		t.Fatalf("priority = %d, want 85", got)
+	}
+}
+
 func TestWatcherSpecRoundTrip(t *testing.T) {
 	w := WatcherSpec{
 		Name: "river-level", Command: `cat /srv/hydro/level.json`,
 		Interval: time.Minute, Timeout: 5 * time.Second,
-		RepeatAfter: time.Hour, Severity: "high",
+		RepeatAfter: time.Hour, Priority: WatcherPriorityHigh,
 		Prompt: "Report the crossing.",
 	}
 	back, err := ParseWatcherSpec(MarshalWatcherSpec(w))
@@ -173,13 +201,13 @@ func TestWatcherSpecRoundTrip(t *testing.T) {
 	}
 	if back.Name != w.Name || back.Command != w.Command ||
 		back.Interval != w.Interval || back.Timeout != w.Timeout ||
-		back.RepeatAfter != w.RepeatAfter || back.Severity != w.Severity || back.Prompt != w.Prompt {
+		back.RepeatAfter != w.RepeatAfter || back.Priority != w.Priority || back.Prompt != w.Prompt {
 		t.Fatalf("round trip = %+v, want %+v", back, w)
 	}
 
 	tick := WatcherSpec{
 		Name: "tick", Interval: 5 * time.Minute,
-		Prompt: "Report the current state in one line.", Severity: "info",
+		Prompt: "Report the current state in one line.", Priority: WatcherPriorityTimer,
 	}
 	back, err = ParseWatcherSpec(MarshalWatcherSpec(tick))
 	if err != nil {

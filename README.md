@@ -589,7 +589,7 @@ timeout      = "10s"        # default min(10s, interval)
 command      = "scripts/check_river"
 prompt       = "If the level is high, say so and suggest checking the gate."
 repeat_after = "10m"        # re-alert while true; omit = once per episode
-severity     = "high"       # info|low|medium|high|critical
+priority     = 70           # 1..100; bigger is more urgent (see below)
 
 [[watcher]]
 name     = "tide-sample"    # no command = a timer
@@ -603,6 +603,30 @@ timer: it fires every interval and its `prompt` is the wake context. Both kinds
 may carry a `prompt` — for a command probe it is extra guidance appended to the
 output when the probe fires. The built-in `_report` heartbeat created by
 `report_interval` carries one.
+
+## Priority
+
+Queued work is ordered by a numeric priority; **bigger is more urgent**. Each
+event class has a default band:
+
+| Class | Default |
+|---|---:|
+| safety | 100 |
+| abort | 90 |
+| user | 80 |
+| peer (session mail) | 60 |
+| watcher | 50 |
+| timer | 30 |
+| status | 20 |
+| telemetry | 10 |
+
+A watcher's `priority` overrides the watcher/timer default for its events;
+timers default to 30 and command probes to 50. The old textual `severity` is
+still accepted as an alias (`low`=40, `info`=the default band (50 for a command
+probe, 30 for a timer), `medium`=60, `high`=70, `critical`=79), but a manifest
+may set only one of the two. Priority is an
+ordering hint, not preemption: a running activation finishes before a queued
+event is handled.
 
 ### Approving a command probe
 

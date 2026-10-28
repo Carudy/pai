@@ -101,6 +101,58 @@ VALUES('one', 'devops', 'test:model', '/w', 1, 1), ('two', 'coder', 'test:model'
 	}
 }
 
+func TestOldEventsGainPriority(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.db")
+	old, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`
+CREATE TABLE sessions (
+  name TEXT PRIMARY KEY, id TEXT, role TEXT NOT NULL, model TEXT NOT NULL, cwd TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0, prompt_estimate INTEGER NOT NULL DEFAULT 0,
+  mode TEXT NOT NULL DEFAULT 'chat', state TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '', spec TEXT NOT NULL DEFAULT '{}', next_wake INTEGER
+);
+CREATE UNIQUE INDEX sessions_id ON sessions(id);
+CREATE TABLE events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, class INTEGER NOT NULL,
+  kind TEXT NOT NULL, source TEXT NOT NULL, payload TEXT NOT NULL, dedup_key TEXT,
+  created_at INTEGER NOT NULL, available_at INTEGER NOT NULL, deadline INTEGER,
+  attempts INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'pending',
+  lease_until INTEGER, last_error TEXT
+);
+INSERT INTO sessions(name,id,role,model,cwd,created_at,updated_at)
+VALUES('svc','sid','devops','test:model','/w',1,1);
+INSERT INTO events(session_id,class,kind,source,payload,created_at,available_at)
+VALUES ('sid',0,'x','test','safety',1,1), ('sid',7,'x','test','telemetry',1,1);
+PRAGMA user_version = 1;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := old.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := openBackend(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	created, err := store.Get("svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued, err := store.(ServiceStore).QueuedEvents(created.Meta.ID, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queued) != 2 || queued[0].Priority != 100 || queued[1].Priority != 10 {
+		t.Fatalf("backfilled queue = %+v, want safety 100 then telemetry 10", queued)
+	}
+}
+
 func TestEventsDedupLeaseAndAck(t *testing.T) {
 	s := openSQLiteStore(t)
 	created, err := s.Create(Meta{Name: "svc", Role: "devops", Model: "test:model", Mode: "service"})

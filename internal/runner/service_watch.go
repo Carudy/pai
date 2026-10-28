@@ -231,8 +231,9 @@ func watcherDetail(spec config.WatcherSpec, res watcher.Result) string {
 }
 
 // watcherEvent turns one fired probe into a durable event. A timer probe is a
-// clock tick with a name; a command probe is a condition change. Severity rides
-// in the payload for now; mapping it to an event class is a later policy.
+// clock tick with a name; a command probe is a condition change. Priority is the
+// probe's numeric ordering hint; it is not a policy change, so a command probe
+// remains an EventWatcher.
 func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result, now time.Time) core.Event {
 	class, kind := core.EventWatcher, "watch"
 	if spec.Command == "" {
@@ -246,12 +247,9 @@ func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result,
 		}
 		payload += "Instruction: " + spec.Prompt
 	}
-	if spec.Severity != "" && spec.Severity != "info" {
-		payload = "[" + spec.Severity + "] " + payload
-	}
 	return core.Event{
-		Session: sessionID, Class: class, Kind: kind, Source: "watch:" + spec.Name,
-		Payload: payload, DedupKey: "watch:" + spec.Name, At: now,
+		Session: sessionID, Class: class, Priority: spec.Priority, Kind: kind,
+		Source: "watch:" + spec.Name, Payload: payload, DedupKey: "watch:" + spec.Name, At: now,
 	}
 }
 
@@ -261,8 +259,9 @@ func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result,
 func (m *Manager) ensureReportWatcher(wb ServiceWatcherBackend, sessionID string, every time.Duration, now time.Time) (WatcherState, bool) {
 	spec := config.WatcherSpec{
 		Name: config.ReportWatcherName, Interval: every,
-		Timeout: min(10*time.Second, every),
-		Prompt:  config.ReportPrompt,
+		Timeout:  min(10*time.Second, every),
+		Prompt:   config.ReportPrompt,
+		Priority: config.WatcherPriorityTimer,
 	}
 	at := now.Add(every)
 	ws := WatcherState{

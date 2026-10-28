@@ -719,6 +719,16 @@ async function serviceControl(kind) {
 function specOf(watcher) {
   try { return JSON.parse(watcher.spec || '{}'); } catch { return {}; }
 }
+// Legacy stored specs carry a text severity; the canonical form is a numeric
+// priority. Show the same band for rows written before the rename.
+const legacyPriorities = {low: 40, info: 50, medium: 60, high: 70, critical: 79};
+function watcherPriorityOf(spec) {
+  if (spec.priority) return spec.priority;
+  const severity = String(spec.severity || '').toLowerCase();
+  // "info" was the old default label; the kind chooses its band.
+  if (severity === 'info') return spec.command ? 50 : 30;
+  return legacyPriorities[severity] || 0;
+}
 // last_state is the watcher's probe document; show what it means rather than the
 // raw JSON. reported+acknowledged is the useful pair: a fire the model has not
 // handled is still open, and a handled one is closed until the condition ends.
@@ -802,7 +812,8 @@ function paintService() {
     name.title = spec.command ? spec.command : (spec.prompt ? spec.prompt : label);
     row.append(name);
     const schedule = [spec.command ? 'command' : 'timer', spec.interval].filter(Boolean).join(' · ');
-    row.append(text('span', spec.severity && spec.severity !== 'info' ? schedule + ' · ' + spec.severity : schedule, 'watcher-meta'));
+    const priority = watcherPriorityOf(spec);
+    row.append(text('span', priority ? schedule + ' · p' + priority : schedule, 'watcher-meta'));
     const last = formatTimeExact(w.last_run), next = formatTimeExact(w.next_run);
     const lastNode = text('span', last || '—', 'watcher-times');
     if (last) lastNode.title = 'Last run: ' + last;
@@ -825,12 +836,13 @@ function paintService() {
     queue.append(text('p', 'Queue empty: nothing is waiting for this session.', 'muted'));
   } else {
     const head = text('div', '', 'queue-head');
-    for (const label of ['Class', 'Source', 'Queued', 'Tries', 'Detail']) head.append(text('span', label));
+    for (const label of ['Class', 'Priority', 'Source', 'Queued', 'Tries', 'Detail']) head.append(text('span', label));
     queue.append(head);
   }
   for (const ev of queued) {
     const row = text('div', '', 'queue-row');
     row.append(text('span', ev.class || 'event', 'queue-class'));
+    row.append(text('span', ev.priority ? 'p' + ev.priority : '—', 'queue-priority'));
     row.append(text('span', ev.source || '—', 'queue-source'));
     row.append(text('span', formatTimeExact(ev.at) || '—', 'queue-time'));
     row.append(text('span', ev.attempts ? String(ev.attempts) : '—', 'queue-attempts'));

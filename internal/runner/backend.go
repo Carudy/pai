@@ -168,6 +168,7 @@ type WatcherState struct {
 type QueuedEvent struct {
 	ID       int64     `json:"id"`
 	Class    string    `json:"class"`
+	Priority int       `json:"priority"`
 	Kind     string    `json:"kind"`
 	Source   string    `json:"source"`
 	Payload  string    `json:"payload,omitempty"`

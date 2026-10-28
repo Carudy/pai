@@ -59,7 +59,8 @@ type WatcherSpec struct {
 	Interval    time.Duration
 	Timeout     time.Duration
 	RepeatAfter time.Duration // reminder while it keeps holding, counted from the fire or from handling; 0 = once per episode
-	Severity    string
+	Priority    int           // numeric ordering hint; see the WatcherPriority* bands
+	Severity    string        // deprecated input alias for Priority; empty on normalized specs
 }
 
 type serviceFile struct {
@@ -75,6 +76,68 @@ type serviceSection struct {
 	ReportOnChange bool   `toml:"report_on_change,omitempty"`
 }
 
+// Probe priorities stay below a user instruction by default, so an alarm does
+// not outrank a person in the same wake. A manifest may set any 1–100 value.
+const (
+	WatcherPriorityTimer    = 30
+	WatcherPriorityLow      = 40
+	WatcherPriorityNormal   = 50
+	WatcherPriorityMedium   = 60
+	WatcherPriorityHigh     = 70
+	WatcherPriorityCritical = 79
+)
+
+var severityPriorities = map[string]int{
+	"low":      WatcherPriorityLow,
+	"info":     WatcherPriorityNormal,
+	"medium":   WatcherPriorityMedium,
+	"high":     WatcherPriorityHigh,
+	"critical": WatcherPriorityCritical,
+}
+
+// watcherPriority resolves a stored or parsed probe to its numeric priority. It
+// is tolerant: an unknown legacy severity falls back to the default band.
+func watcherPriority(priority int, severity string, timer bool) int {
+	if priority > 0 {
+		return priority
+	}
+	severity = strings.ToLower(strings.TrimSpace(severity))
+	if severity == "info" {
+		// "info" was the old default label; let the kind choose its band.
+		severity = ""
+	}
+	if p, ok := severityPriorities[severity]; ok {
+		return p
+	}
+	if timer {
+		return WatcherPriorityTimer
+	}
+	return WatcherPriorityNormal
+}
+
+// resolveWatcherPriority is the validating form used for a user manifest.
+func resolveWatcherPriority(priority int, severity string, timer bool) (int, error) {
+	severity = strings.ToLower(strings.TrimSpace(severity))
+	if priority != 0 && severity != "" {
+		return 0, fmt.Errorf("set either priority or severity, not both")
+	}
+	if priority != 0 {
+		if priority < 1 || priority > 100 {
+			return 0, fmt.Errorf("priority must be between 1 and 100")
+		}
+		return priority, nil
+	}
+	if severity == "info" {
+		severity = ""
+	}
+	if severity != "" {
+		if _, ok := severityPriorities[severity]; !ok {
+			return 0, fmt.Errorf("unknown severity %q (use a numeric priority)", severity)
+		}
+	}
+	return watcherPriority(priority, severity, timer), nil
+}
+
 type watchSection struct {
 	Name        string `toml:"name"`
 	Interval    string `toml:"interval"`
@@ -82,7 +145,8 @@ type watchSection struct {
 	Command     string `toml:"command,omitempty"`
 	Prompt      string `toml:"prompt,omitempty"`
 	RepeatAfter string `toml:"repeat_after,omitempty"`
-	Severity    string `toml:"severity,omitempty"`
+	Priority    int    `toml:"priority,omitempty"`
+	Severity    string `toml:"severity,omitempty"` // deprecated alias
 }
 
 // ParseServiceManifest parses and validates a manifest file.
@@ -128,7 +192,7 @@ func RenderServiceManifestTOML(m *ServiceManifest) (string, error) {
 			Name: w.Name, Interval: durationString(w.Interval),
 			Timeout: durationString(w.Timeout), Command: w.Command, Prompt: w.Prompt,
 			RepeatAfter: durationString(w.RepeatAfter),
-			Severity:    w.Severity,
+			Priority:    w.Priority,
 		})
 	}
 	var buf bytes.Buffer
@@ -200,7 +264,11 @@ func ParseWatcherSpec(spec string) (WatcherSpec, error) {
 }
 
 func watcherFromJSON(raw watcherJSON) (WatcherSpec, error) {
-	w := WatcherSpec{Name: raw.Name, Command: raw.Command, Prompt: raw.Prompt, Severity: raw.Severity}
+	w := WatcherSpec{
+		Name: raw.Name, Command: raw.Command, Prompt: raw.Prompt,
+		Priority: raw.Priority,
+	}
+	w.Priority = watcherPriority(raw.Priority, raw.Severity, w.Command == "")
 	var err error
 	if w.Interval, err = parseDuration(raw.Interval); err != nil {
 		return WatcherSpec{}, fmt.Errorf("interval: %w", err)
@@ -262,10 +330,9 @@ var watcherNameRe = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,40}$`)
 
 func normalizeWatcher(raw watchSection) (WatcherSpec, error) {
 	w := WatcherSpec{
-		Name:     strings.TrimSpace(raw.Name),
-		Command:  strings.TrimSpace(raw.Command),
-		Prompt:   strings.TrimSpace(raw.Prompt),
-		Severity: strings.ToLower(strings.TrimSpace(raw.Severity)),
+		Name:    strings.TrimSpace(raw.Name),
+		Command: strings.TrimSpace(raw.Command),
+		Prompt:  strings.TrimSpace(raw.Prompt),
 	}
 	if !watcherNameRe.MatchString(w.Name) {
 		return WatcherSpec{}, fmt.Errorf("watcher name %q must match %s", w.Name, watcherNameRe)
@@ -295,14 +362,12 @@ func normalizeWatcher(raw watchSection) (WatcherSpec, error) {
 	if w.RepeatAfter, err = parseDuration(raw.RepeatAfter); err != nil {
 		return WatcherSpec{}, fmt.Errorf("watcher %q: repeat_after: %w", w.Name, err)
 	}
-	if w.Severity == "" {
-		w.Severity = "info"
+	priority, err := resolveWatcherPriority(raw.Priority, raw.Severity, w.Command == "")
+	if err != nil {
+		return WatcherSpec{}, fmt.Errorf("watcher %q: %w", w.Name, err)
 	}
-	switch w.Severity {
-	case "info", "low", "medium", "high", "critical":
-	default:
-		return WatcherSpec{}, fmt.Errorf("watcher %q: unknown severity %q", w.Name, w.Severity)
-	}
+	w.Priority = priority
+	w.Severity = "" // severity is accepted only as an input alias
 	if w.Command == "" {
 		// No command means a timer: it always fires, and its prompt is the wake
 		// context (empty falls back to "scheduled tick").
@@ -345,7 +410,8 @@ type watcherJSON struct {
 	Command     string `json:"command,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
 	RepeatAfter string `json:"repeat_after,omitempty"`
-	Severity    string `json:"severity,omitempty"`
+	Priority    int    `json:"priority,omitempty"`
+	Severity    string `json:"severity,omitempty"` // read for legacy rows; never written
 }
 
 func manifestJSONOf(m *ServiceManifest) manifestJSON {
@@ -374,6 +440,6 @@ func watcherJSONOf(w WatcherSpec) watcherJSON {
 		Name: w.Name, Interval: durationString(w.Interval),
 		Timeout: durationString(w.Timeout), Command: w.Command, Prompt: w.Prompt,
 		RepeatAfter: durationString(w.RepeatAfter),
-		Severity:    w.Severity,
+		Priority:    w.Priority,
 	}
 }

@@ -1427,7 +1427,7 @@ async function verifyServiceMode() {
     next_wake: '2026-10-27T12:00:00Z', status: 'level 3.8 m, above the warning band',
     spec: '{"goal":"watch the river","role":"devops"}',
     queue: [
-      {id: 7, class: 'peer', kind: 'mail', source: 'session:alice', payload: 'check the gate', at: '2026-10-27T11:58:00Z', attempts: 0},
+      {id: 7, class: 'peer', priority: 60, kind: 'mail', source: 'session:alice', payload: 'check the gate', at: '2026-10-27T11:58:00Z', attempts: 0},
     ],
     watchers: [
       {name: '_report', enabled: true, spec: '{"interval":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
@@ -1447,8 +1447,9 @@ async function verifyServiceMode() {
   assert.equal(p.get('service-queue').children.length, 2, 'a header plus one queued message');
   assert.equal(p.get('service-queue').children[0].children[0].textContent, 'Class', 'the queue has aligned columns');
   assert.equal(p.get('service-queue').children[1].children[0].textContent, 'peer', 'the queued class is shown');
-  assert.equal(p.get('service-queue').children[1].children[1].textContent, 'session:alice', 'the sender is shown');
-  assert.match(p.get('service-queue').children[1].children[4].textContent, /check the gate/, 'the payload preview is shown');
+  assert.equal(p.get('service-queue').children[1].children[1].textContent, 'p60', 'the numeric priority is shown');
+  assert.equal(p.get('service-queue').children[1].children[2].textContent, 'session:alice', 'the sender is shown');
+  assert.match(p.get('service-queue').children[1].children[5].textContent, /check the gate/, 'the payload preview is shown');
 
   // last_state is a probe document: reported without acknowledged is work still
   // open, and a handled fire is closed until the condition ends.

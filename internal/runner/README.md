@@ -31,7 +31,11 @@ registers it due now. A service worker prepares
 once, calls `role.RunService`, and stays `suspended` between wakes; `busy` marks
 an activation. An activation carries at most `maxDueEvents` recovered events;
 when the queue has more, it returns `next = now` so the scheduler keeps draining
-rather than waiting for the next timer. The stored manifest's `goal` is installed with
+rather than waiting for the next timer. Queue order is numeric: `Event.Priority`
+descending (bigger is more urgent), with class defaults ranging from safety 100
+to telemetry 10; a probe's manifest `priority` overrides its watcher/timer
+default, while the legacy `severity` text is only an input alias. The stored
+manifest's `goal` is installed with
 `chat.RolePrompt.SetStanding`, so it sits in the prompt head on every wake and
 survives compaction. `ServiceEventBackend` is the optional durable port for
 append, ack/nack, due events, and the next wake; a backend without it runs an

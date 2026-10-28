@@ -1639,7 +1639,7 @@ func (serviceViewBackend) ServiceView(name string) (runner.ServiceView, error) {
 			{ID: "w1", Name: "river", Enabled: true, LastState: `{"value":"3.8"}`},
 		},
 		Queue: []runner.QueuedEvent{
-			{ID: 7, Class: "peer", Kind: "mail", Source: "session:alice", Payload: "check the gate", At: time.Now()},
+			{ID: 7, Class: "peer", Priority: 60, Kind: "mail", Source: "session:alice", Payload: "check the gate", At: time.Now()},
 		},
 	}, nil
 }
@@ -1665,7 +1665,7 @@ func TestServiceViewAPI(t *testing.T) {
 	if !strings.Contains(view.Status, "level 3.8") || len(view.Watchers) != 1 || view.Watchers[0].Name != "river" {
 		t.Fatalf("view detail = %+v", view)
 	}
-	if len(view.Queue) != 1 || view.Queue[0].Class != "peer" || view.Queue[0].Source != "session:alice" {
+	if len(view.Queue) != 1 || view.Queue[0].Class != "peer" || view.Queue[0].Priority != 60 || view.Queue[0].Source != "session:alice" {
 		t.Fatalf("view queue = %+v", view.Queue)
 	}
 

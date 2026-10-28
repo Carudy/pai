@@ -45,6 +45,32 @@ func TestSortEventsOrdersByClassThenDeadlineThenAge(t *testing.T) {
 	}
 }
 
+func TestSortEventsUsesNumericPriority(t *testing.T) {
+	// Priority, not class, is the ordering axis: an urgent watcher can outrank a
+	// user event, and a zero priority falls back to its class band.
+	events := []Event{
+		{ID: 1, Class: EventUser, Priority: 80},
+		{ID: 2, Class: EventWatcher, Priority: 90},
+		{ID: 3, Class: EventPeer},
+	}
+	SortEvents(events)
+	if !sameIDs(events, 2, 1, 3) {
+		t.Fatalf("order = %v; want the explicit 90, then user 80, then peer default", ids(events))
+	}
+}
+
+func TestDefaultPriorities(t *testing.T) {
+	for class, want := range map[EventClass]int{
+		EventSafety: PrioritySafety, EventAbort: PriorityAbort, EventUser: PriorityUser,
+		EventPeer: PriorityPeer, EventWatcher: PriorityWatcher, EventTimer: PriorityTimer,
+		EventStatus: PriorityStatus, EventTelemetry: PriorityTelemetry,
+	} {
+		if got := class.DefaultPriority(); got != want {
+			t.Errorf("%s default = %d, want %d", class, got, want)
+		}
+	}
+}
+
 func TestSortEventsKeepsZeroDeadlineLastWithinAClass(t *testing.T) {
 	base := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
 	events := []Event{

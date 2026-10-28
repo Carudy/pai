@@ -362,17 +362,27 @@ func TestServiceReportWatcherIsCreated(t *testing.T) {
 // The situation names the watcher that fired and carries its output, so the
 // model can tell a probe result apart from an instruction. The scheduler's own
 // clock tick is not repeated: the probe that fired already explains the wake.
+// A watcher's numeric priority travels on its event without changing the event's
+// policy class.
+func TestWatcherEventCarriesPriority(t *testing.T) {
+	ev := watcherEvent("sid", config.WatcherSpec{Name: "gate", Command: "true", Priority: 85},
+		watcher.Result{Summary: "open"}, time.Now())
+	if ev.Class != core.EventWatcher || ev.Priority != 85 {
+		t.Fatalf("event = %+v, want a watcher at priority 85", ev)
+	}
+}
+
 func TestRenderSituationNamesWatchers(t *testing.T) {
 	wake := core.Wake{Reason: "timer", Events: []core.Event{
 		{Class: core.EventTimer, Kind: "timer", Source: "clock"},
-		{Class: core.EventWatcher, Kind: "watch", Source: "watch:river-level", Payload: "[high] mode=flood level=3.7"},
+		{Class: core.EventWatcher, Kind: "watch", Source: "watch:river-level", Payload: "mode=flood level=3.7"},
 		{Class: core.EventTimer, Kind: "timer", Source: "watch:" + config.ReportWatcherName, Payload: "Report what changed."},
 		{Class: core.EventTimer, Kind: "timer", Source: "watch:tick", Payload: "Report the state in one line."},
 		{Class: core.EventUser, Kind: "user_input", Payload: "check the gate"},
 	}}
 	got := renderSituation(wake, nil)
 	for _, want := range []string{
-		`- watcher "river-level" fired: [high] mode=flood level=3.7`,
+		`- watcher "river-level" fired: mode=flood level=3.7`,
 		"- periodic report is due: Report what changed.",
 		`- timer "tick" fired: Report the state in one line.`,
 	} {

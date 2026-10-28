@@ -2556,10 +2556,10 @@ header p {
 .queue-head,
 .queue-row {
     display: grid;
-    grid-template-columns: 9ch minmax(12ch, 1.1fr) 19ch 6ch minmax(14ch, 2fr);
+    grid-template-columns: 9ch 6ch minmax(12ch, 1.1fr) 19ch 6ch minmax(14ch, 2fr);
     gap: 10px;
     align-items: baseline;
-    min-width: 620px;
+    min-width: 660px;
     padding: 4px 0;
     font-size: 12px;
     font-variant-numeric: tabular-nums;
@@ -2583,6 +2583,11 @@ header p {
 }
 
 .queue-class {
+    font-weight: 650;
+}
+
+.queue-priority {
+    color: var(--muted);
     font-weight: 650;
 }
 

@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS events (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id   TEXT    NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   class        INTEGER NOT NULL,
+  priority     INTEGER NOT NULL DEFAULT 0,
   kind         TEXT    NOT NULL,
   source       TEXT    NOT NULL,
   payload      TEXT    NOT NULL,
@@ -143,7 +144,25 @@ CREATE TABLE IF NOT EXISTS watchers (
 	if err := s.ResetLeases(); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`PRAGMA user_version = 1`); err != nil {
+	// v2: events gained a numeric priority. Older rows carry 0, so backfill from
+	// the class bands before anything sorts by it. A fresh database has no rows
+	// and records 2 without an update.
+	if err := s.ensureColumn("events", "priority", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+	if version < 2 {
+		if _, err := s.db.Exec(`UPDATE events SET priority = CASE class
+			WHEN 0 THEN 100 WHEN 1 THEN 90 WHEN 2 THEN 80 WHEN 3 THEN 60
+			WHEN 4 THEN 50 WHEN 5 THEN 30 WHEN 6 THEN 20 ELSE 10 END
+		WHERE priority = 0`); err != nil {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`PRAGMA user_version = 2`); err != nil {
 		return err
 	}
 	return nil

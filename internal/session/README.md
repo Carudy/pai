@@ -44,15 +44,19 @@ See the [module map](../organization.md) for the storage adapter boundary.
   `core.Event` queue, and its watchers. Events use states
   `pending/leased/done/dead`; a lease left by a crash is reset to pending on the
   next open, and a dedupe key replaces an existing pending event rather than
-  stacking duplicates. Watchers are keyed by `(session_id, name)` and keep their
-  last observed state, next run, and last error.
+  stacking duplicates. Events are ordered by `priority` descending (bigger is
+  more urgent), then deadline and arrival; `DueEvents` only returns work whose
+  retry time has arrived, while `QueuedEvents` also lists leased work for
+  inspection. Watchers are keyed by `(session_id, name)` and keep their last
+  observed state, next run, and last error.
 - State changes (`SetServiceState`, `SetNextWake`, `SetUsage`) deliberately leave
   `updated_at` alone: a timer probe must not reorder the session list every cycle.
 - `ServiceInfo` adds the status document and manifest spec to `Meta`, so listing
   chat sessions does not load either.
 - Migrations are additive: existing databases gain `id`, `mode`, `state`,
-  `status`, `spec`, and `next_wake`, rows are backfilled with an immutable id, and
-  `PRAGMA user_version` is set. Budget columns are deferred for 0.9.x.
+  `status`, `spec`, and `next_wake`, rows are backfilled with an immutable id,
+  and `PRAGMA user_version` is set. v2 adds `events.priority` and backfills it
+  from the class bands. Budget columns are deferred for 0.9.x.
 
 ## Ownership and boundaries
 

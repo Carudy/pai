@@ -6,9 +6,10 @@ import (
 	"time"
 )
 
-// EventClass is the scheduler's priority band. Lower values are more urgent, so
-// ordering can compare the class directly. A class is not enough on its own:
-// within a class the deadline and arrival time break ties.
+// EventClass is the scheduler's policy band: may the event wake the model, is it
+// host-handled, does it enter the situation. It is not the ordering axis; that is
+// Event.Priority, whose defaults follow these bands. Class values are stable
+// identifiers and are persisted in the events table.
 type EventClass uint8
 
 const (
@@ -34,6 +35,44 @@ const (
 	// never enters the model's context.
 	EventTelemetry
 )
+
+// Priority is the ordering axis: bigger is more urgent. Each class has a default
+// band; a producer may raise or lower an individual event without changing its
+// policy class (a watcher may be urgent, a status event is still status-only).
+const (
+	PrioritySafety    = 100
+	PriorityAbort     = 90
+	PriorityUser      = 80
+	PriorityPeer      = 60
+	PriorityWatcher   = 50
+	PriorityTimer     = 30
+	PriorityStatus    = 20
+	PriorityTelemetry = 10
+)
+
+// DefaultPriority is a class's band on the priority axis.
+func (c EventClass) DefaultPriority() int {
+	switch c {
+	case EventSafety:
+		return PrioritySafety
+	case EventAbort:
+		return PriorityAbort
+	case EventUser:
+		return PriorityUser
+	case EventPeer:
+		return PriorityPeer
+	case EventWatcher:
+		return PriorityWatcher
+	case EventTimer:
+		return PriorityTimer
+	case EventStatus:
+		return PriorityStatus
+	case EventTelemetry:
+		return PriorityTelemetry
+	default:
+		return PriorityTelemetry
+	}
+}
 
 // String names the class for logs and diagnostics.
 func (c EventClass) String() string {
@@ -63,9 +102,13 @@ func (c EventClass) String() string {
 // loop never treats it as an instruction on its own. DedupeKey is the coalescing
 // identity (for example "watch:river-level" or "mail:<id>").
 type Event struct {
-	ID       int64
-	Session  string // immutable session id, not the display name
-	Class    EventClass
+	ID      int64
+	Session string // immutable session id, not the display name
+	Class   EventClass
+	// Priority orders this event against the rest of the queue (bigger is more
+	// urgent). Zero means "use the class default"; AppendEvent and PrepareEvents
+	// resolve it, so stored and in-memory events always carry a concrete value.
+	Priority int
 	Kind     string // "user_input", "mail", "watch", "timer", "approval", ...
 	Source   string // "user", "session:<id>", "watch:<name>", "clock"
 	Payload  string // JSON or text; bounded by the store
@@ -73,6 +116,14 @@ type Event struct {
 	At       time.Time
 	Deadline time.Time // zero means no deadline
 	Attempts int
+}
+
+// EffectivePriority resolves Priority, falling back to the class band.
+func (e Event) EffectivePriority() int {
+	if e.Priority > 0 {
+		return e.Priority
+	}
+	return e.Class.DefaultPriority()
 }
 
 // Wake is what one activation receives: the events that caused it plus a
@@ -103,14 +154,14 @@ type Inbox interface {
 	Done(w Wake, res WakeResult) error
 }
 
-// SortEvents orders events in place: class first, then deadline (zero last),
-// then arrival time, then id. The sort is stable, so events that compare equal
-// keep their input order.
+// SortEvents orders events in place: priority (bigger first), then deadline
+// (zero last), then arrival time, then id. The sort is stable, so events that
+// compare equal keep their input order.
 func SortEvents(events []Event) {
 	sort.SliceStable(events, func(i, j int) bool {
 		a, b := events[i], events[j]
-		if a.Class != b.Class {
-			return a.Class < b.Class
+		if ap, bp := a.EffectivePriority(), b.EffectivePriority(); ap != bp {
+			return ap > bp
 		}
 		if !a.Deadline.Equal(b.Deadline) {
 			if a.Deadline.IsZero() {
@@ -129,8 +180,8 @@ func SortEvents(events []Event) {
 }
 
 // CoalesceEvents keeps one event per non-empty DedupKey. The survivor is the
-// newer event, unless one carries a more urgent class: a safety event must not
-// be discarded because a status event with the same key arrived later. Events
+// newer event, unless one carries a higher priority: a safety event must not be
+// discarded because a status event with the same key arrived later. Events
 // without a key are all kept, in input order.
 func CoalesceEvents(events []Event) []Event {
 	out := make([]Event, 0, len(events))
@@ -155,8 +206,8 @@ func CoalesceEvents(events []Event) []Event {
 
 // supersedes reports whether a should replace b for the same dedupe key.
 func supersedes(a, b Event) bool {
-	if a.Class != b.Class {
-		return a.Class < b.Class
+	if ap, bp := a.EffectivePriority(), b.EffectivePriority(); ap != bp {
+		return ap > bp
 	}
 	if !a.At.Equal(b.At) {
 		return a.At.After(b.At)
@@ -164,9 +215,15 @@ func supersedes(a, b Event) bool {
 	return a.ID > b.ID
 }
 
-// PrepareEvents coalesces duplicates and sorts the result. Callers use one
-// helper so the scheduler, tests, and any future transport agree on wake order.
+// PrepareEvents resolves priorities, coalesces duplicates, and sorts the result.
+// Callers use one helper so the scheduler, tests, and any future transport agree
+// on wake order.
 func PrepareEvents(events []Event) []Event {
+	for i := range events {
+		if events[i].Priority == 0 {
+			events[i].Priority = events[i].Class.DefaultPriority()
+		}
+	}
 	out := CoalesceEvents(events)
 	SortEvents(out)
 	return out

@@ -77,6 +77,10 @@ func (s *sqliteStore) AppendEvent(ev core.Event) (int64, error) {
 	if !ev.Deadline.IsZero() {
 		deadline = ev.Deadline.Unix()
 	}
+	priority := ev.Priority
+	if priority == 0 {
+		priority = ev.Class.DefaultPriority()
+	}
 
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -91,10 +95,10 @@ func (s *sqliteStore) AppendEvent(ev core.Event) (int64, error) {
 		switch {
 		case err == nil:
 			if _, err := tx.Exec(`UPDATE events
-SET class = ?, kind = ?, source = ?, payload = ?, created_at = ?, available_at = ?,
+SET class = ?, priority = ?, kind = ?, source = ?, payload = ?, created_at = ?, available_at = ?,
     deadline = ?, attempts = 0, last_error = NULL
 WHERE id = ?`,
-				int(ev.Class), ev.Kind, ev.Source, ev.Payload, at.Unix(), at.Unix(), deadline, id); err != nil {
+				int(ev.Class), priority, ev.Kind, ev.Source, ev.Payload, at.Unix(), at.Unix(), deadline, id); err != nil {
 				return 0, err
 			}
 			return id, tx.Commit()
@@ -104,9 +108,9 @@ WHERE id = ?`,
 	}
 
 	res, err := tx.Exec(`INSERT INTO events
-(session_id, class, kind, source, payload, dedup_key, created_at, available_at, deadline, attempts, state)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-		ev.Session, int(ev.Class), ev.Kind, ev.Source, ev.Payload, nullString(ev.DedupKey),
+(session_id, class, priority, kind, source, payload, dedup_key, created_at, available_at, deadline, attempts, state)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+		ev.Session, int(ev.Class), priority, ev.Kind, ev.Source, ev.Payload, nullString(ev.DedupKey),
 		at.Unix(), at.Unix(), deadline, ev.Attempts)
 	if err != nil {
 		return 0, err
@@ -123,11 +127,11 @@ func (s *sqliteStore) DueEvents(sessionID string, now time.Time, limit int) ([]c
 		limit = 100
 	}
 	rows, err := s.db.Query(`
-SELECT id, session_id, class, kind, source, payload, COALESCE(dedup_key, ''),
+SELECT id, session_id, class, priority, kind, source, payload, COALESCE(dedup_key, ''),
        created_at, deadline, attempts
 FROM events
 WHERE session_id = ? AND state = 'pending' AND available_at <= ?
-ORDER BY class, (deadline IS NULL), deadline, created_at, id
+ORDER BY priority DESC, (deadline IS NULL), deadline, created_at, id
 LIMIT ?`, sessionID, now.Unix(), limit)
 	if err != nil {
 		return nil, err
@@ -143,11 +147,11 @@ func (s *sqliteStore) QueuedEvents(sessionID string, limit int) ([]core.Event, e
 		limit = 100
 	}
 	rows, err := s.db.Query(`
-SELECT id, session_id, class, kind, source, payload, COALESCE(dedup_key, ''),
+SELECT id, session_id, class, priority, kind, source, payload, COALESCE(dedup_key, ''),
        created_at, deadline, attempts
 FROM events
 WHERE session_id = ? AND state IN ('pending', 'leased')
-ORDER BY class, (deadline IS NULL), deadline, created_at, id
+ORDER BY priority DESC, (deadline IS NULL), deadline, created_at, id
 LIMIT ?`, sessionID, limit)
 	if err != nil {
 		return nil, err
@@ -165,7 +169,7 @@ func scanEvents(rows *sql.Rows) ([]core.Event, error) {
 			created  int64
 			deadline sql.NullInt64
 		)
-		if err := rows.Scan(&ev.ID, &ev.Session, &class, &ev.Kind, &ev.Source, &ev.Payload,
+		if err := rows.Scan(&ev.ID, &ev.Session, &class, &ev.Priority, &ev.Kind, &ev.Source, &ev.Payload,
 			&ev.DedupKey, &created, &deadline, &ev.Attempts); err != nil {
 			return nil, err
 		}
