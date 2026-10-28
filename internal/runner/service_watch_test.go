@@ -71,10 +71,14 @@ func (b *watchTestBackend) SetWatcherState(id string, lastRun, nextRun *time.Tim
 	return fmt.Errorf("unknown watcher %q", id)
 }
 
-func (b *watchTestBackend) DueEvents(string, time.Time, int) ([]core.Event, error) {
+func (b *watchTestBackend) DueEvents(_ string, _ time.Time, limit int) ([]core.Event, error) {
 	b.wmu.Lock()
 	defer b.wmu.Unlock()
-	return append([]core.Event(nil), b.due...), nil
+	out := append([]core.Event(nil), b.due...)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (b *watchTestBackend) watcher(t *testing.T, name string) WatcherState {
@@ -625,6 +629,65 @@ func TestStartServicesSkipsStopped(t *testing.T) {
 	}
 	if err := m.Send("svc", "hello"); !errors.Is(err, ErrStopped) {
 		t.Fatalf("Send = %v, want ErrStopped", err)
+	}
+}
+
+// A due event that survived a restart must wake the session even when no timer
+// would; otherwise mail or a queued probe result can sleep indefinitely.
+func TestStartNextPrefersDueEvents(t *testing.T) {
+	backend := &watchTestBackend{
+		serviceTestBackend: &serviceTestBackend{
+			meta: Meta{Name: "svc", ID: "sid", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
+		},
+		due: []core.Event{{ID: 1, Class: core.EventPeer, Kind: "mail", Payload: "hello"}},
+	}
+	m := New(context.Background(), backend, 2)
+	t.Cleanup(m.Close)
+	now := time.Now()
+	if next := m.startNext(backend.meta, now); next == nil || next.After(now) {
+		t.Fatalf("next = %v, want due now for a pending event", next)
+	}
+	backend.due = nil
+	future := now.Add(time.Hour)
+	backend.meta.NextWake = &future
+	if next := m.startNext(backend.meta, now); next == nil || !next.Equal(future) {
+		t.Fatalf("next = %v, want the stored wake", next)
+	}
+}
+
+// One activation carries at most maxDueEvents; a larger backlog must make the
+// session due again immediately, so the queue drains instead of waiting for a
+// timer.
+func TestActivationDrainsBacklog(t *testing.T) {
+	fp := &serviceTestProvider{
+		replies: []string{`{"action":"yield","payload":{},"reason":"drained"}`},
+		done:    make(chan int, 1),
+	}
+	backend := &watchTestBackend{
+		serviceTestBackend: &serviceTestBackend{
+			meta:     Meta{Name: "svc", ID: "sid-w", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
+			provider: fp,
+			spec:     `{"goal":"drain","role":"devops","workspace":"/w"}`,
+		},
+	}
+	for i := 0; i < maxDueEvents+5; i++ {
+		backend.due = append(backend.due, core.Event{
+			ID: int64(i + 1), Class: core.EventWatcher, Kind: "watch", Source: "watch:x", Payload: "fired",
+		})
+	}
+	m := New(context.Background(), backend, 2)
+	t.Cleanup(m.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	next, err := m.Activate(ctx, "svc", clockWake())
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if got := fp.CallCount(); got != 1 {
+		t.Fatalf("model calls = %d, want 1", got)
+	}
+	if next == nil || next.After(time.Now()) {
+		t.Fatalf("next = %v, want due now while a backlog remains", next)
 	}
 }
 

@@ -277,28 +277,32 @@ func (m *Manager) ensureReportWatcher(wb ServiceWatcherBackend, sessionID string
 
 // dueEvents returns pending events whose retry time has come, so work survives a
 // restart or a failed activation. The wake may already carry some of them; the
-// caller dedupes by id.
-func (m *Manager) dueEvents(w *worker, now time.Time) []core.Event {
+// caller dedupes by id. more reports that the query hit its cap, so the caller
+// schedules another activation immediately instead of leaving a backlog to age.
+func (m *Manager) dueEvents(w *worker, now time.Time) (events []core.Event, more bool) {
 	eb, ok := m.backend.(ServiceEventBackend)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	m.mu.Lock()
 	id := w.sessionID
 	m.mu.Unlock()
 	if id == "" {
-		return nil
+		return nil, false
 	}
-	events, err := eb.DueEvents(id, now, maxDueEvents)
+	events, err := eb.DueEvents(id, now, maxDueEvents+1)
 	if err != nil {
 		w.emit("error", "could not read due events: "+err.Error())
-		return nil
+		return nil, false
+	}
+	if len(events) > maxDueEvents {
+		events, more = events[:maxDueEvents], true
 	}
 	if len(events) > 0 {
 		m.diag(Diagnostic{Session: w.name, Kind: "event", Outcome: "recovered",
 			Detail: fmt.Sprintf("%d due event(s)", len(events))})
 	}
-	return events
+	return events, more
 }
 
 // serviceManifest returns the parsed stored manifest, caching the raw spec. A

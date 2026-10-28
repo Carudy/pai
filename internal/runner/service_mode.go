@@ -57,10 +57,24 @@ func (m *Manager) StartServices() error {
 		}
 		m.mu.Unlock()
 		if !stopped {
-			m.scheduler.Register(meta.Name, meta.NextWake)
+			m.scheduler.Register(meta.Name, m.startNext(meta, time.Now()))
 		}
 	}
 	return nil
+}
+
+// startNext is the timer a service is registered with at startup. A durable
+// event may have been appended just before the process stopped; there is no
+// in-memory wake to replay it, so look once and make the session due now.
+// Without this, mail or a watcher event with no matching timer could sleep until
+// an unrelated wake.
+func (m *Manager) startNext(meta Meta, now time.Time) *time.Time {
+	if events, ok := m.backend.(ServiceEventBackend); ok && meta.ID != "" {
+		if due, err := events.DueEvents(meta.ID, now, 1); err == nil && len(due) > 0 {
+			return &now
+		}
+	}
+	return meta.NextWake
 }
 
 // RegisterService schedules a service by name without preparing its runtime.
@@ -98,7 +112,8 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	// Recover durable work first, so a user instruction is seen before the probe
 	// pass. A person waiting for an answer must not sit behind up to 15 seconds of
 	// probes; the due watchers stay due and run on the next activation instead.
-	wake.Events = mergeEvents(wake.Events, m.dueEvents(w, now))
+	due, backlog := m.dueEvents(w, now)
+	wake.Events = mergeEvents(wake.Events, due)
 
 	var probeEvents []core.Event
 	var probeNext *time.Time
@@ -114,6 +129,12 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	// model call.
 	if !hasSubstantive(wake.Events) {
 		next := m.nextServiceWake(name, probeNext, time.Now())
+		if backlog {
+			// More events are due than one activation carries; look again at once
+			// instead of waiting for a timer that may be far away.
+			now := time.Now()
+			next = earlier(next, &now)
+		}
 		m.persistNextWake(w, name, next)
 		// Worth a line even though no model call happens: it is the difference
 		// between "the probe ran and found nothing" and "the service is dead".
@@ -135,6 +156,10 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 		m.diag(Diagnostic{Session: name, Kind: "activation", Outcome: "failed", Detail: err.Error()})
 	}
 	at := m.nextServiceWake(name, probeNext, time.Now())
+	if backlog {
+		now := time.Now()
+		at = earlier(at, &now)
+	}
 	m.persistNextWake(w, name, at)
 	return at, err
 }
