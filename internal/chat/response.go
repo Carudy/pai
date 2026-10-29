@@ -164,12 +164,68 @@ func (r *Response) ValidateFor(actions ActionSet) error {
 	return nil
 }
 
+// repairJSONControls escapes raw control characters inside JSON string
+// literals. Models routinely write a literal newline or tab inside a prose
+// payload; that is invalid JSON, but it is unambiguous and preserving the text
+// is better than retrying the whole request. Outside strings nothing changes.
+func repairJSONControls(s string) (string, bool) {
+	var b strings.Builder
+	b.Grow(len(s))
+	inStr, esc, changed := false, false, false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !inStr {
+			b.WriteByte(c)
+			if c == '"' {
+				inStr = true
+			}
+			continue
+		}
+		if esc {
+			b.WriteByte(c)
+			esc = false
+			continue
+		}
+		switch c {
+		case '\\':
+			b.WriteByte(c)
+			esc = true
+		case '"':
+			b.WriteByte(c)
+			inStr = false
+		default:
+			if c >= 0x20 {
+				b.WriteByte(c)
+				continue
+			}
+			changed = true
+			switch c {
+			case '\n':
+				b.WriteString(`\n`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\t':
+				b.WriteString(`\t`)
+			case '\b':
+				b.WriteString(`\b`)
+			case '\f':
+				b.WriteString(`\f`)
+			default:
+				fmt.Fprintf(&b, `\u%04x`, c)
+			}
+		}
+	}
+	return b.String(), changed
+}
+
 // ParseResponse extracts and decodes the agent response from raw model output.
 //
 // Models wrap the object in prose or emit stray braces, so we scan for
 // brace-balanced candidates and take the first that is a *recognized* action;
 // failing that, the first that decodes at all — field-level complaints stay with
-// Validate, which is where the retry loop expects them.
+// Validate, which is where the retry loop expects them. A candidate that decodes
+// only after escaping raw control characters is accepted too: a literal newline
+// in a prose payload is a formatting mistake, not a reason to lose the answer.
 func ParseResponse(content string) (*Response, error) {
 	candidates := jsonCandidates(content)
 	if len(candidates) == 0 {
@@ -182,9 +238,20 @@ func ParseResponse(content string) (*Response, error) {
 	)
 	for _, c := range candidates {
 		var resp Response
-		if err := json.Unmarshal([]byte(c), &resp); err != nil {
-			lastErr = err
-			continue
+		err := json.Unmarshal([]byte(c), &resp)
+		if err != nil {
+			if fixed, changed := repairJSONControls(c); changed {
+				if retryErr := json.Unmarshal([]byte(fixed), &resp); retryErr == nil {
+					err = nil
+				} else {
+					lastErr = retryErr
+					continue
+				}
+			}
+			if err != nil {
+				lastErr = err
+				continue
+			}
 		}
 		if isKnownAction(resp.Action) {
 			return &resp, nil

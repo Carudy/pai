@@ -154,7 +154,7 @@ func actionGuide(action ActionType) string {
 // last thing the model reads before generating. The full contract lives in the
 // head; this only jogs it, and stays short so it costs almost nothing per turn.
 func OutputReminder() string {
-	return "Remember: reply with exactly one valid JSON object, no prose and no code fences."
+	return `Remember: reply with exactly one valid JSON object, no prose and no code fences; escape line breaks inside strings as \n.`
 }
 
 // ToolExample is a literal tool response with a plain string payload — the common

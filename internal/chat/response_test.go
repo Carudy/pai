@@ -113,6 +113,32 @@ func TestGuideExampleIsValid(t *testing.T) {
 	}
 }
 
+// A model often writes a literal newline or tab inside a prose payload. That is
+// invalid JSON, but the intent is unambiguous; escape it instead of losing the
+// answer and spending a retry.
+func TestParseRepairsRawControlCharsInStrings(t *testing.T) {
+	raw := "{\"action\":\"ask\",\"payload\":\"line one\nline two\tend\",\"reason\":\"r\"}"
+	resp, err := ParseResponse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if resp.Action != ActionAsk || resp.GetPayload() != "line one\nline two\tend" {
+		t.Fatalf("action=%q payload=%q", resp.Action, resp.GetPayload())
+	}
+}
+
+// The repair is limited to string literals; structural whitespace outside a
+// string must not be rewritten.
+func TestRepairJSONControlsOnlyInsideStrings(t *testing.T) {
+	fixed, changed := repairJSONControls("{\n  \"a\": \"x\ny\"\n}")
+	if !changed || !strings.Contains(fixed, `"a": "x\ny"`) {
+		t.Fatalf("fixed = %q changed=%v", fixed, changed)
+	}
+	if !strings.Contains(fixed, "{\n  ") || !strings.Contains(fixed, "\n}") {
+		t.Fatalf("structural whitespace changed: %q", fixed)
+	}
+}
+
 // A response with a missing closing brace (a model miscounting nesting) must be
 // reported as unparseable rather than half-applied.
 func TestParseUnbalancedIsError(t *testing.T) {

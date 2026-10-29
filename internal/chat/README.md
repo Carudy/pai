@@ -36,7 +36,9 @@ See the [module map](../organization.md) for the surrounding layers.
   validate model actions. The Meta variant is what turns an incomplete JSON
   object into an accurate notice (finish reason, bytes, output/reasoning tokens,
   and a bounded tail); served workers forward those format diagnostics to the
-  operator log without writing the whole model answer there.
+  operator log without writing the whole model answer there. Raw newlines/tabs
+  inside string literals are escaped before rejecting a candidate: that is a
+  model formatting mistake, not a reason to spend a retry.
 - `Truncate`, `CompactHistory`, `TrimHistory`, and `summarize.go` bound model context;
   shortening replay does not replace durable session history. Both compaction
   layers window by **user turn** (a user instruction plus every tool call it
