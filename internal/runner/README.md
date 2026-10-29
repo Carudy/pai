@@ -24,8 +24,9 @@ skipping one whose stored state is `stopped` (stopping is durable) and making a
 session due now when durable events are already pending, so work queued before a
 restart is not stranded behind a distant timer. `Activate`
 prepares or reuses the resident worker, and `Send` on a service
-becomes a durable `EventUser` instead of a chat task; a stopped service refuses
-it with `ErrStopped`. `StopService` unregisters the service, cancels a live
+becomes a durable `EventUser` instead of a chat task. A stopped service is
+resumed by an explicit user instruction; mail and probes deliberately do not
+resume it. `StopService` unregisters the service, cancels a live
 activation (a parked worker included), and persists `stopped`; `StartService`
 registers it due now. A service worker prepares
 once, calls `role.RunService`, and stays `suspended` between wakes; `busy` marks

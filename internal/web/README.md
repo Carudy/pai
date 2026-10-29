@@ -248,11 +248,17 @@ rejected; there is no URL authentication.
   mail and events waiting for a retry. Read-only, and available while the
   server holds the store lock that `pai service show` needs.
 - `POST /api/service`: `{ "name": "...", "manifest": "<TOML>",
-  "approve_commands": bool }` → 201 with the same view. Runs the same
-  validation as `pai service create`. `approve_commands` pre-approves the
-  manifest's command watchers; without it the first probe asks through the
+  "approve_commands": bool, "model": "provider:model", "reasoning": "low" }`
+  → 201 with the same view. Runs the same validation as `pai service create`.
+  `model` and `reasoning` are optional session settings, not manifest fields;
+  a rejected setting rolls the fresh service back. `approve_commands` pre-approves
+  the manifest's command watchers; without it the first probe asks through the
   ordinary confirmation card. The new service is registered with the scheduler
   immediately, so it starts without a restart.
+- `POST /api/service/normalize`: `{ "manifest": "<TOML>" }` → 200 with
+  `spec` (canonical JSON) and `manifest_toml` (canonical TOML). Read-only; the
+  Form/TOML editor uses it to turn raw TOML back into form state. Validation
+  errors are 400 with the parser's message.
 - `POST /api/service/edit`: the same body → 200 with the updated view. Only a
   service whose state is `stopped` can be edited. It replaces the role,
   workspace, spec, and watcher set, keeps the session identity/history/events and
@@ -262,7 +268,8 @@ rejected; there is no URL authentication.
   updated view. Stop cancels a live activation, unregisters the service from the
   scheduler, persists `state = stopped`, and clears its next wake; the state
   survives a restart. Start registers it due now, so the first probe runs
-  immediately. A stopped service refuses instructions with 409.
+  immediately. An explicit instruction to a stopped service resumes it and is
+  queued normally; mail and probes never resume it.
 - `GET /api/history?name=...&offset=0&limit=100`: `runner.History` (native core
   turn keys `Role`, `Kind`, `Content`, `At`, `Seq`, plus `essential` when set;
   metadata uses runner's JSON tags).
@@ -333,7 +340,8 @@ rejected; there is no URL authentication.
   session. A supplied directory must exist, is normalized to an absolute path,
   must match an existing session's saved workspace, and is re-checked when a
   runtime starts. No request changes the process cwd; workspaces are not
-  security sandboxes.
+  security sandboxes. Sending to a stopped resident service resumes it before
+  queuing the instruction; mail and probes do not.
 - `POST /api/steer`: `{ "name": "...", "text": "..." }`.
 - `POST /api/cancel`: `{ "name": "..." }`.
 - `POST /api/reply`: `{ "name": "...", "prompt_id": "...", "choice":
@@ -424,23 +432,27 @@ named in the URL: `/dashboard` and `/dashboard/service`. The URL remains the
 only authority, so a reload or bookmark keeps the tab, and a session URL
 (`/session/<name>`) switches the tab to that session's own mode. Creating is one
 flow with two forms behind **+ New session**: chat asks for a name, workspace,
-model, reasoning, and role; service asks for a name and a manifest (TOML,
-prefilled), because the manifest has an exact textual form and a half-built form
-would hide it. The chat form's model is free text with the configured models as
-suggestions, and an empty field means the configured default; reasoning offers
-the same efforts as the header. Ticking
+model, reasoning, and role; service asks for a name, optional model/reasoning,
+and a manifest. The service
+manifest has two synchronized views: a structured **Form** (goal, role,
+workspace, and watcher cards with add/remove) and raw **TOML**. The Form is the
+default; switching Form → TOML renders the draft, and TOML → Form calls
+`/api/service/normalize` so raw edits become form state instead of being
+discarded. The server remains the validator. Ticking
 the command-watcher box is the form's `--yes`: it pre-approves the probes. Without
 it the manifest is still saved, and the first probe asks through the ordinary
 confirmation card.
 
 Opening a service shows a **stable bar above the transcript**, collapsed to one
-line by default: **Details** expands the state, last report, a table of watchers
+line by default: **Details** expands the state, a table of watchers
 (name, schedule, last/next run, humanized latch state), the stored manifest, and
 the pending queue (class, priority, sender/source, arrival, attempts, payload
 preview), so an unhandled mail or probe event is visible rather than a bare count.
-While the service is stopped the bar also carries **✎ Edit**, which opens the
-manifest in a dialog rather than a second inline copy of the text; saving keeps
-the service stopped and the session history. The expanded state is remembered per
+The last report is not repeated there — it is already a transcript card — but
+remains available in the state badge tooltip and in `pai service show`. While
+the service is stopped the bar also carries **✎ Edit**, which opens the shared
+Form/TOML editor; saving keeps the service stopped and the session history. The
+expanded state is remembered per
 browser. The bar shows the shared state
 word (`Idle`, `Parked`, `Working`, `Stopped`), the next wake to the second, and
 **Stop** / **Start**; it never disappears on a failed refresh. The sidebar's

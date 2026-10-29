@@ -2388,6 +2388,104 @@ header p {
     color: var(--muted);
 }
 
+/* The service manifest form. TOML stays the power-user view; the form is the
+   default because the manifest has few, stable fields. */
+.service-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.service-form textarea {
+    font-family: inherit;
+}
+
+.service-form > label,
+.manifest-grid label,
+.watcher-card label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.manifest-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.watcher-form-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+}
+
+.watcher-form-head > span {
+    font-size: 12px;
+    font-weight: 650;
+    color: var(--muted);
+}
+
+.watcher-form-head button,
+.watcher-remove {
+    padding: 3px 8px;
+    font-size: 12px;
+}
+
+.watcher-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.watcher-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 9px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--soft);
+}
+
+.watcher-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.watcher-card-head > span {
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.watcher-card-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.watcher-card .wide {
+    grid-column: 1 / -1;
+}
+
+.watcher-card textarea {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+@media (max-width: 620px) {
+    .manifest-grid,
+    .watcher-card-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* ── Service view above the conversation ──────────────────── */
 #service-panel {
     display: flex;
@@ -2465,10 +2563,11 @@ header p {
     font-size: 12px;
 }
 
-.service-status {
+.service-error {
     margin: 0;
     font-size: 13px;
     white-space: pre-wrap;
+    color: var(--red);
 }
 
 #service-panel summary {

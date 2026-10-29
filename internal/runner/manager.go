@@ -18,8 +18,8 @@ var (
 	ErrNotFound  = errors.New("runtime not found")
 	ErrQueueFull = errors.New("runner queue full")
 	ErrPrompt    = errors.New("prompt is no longer pending")
-	// ErrStopped means the resident session was stopped by the user; it must be
-	// started before it can accept an instruction or run an activation.
+	// ErrStopped means the resident session was stopped by the user and an internal
+	// activation must not run. An explicit user instruction resumes it instead.
 	ErrStopped = errors.New("service is stopped; start it first")
 )
 

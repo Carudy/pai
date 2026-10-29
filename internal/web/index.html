@@ -178,7 +178,7 @@
                             <button id="refresh-service" type="button" title="Reload this service view">↻</button>
                         </div>
                         <div id="service-body" hidden>
-                            <p id="service-status" class="service-status"></p>
+                            <p id="service-error" class="service-error" hidden></p>
                             <details id="service-watchers-box" open>
                                 <summary>Watchers</summary>
                                 <div id="service-watchers" class="service-watchers"></div>
@@ -319,8 +319,31 @@
                 </header>
                 <form id="edit-service" class="create-form">
                     <p class="muted">Editing is only allowed while the service is stopped; the session history is kept.</p>
-                    <label for="service-manifest-edit">Manifest (TOML)</label>
-                    <textarea id="service-manifest-edit" rows="18" spellcheck="false"></textarea>
+                    <div id="edit-service-tabs" class="session-tabs" role="tablist" aria-label="Manifest editor">
+                        <button id="edit-service-tab-form" type="button" role="tab" aria-selected="true">Form</button
+                        ><button id="edit-service-tab-toml" type="button" role="tab" aria-selected="false">TOML</button>
+                    </div>
+                    <div id="edit-service-form-panel" class="service-form">
+                        <label for="edit-service-goal">Goal</label>
+                        <textarea id="edit-service-goal" rows="3" placeholder="What should this service do?" required></textarea>
+                        <div class="manifest-grid">
+                            <label for="edit-service-role">Role
+                                <select id="edit-service-role"></select>
+                            </label>
+                            <label for="edit-service-workspace">Workspace
+                                <input id="edit-service-workspace" placeholder="/path/to/project" autocomplete="off" required />
+                            </label>
+                        </div>
+                        <div class="watcher-form-head">
+                            <span>Watchers</span>
+                            <button id="edit-service-add-watcher" type="button">+ Add watcher</button>
+                        </div>
+                        <div id="edit-service-watchers" class="watcher-cards"></div>
+                    </div>
+                    <div id="edit-service-toml-panel" hidden>
+                        <label for="service-manifest-edit">Manifest (TOML)</label>
+                        <textarea id="service-manifest-edit" rows="18" spellcheck="false"></textarea>
+                    </div>
                     <label class="check" for="service-approve-edit">
                         <input id="service-approve-edit" type="checkbox" />
                         Pre-approve command watchers (otherwise the first run asks for confirmation)
@@ -371,8 +394,40 @@
                 <form id="new-service" class="create-form" hidden>
                     <label for="service-name">Name</label>
                     <input id="service-name" maxlength="256" placeholder="Service name" required />
-                    <label for="service-manifest">Manifest (TOML)</label>
-                    <textarea id="service-manifest" rows="14" spellcheck="false"></textarea>
+                    <div class="manifest-grid">
+                        <label for="create-service-model">Model
+                            <input id="create-service-model" list="create-service-model-options" placeholder="Defaults to the configured model" autocomplete="off" />
+                        </label>
+                        <label for="create-service-reasoning">Reasoning
+                            <select id="create-service-reasoning" title="Extended thinking effort for the new service"></select>
+                        </label>
+                    </div>
+                    <datalist id="create-service-model-options"></datalist>
+                    <div id="create-service-tabs" class="session-tabs" role="tablist" aria-label="Manifest editor">
+                        <button id="create-service-tab-form" type="button" role="tab" aria-selected="true">Form</button
+                        ><button id="create-service-tab-toml" type="button" role="tab" aria-selected="false">TOML</button>
+                    </div>
+                    <div id="create-service-form-panel" class="service-form">
+                        <label for="create-service-goal">Goal</label>
+                        <textarea id="create-service-goal" rows="3" placeholder="What should this service do?" required></textarea>
+                        <div class="manifest-grid">
+                            <label for="create-service-role">Role
+                                <select id="create-service-role"></select>
+                            </label>
+                            <label for="create-service-workspace">Workspace
+                                <input id="create-service-workspace" placeholder="/path/to/project" autocomplete="off" required />
+                            </label>
+                        </div>
+                        <div class="watcher-form-head">
+                            <span>Watchers</span>
+                            <button id="create-service-add-watcher" type="button">+ Add watcher</button>
+                        </div>
+                        <div id="create-service-watchers" class="watcher-cards"></div>
+                    </div>
+                    <div id="create-service-toml-panel" hidden>
+                        <label for="service-manifest">Manifest (TOML)</label>
+                        <textarea id="service-manifest" rows="16" spellcheck="false"></textarea>
+                    </div>
                     <label class="check" for="service-approve">
                         <input id="service-approve" type="checkbox" />
                         Pre-approve command watchers (otherwise the first run asks for confirmation)

@@ -29,7 +29,7 @@ func serviceHelp() string {
   create, new <name> --file F    Create a service from a manifest [--yes]
   edit, update <name> --file F   Replace a stopped service's manifest [--yes]
   rm, delete <name>              Delete the service, its history, and its watchers
-  stop, disable <name>           Stop scheduling; the stopped state survives restarts
+  stop, disable <name>           Stop scheduling; a user instruction resumes it
   start, enable <name>           Resume a stopped service and probe immediately
 
 A service is a resident session. ` + "`pai serve`" + ` starts the scheduler and registers
@@ -40,7 +40,8 @@ card a chat tool call uses (once / trust session / always). A command name alrea
 trusted for the session counts as a grant.
 A manifest edit is only allowed while the service is stopped; the role, workspace,
 spec, and watcher set are replaced, while the session's history and queued events
-are kept. A periodic report is just a timer watcher. Deleting is the one irreversible action: it removes the
+are kept. A stopped service does not run on its own: mail waits for a start, but
+an explicit user instruction resumes it. A periodic report is just a timer watcher. Deleting is the one irreversible action: it removes the
 service's transcript, queued events, and watcher grants as well as the row, so a
 recreate starts clean. A chat session is refused here; use ` + "`pai session rm`" + `.
 

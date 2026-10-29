@@ -516,12 +516,15 @@ func (b *multiServiceBackend) NextEventAt(string) (time.Time, bool, error) {
 }
 func (b *multiServiceBackend) SetNextWake(string, *time.Time) error { return nil }
 
-// Stopping is durable and refuses new instructions until the service is started
-// again; starting registers it with the scheduler and it wakes immediately.
+// Stopping is durable and stops scheduling. An explicit user instruction resumes
+// the service; a later Stop/Start cycle works the same way.
 func TestServiceStopAndStart(t *testing.T) {
 	fp := &serviceTestProvider{
-		replies: []string{`{"action":"done","payload":"ok","reason":"done"}`},
-		done:    make(chan int, 2),
+		replies: []string{
+			`{"action":"done","payload":"ok","reason":"done"}`,
+			`{"action":"done","payload":"ok again","reason":"done"}`,
+		},
+		done: make(chan int, 2),
 	}
 	m, backend := newWatchService(t, fp)
 
@@ -535,20 +538,26 @@ func TestServiceStopAndStart(t *testing.T) {
 	if running, queued, next := m.scheduler.Snapshot("svc"); running || queued || next != nil {
 		t.Fatalf("the stopped service is still scheduled: running=%v queued=%v next=%v", running, queued, next)
 	}
-	if err := m.Send("svc", "hello"); !errors.Is(err, ErrStopped) {
-		t.Fatalf("Send to a stopped service = %v, want ErrStopped", err)
+	// Typing to a stopped service is an explicit resume signal, not an error.
+	if err := m.Send("svc", "hello"); err != nil {
+		t.Fatalf("Send to a stopped service: %v", err)
 	}
+	if state, _ := backend.persistedState(); state != StateSuspended {
+		t.Fatalf("state = %q, want suspended after a user message", state)
+	}
+	waitFor(t, "the resumed service to run", func() bool { return fp.CallCount() == 1 })
 
+	// The explicit path still works after another stop.
+	if err := m.StopService("svc"); err != nil {
+		t.Fatalf("StopService: %v", err)
+	}
 	if err := m.StartService("svc"); err != nil {
 		t.Fatalf("StartService: %v", err)
 	}
-	if state, _ := backend.persistedState(); state != StateSuspended {
-		t.Fatalf("state = %q, want suspended after start", state)
-	}
-	if err := m.Send("svc", "hello"); err != nil {
+	if err := m.Send("svc", "again"); err != nil {
 		t.Fatalf("Send after start: %v", err)
 	}
-	waitFor(t, "the restarted service to run", func() bool { return fp.CallCount() == 1 })
+	waitFor(t, "the restarted service to run", func() bool { return fp.CallCount() == 2 })
 }
 
 // Stopping a parked worker must unblock it: the worker is waiting in the inbox,
@@ -580,9 +589,12 @@ func TestServiceStopCancelsAParkedWorker(t *testing.T) {
 }
 
 // A service persisted as stopped is loaded but never registered, so a restart
-// cannot silently resume it.
+// cannot silently resume it. A user instruction is still allowed to resume it.
 func TestStartServicesSkipsStopped(t *testing.T) {
-	fp := &serviceTestProvider{replies: nil, done: make(chan int, 1)}
+	fp := &serviceTestProvider{
+		replies: []string{`{"action":"done","payload":"ok","reason":"done"}`},
+		done:    make(chan int, 1),
+	}
 	backend := &watchTestBackend{
 		serviceTestBackend: &serviceTestBackend{
 			meta:     Meta{Name: "svc", ID: "sid", Mode: ModeService, State: StateStopped, Cwd: t.TempDir(), CreatedAt: time.Now()},
@@ -598,9 +610,10 @@ func TestStartServicesSkipsStopped(t *testing.T) {
 	if running, queued, next := m.scheduler.Snapshot("svc"); running || queued || next != nil {
 		t.Fatalf("a stopped service was registered: running=%v queued=%v next=%v", running, queued, next)
 	}
-	if err := m.Send("svc", "hello"); !errors.Is(err, ErrStopped) {
-		t.Fatalf("Send = %v, want ErrStopped", err)
+	if err := m.Send("svc", "hello"); err != nil {
+		t.Fatalf("Send: %v", err)
 	}
+	waitFor(t, "the user message to resume the service", func() bool { return fp.CallCount() == 1 })
 }
 
 // Mail is recorded as a conversation turn, so the situation projection must not

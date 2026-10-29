@@ -570,7 +570,9 @@ pai serve
 
 `pai service create` needs the session store, so stop `pai serve` first; the web
 form (**Services** → **+ New session**) creates and schedules a service without a
-restart.
+restart. The web editor offers a structured **Form** and the raw **TOML** view of
+the same manifest; switching back from TOML normalizes it first, so the two
+views cannot disagree about what will be saved.
 
 ### The manifest
 
@@ -664,8 +666,10 @@ clean. It refuses a chat session by name — use `pai session rm` for those. Whi
 the server runs, the sidebar's ✕ does the same thing for either kind.
 
 While `pai serve` is running the store is locked, so use the **Stop** / **Start**
-button in the service panel (or `POST /api/service/stop|start`). A stopped
-service accepts no instructions until it is started.
+button in the service panel (or `POST /api/service/stop|start`). Stop ends the
+autonomous schedule, but an explicit instruction resumes the service and is then
+delivered normally; the composer says **Start & send** while it is stopped. Mail
+and probes do not resume it.
 
 ### Changing settings
 
@@ -685,8 +689,8 @@ pai service start demo
 ```
 
 The web panel offers the same through the service bar's **✎ Edit** button when
-the service is stopped; it opens the manifest in a dialog rather than a second
-inline copy. The session's identity, history, queued events, and model are kept;
+the service is stopped; it opens the shared Form/TOML editor rather than a second
+inline copy. Adding or removing a watcher is a card action in Form mode. The session's identity, history, queued events, and model are kept;
 role, workspace, spec, and the watcher set are replaced. A probe whose spec did
 not change keeps its latched state and its grant; a changed command starts clean
 and needs a new approval (see above).

@@ -1438,7 +1438,8 @@ async function verifyServiceMode() {
   assert.equal(p.get('service-panel').hidden, false, 'the service panel appears');
   assert.equal(p.get('service-state').textContent, 'Parked', 'the state is labelled once, in the shared vocabulary');
   assert.match(p.get('service-next').textContent, /next wake/, 'the next wake is shown');
-  assert.match(p.get('service-status').textContent, /level 3\.8/, 'the last report is shown');
+  assert.match(p.get('service-state').title, /level 3\.8/, 'the last report is available as a tooltip, not a second card');
+  assert.equal(p.get('service-error').hidden, true, 'a healthy service has no error line');
   assert.equal(p.get('service-watchers').children.length, 3, 'a header plus every probe');
   assert.equal(p.get('service-watchers').children[0].children[0].textContent, 'Watcher', 'the probe table has aligned columns');
   assert.equal(p.get('service-watchers').children[1].children[0].textContent, 'heartbeat', 'the timer probe is labelled');
@@ -1464,6 +1465,7 @@ async function verifyServiceMode() {
   assert.equal(p.get('service-edit').hidden, true, 'a parked service cannot be edited');
   p.run("serviceView={...serviceView,state:'stopped',manifest_toml:'[service]\\ngoal = \"watch\"\\n'}; paintService()");
   assert.equal(p.get('service-edit').hidden, false, 'a stopped service offers the editor');
+  assert.equal(p.get('send').textContent, 'Start & send', 'the composer says the message will resume the service');
   p.run('openServiceEdit()');
   assert.equal(p.get('edit-panel').hidden, false, 'the editor opens as a dialog');
   assert.match(p.get('service-manifest-edit').value, /\[service\]/, 'the dialog seeds the canonical TOML');
@@ -1474,6 +1476,7 @@ async function verifyServiceMode() {
   assert.equal(p.get('edit-panel').hidden, true, 'a service that resumes closes the editor');
   assert.equal(p.get('service-edit').hidden, true);
   p.run("serviceView={...serviceView,state:'parked'}; paintService()");
+  assert.equal(p.get('send').textContent, 'Send', 'a running service uses the ordinary send label');
 
 
 
@@ -1483,13 +1486,52 @@ async function verifyServiceMode() {
   p.run('applyServiceExpanded(false)');
   assert.equal(p.get('service-body').hidden, true, 'the chevron collapses it again');
 
-  // The create panel has one form per mode, and the service form starts from a
-  // manifest skeleton rather than a blank box.
+  // The create panel has one form per mode. The service editor opens in Form
+  // mode, with a TOML view generated from the same draft.
+  p.run("serviceRoles=['devops','latex']; serviceDefaultRole='devops'");
   p.run("openCreate('service')");
   assert.equal(p.get('create-panel').hidden, false);
   assert.equal(p.get('new-service').hidden, false, 'the service form is shown');
   assert.equal(p.get('new-session').hidden, true, 'the chat form is hidden');
-  assert.match(p.get('service-manifest').value, /\[service\]/, 'the manifest skeleton is prefilled');
+  assert.equal(p.get('create-service-form-panel').hidden, false, 'Form is the default service editor');
+  assert.equal(p.get('create-service-toml-panel').hidden, true);
+  assert.match(p.get('service-manifest').value, /\[service\]/, 'the TOML view is generated from the draft');
+  assert.equal(p.get('create-service-role').value, 'devops', 'the default role seeds the form');
+
+  p.run("(()=>{const e=serviceEditors.create; e.draft.goal='Watch river'; e.draft.workspace='/srv/river';})()");
+  p.get('create-service-add-watcher').onclick();
+  assert.equal(p.run('serviceEditors.create.draft.watchers.length'), 1, 'Add watcher appends a card');
+  assert.equal(p.get('create-service-watchers').children.length, 1, 'the card is rendered');
+  p.run("(()=>{const w=serviceEditors.create.draft.watchers[0]; w.name='river'; w.interval='60s'; w.kind='command'; w.command='echo 1'; w.priority='70';})()");
+  assert.equal(p.run('validateServiceDraft(serviceEditors.create.draft)'), '', 'a complete draft validates');
+  const formTOML = p.run('serviceDraftToTOML(serviceEditors.create.draft)');
+  assert.match(formTOML, /\[\[watcher\]\]/, 'the form serializes a watcher table');
+  assert.match(formTOML, /command = "echo 1"/, 'the command survives serialization');
+  assert.match(formTOML, /priority = 70/);
+
+  p.get('create-service-add-watcher').onclick();
+  p.run("serviceEditors.create.draft.watchers[1].name='river'");
+  assert.match(p.run('validateServiceDraft(serviceEditors.create.draft)'), /Duplicate watcher name/);
+  p.run('serviceEditors.create.draft.watchers.pop()');
+  p.run('renderServiceWatcherCards(serviceEditors.create)');
+  p.get('create-service-watchers').children[0].children[0].children[2].onclick();
+  assert.equal(p.run('serviceEditors.create.draft.watchers.length'), 0, 'Remove deletes the card');
+  p.run('addServiceWatcher(serviceEditors.create)');
+  p.run("(()=>{const w=serviceEditors.create.draft.watchers[0]; w.name='tick'; w.interval='5m'; w.prompt='Check the level';})()");
+
+  await p.run("setServiceEditorMode(serviceEditors.create,'toml')");
+  assert.equal(p.get('create-service-form-panel').hidden, true, 'TOML hides the form');
+  assert.equal(p.get('create-service-toml-panel').hidden, false);
+  assert.match(p.get('service-manifest').value, /name = "tick"/, 'switching to TOML renders the draft');
+
+  // Switching back uses the server's normalizer, so raw TOML edits become the
+  // form state instead of being silently replaced.
+  p.run('api = async () => ({spec: JSON.stringify({goal:"g",role:"latex",workspace:"/w",watchers:[{name:"probe",interval:"30s"}]}), manifest_toml:"[service]\\ngoal = \\"g\\"\\n"})');
+  await p.run("setServiceEditorMode(serviceEditors.create,'form')");
+  assert.equal(p.get('create-service-form-panel').hidden, false);
+  assert.equal(p.run('serviceEditors.create.draft.watchers[0].name'), 'probe', 'the raw TOML populated the form');
+  assert.equal(p.get('create-service-role').value, 'latex', 'a role from the manifest is preserved');
+
   p.run("switchCreateMode('chat')");
   assert.equal(p.get('new-session').hidden, false, 'switching tabs shows the chat form');
   assert.equal(p.get('new-service').hidden, true);

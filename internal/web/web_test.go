@@ -1746,6 +1746,33 @@ func (b *serviceCreateBackend) CreateService(name, manifest string, approve bool
 	}, nil
 }
 
+func TestServiceNormalizeAPI(t *testing.T) {
+	m := runner.New(context.Background(), &serviceCreateBackend{}, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+
+	body := `{"manifest":"[service]\ngoal = \"watch\"\nrole = \"devops\"\nworkspace = \"/w\"\n[[watcher]]\nname = \"tick\"\ninterval = \"5m\"\n"}`
+	w := request(h, http.MethodPost, "/api/service/normalize", body, nil, "http://pai.test")
+	if w.Code != http.StatusOK {
+		t.Fatalf("normalize: %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Spec         string `json:"spec"`
+		ManifestTOML string `json:"manifest_toml"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got.Spec, `"interval":"5m0s"`) || !strings.Contains(got.ManifestTOML, `name = "tick"`) {
+		t.Fatalf("normalized = %+v", got)
+	}
+
+	w = request(h, http.MethodPost, "/api/service/normalize", `{"manifest":"[service]\ngoal = \"g\"\nreport_interval = \"1h\"\n"}`, nil, "http://pai.test")
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "report_interval was removed") {
+		t.Fatalf("removed key = %d %s", w.Code, w.Body.String())
+	}
+}
+
 func TestServiceCreateAPI(t *testing.T) {
 	b := &serviceCreateBackend{}
 	m := runner.New(context.Background(), b, 1)

@@ -233,7 +233,9 @@ func (m *Manager) isService(name string) bool {
 }
 
 // sendServiceEvent turns a user instruction into a durable EventUser and wakes
-// the scheduler, instead of pushing to a chat worker's task channel.
+// the scheduler, instead of pushing to a chat worker's task channel. An explicit
+// instruction also resumes a stopped service: typing to it is intent to use it.
+// Mail and probes deliberately do not do this.
 func (m *Manager) sendServiceEvent(name, text string) error {
 	if err := validate(text); err != nil {
 		return err
@@ -250,21 +252,25 @@ func (m *Manager) sendServiceEvent(name, text string) error {
 	if !known {
 		return ErrNotFound
 	}
-	if stopped {
-		return ErrStopped
-	}
 
 	now := time.Now()
 	ev := core.Event{
 		Session: id, Class: core.EventUser, Kind: "user_input", Source: "user",
 		Payload: text, At: now,
 	}
+	// Append before resuming: if the start fails, the instruction is not lost and
+	// will be delivered whenever the service is started later.
 	if eb, ok := m.backend.(ServiceEventBackend); ok && id != "" {
 		eid, err := eb.AppendEvent(id, ev)
 		if err != nil {
 			return fmt.Errorf("append user event: %w", err)
 		}
 		ev.ID = eid
+	}
+	if stopped {
+		if err := m.startService(name, "resumed by user input"); err != nil {
+			return fmt.Errorf("resume service: %w", err)
+		}
 	}
 	wake := core.Wake{Reason: "user input", Events: []core.Event{ev}}
 	if m.scheduler.Wake(name, wake) {
@@ -751,6 +757,12 @@ func (m *Manager) StopService(name string) error {
 // activation probes immediately; the worker itself is prepared lazily by
 // Activate, as it is after a restart.
 func (m *Manager) StartService(name string) error {
+	return m.startService(name, "scheduling resumed")
+}
+
+// startService is the one resume path, so a user instruction and the explicit
+// Start button persist the same state and produce the same audit line.
+func (m *Manager) startService(name, reason string) error {
 	if strings.TrimSpace(name) == "" {
 		return ErrNotFound
 	}
@@ -778,7 +790,7 @@ func (m *Manager) StartService(name string) error {
 			return err
 		}
 	}
-	m.diag(Diagnostic{Session: name, Kind: "service", Outcome: "started", Detail: "scheduling resumed", Next: now})
+	m.diag(Diagnostic{Session: name, Kind: "service", Outcome: "started", Detail: reason, Next: now})
 	return nil
 }
 

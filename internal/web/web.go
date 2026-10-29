@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/runner"
 )
@@ -528,6 +529,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Name            string `json:"name"`
 				Manifest        string `json:"manifest"`
 				ApproveCommands bool   `json:"approve_commands"`
+				Model           string `json:"model"`
+				Reasoning       string `json:"reasoning"`
 			}
 			if !decode(w, r, &body) {
 				return
@@ -545,11 +548,46 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				managerError(w, err)
 				return
 			}
+			// Service settings are session metadata, not manifest fields. Apply them
+			// after creation and roll back the new service if either is rejected, so
+			// 201 always means the requested settings were accepted.
+			if err := applyCreateSettings(h.manager, view.Name, body.Model, body.Reasoning); err != nil {
+				_ = h.manager.Delete(view.Name)
+				fail(w, 400, err.Error())
+				return
+			}
 			respond(w, 201, view)
 		default:
 			w.Header().Set("Allow", "GET, POST")
 			fail(w, 405, "method not allowed")
 		}
+	case "/api/service/normalize":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var body struct {
+			Manifest string `json:"manifest"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if strings.TrimSpace(body.Manifest) == "" {
+			fail(w, 400, "manifest is required")
+			return
+		}
+		manifest, err := config.ParseServiceManifest([]byte(body.Manifest))
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		tomlText, err := config.RenderServiceManifestTOML(manifest)
+		if err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		// Read-only: the form uses this to round-trip raw TOML without writing
+		// to a service. The write paths still parse the same manifest again.
+		respond(w, 200, map[string]string{"spec": manifest.JSON, "manifest_toml": tomlText})
 	case "/api/service/edit":
 		if !method(w, r, http.MethodPost) {
 			return

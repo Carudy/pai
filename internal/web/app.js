@@ -18,6 +18,13 @@ let selectedMode = '';
 // slow refresh from painting over a newer one. serviceError keeps the bar stable
 // when a view cannot be loaded instead of hiding it.
 let serviceView = null, serviceRequest = 0, serviceTimer = null, serviceError = '';
+// Manifest form state. The create and edit dialogs share one renderer, so the
+// watcher fields cannot drift between the two entry points.
+let serviceRoles = [], serviceDefaultRole = '';
+const serviceEditors = {
+  create: {id: 'create', prefix: 'create-service', draft: null, mode: 'form'},
+  edit: {id: 'edit', prefix: 'edit-service', draft: null, mode: 'form'},
+};
 const SERVICE_EXPANDED_KEY = 'pai.service-expanded';
 const ACTIVITY_PANE_KEY = 'pai.activity-pane';
 // The Logs tab keeps the newest lines; older ones fall out exactly like the
@@ -86,6 +93,13 @@ async function models() {
     option.value = model;
     return option;
   }));
+  if ($('create-service-model-options')) {
+    $('create-service-model-options').replaceChildren(...modelList.map(model => {
+      const option = text('option', model);
+      option.value = model;
+      return option;
+    }));
+  }
   modelControls();
 }
 // A datalist filters its suggestions by the field's current value, which hides
@@ -672,12 +686,15 @@ function scheduleService() { clearTimeout(serviceTimer); serviceTimer = setTimeo
 // the scheduler agree immediately; history is refreshed because stopping retires
 // the live runtime.
 // Save a stopped service's manifest. The server re-validates and reconciles the
-// watcher set; the page only refreshes what it read back.
+// watcher set; the page only refreshes what it read back. The editor may be in
+// Form mode (serialized to TOML here) or raw TOML mode (sent unchanged).
 async function saveServiceManifest(e) {
   if (e) e.preventDefault();
   if (!selected) return;
-  const name = selected, manifest = $('service-manifest-edit').value;
-  if (!manifest.trim()) { error(new Error('The manifest is empty')); return; }
+  let manifest;
+  try { manifest = serviceEditorManifest(serviceEditors.edit); }
+  catch (err) { error(err); return; }
+  const name = selected;
   try {
     const view = await api('service/edit', {name, manifest, approve_commands: $('service-approve-edit').checked});
     if (selected !== name) return;
@@ -690,16 +707,269 @@ async function saveServiceManifest(e) {
     error(err);
   }
 }
+
+// ── Service manifest editor ────────────────────────────────
+// One editor serves create and edit. Form state is the editable draft; TOML is
+// generated from it, and switching back asks the server to normalize the raw
+// TOML so the two views cannot disagree about what will be saved.
+function serviceEditorEl(editor, part) {
+  const p = editor.prefix;
+  switch (part) {
+    case 'goal': return $(p + '-goal');
+    case 'role': return $(p + '-role');
+    case 'workspace': return $(p + '-workspace');
+    case 'watchers': return $(p + '-watchers');
+    case 'add': return $(p + '-add-watcher');
+    case 'form': return $(p + '-form-panel');
+    case 'toml': return $(p + '-toml-panel');
+    case 'tabForm': return $(p + '-tab-form');
+    case 'tabToml': return $(p + '-tab-toml');
+    case 'tomlInput': return editor.id === 'create' ? $('service-manifest') : $('service-manifest-edit');
+    default: return null;
+  }
+}
+function blankServiceDraft() {
+  return {goal: '', role: serviceDefaultRole || '', workspace: serverCwd || '', watchers: []};
+}
+function serviceWatcherFromSpec(w) {
+  const command = String(w && w.command || '');
+  return {
+    name: String(w && w.name || ''),
+    kind: command.trim() ? 'command' : 'timer',
+    interval: String(w && w.interval || ''),
+    timeout: String(w && w.timeout || ''),
+    command,
+    prompt: String(w && w.prompt || ''),
+    repeat_after: String(w && w.repeat_after || ''),
+    priority: w && w.priority ? String(w.priority) : '',
+  };
+}
+function serviceSpecToDraft(specText) {
+  let spec = {};
+  try { spec = JSON.parse(specText || '{}') || {}; } catch (_) { spec = {}; }
+  return {
+    goal: String(spec.goal || ''), role: String(spec.role || ''), workspace: String(spec.workspace || ''),
+    watchers: Array.isArray(spec.watchers) ? spec.watchers.map(serviceWatcherFromSpec) : [],
+  };
+}
+// JSON.stringify emits a TOML basic string for the escapes these fields use
+// (quote, backslash, newline, tab, control characters).
+function tomlString(value) { return JSON.stringify(String(value == null ? '' : value)); }
+function serviceDraftToTOML(draft) {
+  const lines = ['[service]'];
+  lines.push('goal = ' + tomlString(draft.goal));
+  lines.push('role = ' + tomlString(draft.role));
+  lines.push('workspace = ' + tomlString(draft.workspace));
+  for (const w of draft.watchers || []) {
+    lines.push('', '[[watcher]]');
+    lines.push('name = ' + tomlString(w.name));
+    lines.push('interval = ' + tomlString(w.interval));
+    if (String(w.timeout || '').trim()) lines.push('timeout = ' + tomlString(w.timeout));
+    if (w.kind === 'command' && String(w.command || '').trim()) lines.push('command = ' + tomlString(w.command));
+    if (String(w.prompt || '').trim()) lines.push('prompt = ' + tomlString(w.prompt));
+    if (String(w.repeat_after || '').trim()) lines.push('repeat_after = ' + tomlString(w.repeat_after));
+    if (String(w.priority || '').trim()) lines.push('priority = ' + String(w.priority).trim());
+  }
+  return lines.join('\n') + '\n';
+}
+function validateServiceDraft(draft) {
+  if (!String(draft.goal || '').trim()) return 'Goal is required';
+  if (!String(draft.role || '').trim()) return 'Role is required';
+  if (!String(draft.workspace || '').trim()) return 'Workspace is required';
+  if ((draft.watchers || []).length > 8) return 'At most 8 watchers are allowed';
+  const seen = new Set();
+  for (const w of draft.watchers || []) {
+    const name = String(w.name || '').trim();
+    if (!/^[a-z][a-z0-9_-]{0,40}$/.test(name)) return 'Watcher name "' + name + '" must match ^[a-z][a-z0-9_-]{0,40}$';
+    if (seen.has(name)) return 'Duplicate watcher name "' + name + '"';
+    seen.add(name);
+    if (!String(w.interval || '').trim()) return 'Watcher "' + name + '" needs an interval';
+    if (w.kind === 'command' && !String(w.command || '').trim()) return 'Watcher "' + name + '" is a command watcher, so it needs a command';
+    if (String(w.priority || '').trim() && !/^\d+$/.test(String(w.priority).trim())) return 'Watcher "' + name + '" priority must be a number';
+  }
+  return '';
+}
+function serviceEditorManifest(editor) {
+  if (editor.mode === 'toml') {
+    const input = serviceEditorEl(editor, 'tomlInput');
+    const manifest = input ? input.value : '';
+    if (!manifest.trim()) throw new Error('The manifest is empty');
+    return manifest;
+  }
+  if (!editor.draft) editor.draft = blankServiceDraft();
+  const problem = validateServiceDraft(editor.draft);
+  if (problem) throw new Error(problem);
+  return serviceDraftToTOML(editor.draft);
+}
+function paintServiceRoleOptions(select, value) {
+  if (!select) return;
+  const roles = serviceRoles.slice();
+  const current = String(value || '').trim();
+  if (current && !roles.includes(current)) roles.push(current);
+  if (!roles.length && (current || serviceDefaultRole)) roles.push(current || serviceDefaultRole);
+  select.replaceChildren(...roles.map(role => { const option = text('option', role); option.value = role; return option; }));
+  select.value = current || serviceDefaultRole || roles[0] || '';
+}
+function paintServiceEditorMode(editor) {
+  const formMode = editor.mode !== 'toml';
+  const form = serviceEditorEl(editor, 'form'), toml = serviceEditorEl(editor, 'toml');
+  if (form) form.hidden = !formMode;
+  if (toml) toml.hidden = formMode;
+  for (const [part, active] of [['tabForm', formMode], ['tabToml', !formMode]]) {
+    const tab = serviceEditorEl(editor, part);
+    if (!tab) continue;
+    tab.setAttribute('aria-selected', String(active));
+    tab.classList.toggle('selected', active);
+  }
+}
+function paintServiceEditor(editor) {
+  if (!editor.draft) editor.draft = blankServiceDraft();
+  const draft = editor.draft;
+  const goal = serviceEditorEl(editor, 'goal');
+  if (goal) goal.value = draft.goal || '';
+  const workspace = serviceEditorEl(editor, 'workspace');
+  if (workspace) workspace.value = draft.workspace || '';
+  const role = serviceEditorEl(editor, 'role');
+  paintServiceRoleOptions(role, draft.role);
+  if (role) draft.role = role.value;
+  renderServiceWatcherCards(editor);
+  paintServiceEditorMode(editor);
+}
+function watcherField(label, control, className) {
+  const wrap = text('label', '', className || '');
+  wrap.append(text('span', label), control);
+  return wrap;
+}
+function renderServiceWatcherCards(editor) {
+  const box = serviceEditorEl(editor, 'watchers');
+  if (!box || !editor.draft) return;
+  box.replaceChildren();
+  const watchers = editor.draft.watchers || [];
+  if (!watchers.length) {
+    box.append(text('p', 'No watchers. This service only wakes when you send it something.', 'muted'));
+    return;
+  }
+  watchers.forEach((w, index) => {
+    const card = text('div', '', 'watcher-card');
+    const head = text('div', '', 'watcher-card-head');
+    head.append(text('span', w.name || 'watcher ' + (index + 1)), text('span', w.kind === 'command' ? 'command' : 'timer', 'muted'));
+    const remove = text('button', '✕', 'watcher-remove');
+    remove.type = 'button';
+    remove.title = 'Remove this watcher';
+    remove.onclick = event => {
+      if (event) event.preventDefault();
+      editor.draft.watchers.splice(index, 1);
+      renderServiceWatcherCards(editor);
+    };
+    head.append(remove);
+    card.append(head);
+
+    const name = document.createElement('input');
+    name.value = w.name || ''; name.autocomplete = 'off';
+    name.oninput = () => { w.name = name.value; };
+    const kind = document.createElement('select');
+    for (const value of ['timer', 'command']) { const option = text('option', value === 'timer' ? 'Timer' : 'Command'); option.value = value; kind.append(option); }
+    kind.value = w.kind === 'command' ? 'command' : 'timer';
+    kind.onchange = () => { w.kind = kind.value; if (w.kind === 'timer') w.command = ''; renderServiceWatcherCards(editor); };
+    const interval = document.createElement('input');
+    interval.value = w.interval || ''; interval.placeholder = '5m'; interval.autocomplete = 'off';
+    interval.oninput = () => { w.interval = interval.value; };
+    const priority = document.createElement('input');
+    priority.type = 'number'; priority.min = '1'; priority.max = '100'; priority.placeholder = 'default';
+    priority.value = w.priority || '';
+    priority.oninput = () => { w.priority = priority.value; };
+    const grid = text('div', '', 'watcher-card-grid');
+    grid.append(watcherField('Name', name), watcherField('Type', kind), watcherField('Interval', interval), watcherField('Priority', priority));
+    card.append(grid);
+
+    if (w.kind === 'command') {
+      const command = document.createElement('textarea');
+      command.rows = 2; command.spellcheck = false; command.value = w.command || '';
+      command.placeholder = 'scripts/check_state';
+      command.oninput = () => { w.command = command.value; };
+      card.append(watcherField('Command', command, 'wide'));
+    }
+    const prompt = document.createElement('textarea');
+    prompt.rows = 2; prompt.value = w.prompt || '';
+    prompt.placeholder = w.kind === 'command' ? 'Extra guidance when this probe fires' : 'What should the model do on this tick?';
+    prompt.oninput = () => { w.prompt = prompt.value; };
+    card.append(watcherField('Prompt', prompt, 'wide'));
+
+    const timeout = document.createElement('input');
+    timeout.value = w.timeout || ''; timeout.placeholder = '10s'; timeout.autocomplete = 'off';
+    timeout.oninput = () => { w.timeout = timeout.value; };
+    const repeat = document.createElement('input');
+    repeat.value = w.repeat_after || ''; repeat.placeholder = 'off';
+    repeat.oninput = () => { w.repeat_after = repeat.value; };
+    const limits = text('div', '', 'watcher-card-grid');
+    limits.append(watcherField('Timeout', timeout), watcherField('Repeat after', repeat));
+    card.append(limits);
+    box.append(card);
+  });
+}
+function addServiceWatcher(editor) {
+  if (!editor.draft) editor.draft = blankServiceDraft();
+  const watchers = editor.draft.watchers;
+  if (watchers.length >= 8) { error(new Error('At most 8 watchers are allowed')); return; }
+  const used = new Set(watchers.map(w => w.name));
+  let n = 1;
+  while (used.has('watch-' + n)) n++;
+  watchers.push({name: 'watch-' + n, kind: 'timer', interval: '5m', timeout: '', command: '', prompt: '', repeat_after: '', priority: ''});
+  renderServiceWatcherCards(editor);
+}
+async function setServiceEditorMode(editor, mode) {
+  mode = mode === 'toml' ? 'toml' : 'form';
+  if (editor.mode === mode) return;
+  if (mode === 'form') {
+    const input = serviceEditorEl(editor, 'tomlInput');
+    const text = input ? input.value : '';
+    if (text.trim()) {
+      const data = await api('service/normalize', {manifest: text});
+      editor.draft = serviceSpecToDraft(data.spec);
+      if (input) input.value = data.manifest_toml || text;
+    }
+  } else {
+    const input = serviceEditorEl(editor, 'tomlInput');
+    if (input) input.value = serviceDraftToTOML(editor.draft || blankServiceDraft());
+  }
+  editor.mode = mode;
+  if (mode === 'form') paintServiceEditor(editor); else paintServiceEditorMode(editor);
+}
+function wireServiceEditor(editor) {
+  const goal = serviceEditorEl(editor, 'goal'), role = serviceEditorEl(editor, 'role'), workspace = serviceEditorEl(editor, 'workspace');
+  if (goal) goal.oninput = () => { if (editor.draft) editor.draft.goal = goal.value; };
+  if (role) role.onchange = () => { if (editor.draft) editor.draft.role = role.value; };
+  if (workspace) workspace.oninput = () => { if (editor.draft) editor.draft.workspace = workspace.value; };
+  const tabForm = serviceEditorEl(editor, 'tabForm'), tabToml = serviceEditorEl(editor, 'tabToml'), add = serviceEditorEl(editor, 'add');
+  if (tabForm) tabForm.onclick = () => setServiceEditorMode(editor, 'form').catch(error);
+  if (tabToml) tabToml.onclick = () => setServiceEditorMode(editor, 'toml').catch(error);
+  if (add) add.onclick = () => addServiceWatcher(editor);
+}
+function openCreateServiceEditor() {
+  const editor = serviceEditors.create;
+  editor.draft = blankServiceDraft();
+  editor.mode = 'form';
+  paintServiceEditor(editor);
+  const input = serviceEditorEl(editor, 'tomlInput');
+  if (input) input.value = serviceDraftToTOML(editor.draft);
+}
+
 // Editing is a dialog rather than an inline box: the manifest is one text, so a
 // second copy in the panel duplicated the display and left it ambiguous which
 // copy Save read. The dialog seeds from the canonical TOML on open.
 function openServiceEdit() {
   const view = serviceView;
   if (!view || String(view.state || '') !== 'stopped') return;
-  $('service-manifest-edit').value = view.manifest_toml || '';
+  const editor = serviceEditors.edit;
+  editor.draft = serviceSpecToDraft(view.spec);
+  editor.mode = 'form';
+  const input = serviceEditorEl(editor, 'tomlInput');
+  if (input) input.value = view.manifest_toml || serviceDraftToTOML(editor.draft);
+  paintServiceEditor(editor);
   $('service-approve-edit').checked = false;
   $('edit-panel').hidden = false;
-  $('service-manifest-edit').focus();
+  const goal = serviceEditorEl(editor, 'goal');
+  if (goal) goal.focus();
 }
 function closeServiceEdit() { $('edit-panel').hidden = true; }
 
@@ -758,7 +1028,7 @@ function paintService() {
   // refresh: a stable bar with an explanation beats one that blinks in and out.
   // The tab may disagree with the open session (browsing Services while a chat
   // is selected), and the bar is about the session, so both must agree.
-  if (sessionMode !== 'service' || selectedMode !== 'service' || !selected) { panel.hidden = true; return; }
+  if (sessionMode !== 'service' || selectedMode !== 'service' || !selected) { panel.hidden = true; controls(); return; }
   panel.hidden = false;
 
   const badge = $('service-state');
@@ -767,24 +1037,31 @@ function paintService() {
   if (!view) {
     badge.textContent = serviceError ? 'Service' : 'Loading…';
     badge.dataset.state = serviceError ? 'stored' : 'loading';
+    badge.title = serviceError || '';
     $('service-next').textContent = '';
-    $('service-status').textContent = serviceError || 'Loading the service view…';
+    $('service-error').textContent = serviceError || '';
+    $('service-error').hidden = !serviceError;
     $('service-watchers').replaceChildren();
     $('service-queue').replaceChildren();
     $('service-manifest-view').textContent = '';
     if (toggle) toggle.hidden = true;
     $('service-edit').hidden = true;
     closeServiceEdit();
+    controls();
     return;
   }
 
   const state = String(view.state || 'stored');
   badge.textContent = serviceStateLabel(state);
   badge.dataset.state = state;
+  // The last report already exists as a transcript card. Keep it in the badge
+  // tooltip for detail without painting a second copy above the conversation.
+  badge.title = view.status || '';
   $('service-next').textContent = state === 'stopped'
     ? 'not scheduled'
     : view.next_wake ? 'next wake ' + formatTimeExact(view.next_wake) : 'waiting for an event';
-  $('service-status').textContent = view.status ? view.status : 'No report yet.';
+  $('service-error').textContent = view.error || '';
+  $('service-error').hidden = !view.error;
 
   if (toggle) {
     const stopped = state === 'stopped';
@@ -862,14 +1139,10 @@ function paintService() {
   const stopped = state === 'stopped';
   $('service-edit').hidden = !stopped || !view.manifest_toml;
   if (!stopped) closeServiceEdit();
+  controls();
 }
 
 // ── Create panel ───────────────────────────────────────────
-function starterManifest() {
-  const role = selectedRole() || 'devops';
-  const workspace = serverCwd || '/path/to/workspace';
-  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\n\n# A periodic report is just a timer watcher.\n# [[watcher]]\n# name = "heartbeat"\n# interval = "1h"\n# prompt = "Report what changed since the last report. If nothing changed, yield."\n\n# [[watcher]]\n# name = "river-level"\n# interval = "60s"\n# command = "scripts/check_river"\n# prompt = "Say what changed and whether it needs action."\n# repeat_after = "15m"\n# priority = 70\n\n# [[watcher]]\n# name = "tick"\n# interval = "5m"\n# prompt = "Report the current state in one line."\n';
-}
 function paintCreateTabs() {
   for (const mode of ['chat', 'service']) {
     const tab = $('create-tab-' + mode);
@@ -884,7 +1157,7 @@ function openCreate(mode = sessionMode) {
   paintCreateTabs();
   $('create-panel').hidden = false;
   if (createMode === 'service') {
-    $('service-manifest').value = starterManifest();
+    openCreateServiceEditor();
     $('service-name').focus();
   } else {
     if (!$('session-cwd').value) $('session-cwd').value = serverCwd || '';
@@ -892,11 +1165,20 @@ function openCreate(mode = sessionMode) {
   }
 }
 function closeCreate() { $('create-panel').hidden = true; }
-function switchCreateMode(mode) { createMode = validMode(mode); paintCreateTabs(); }
+function switchCreateMode(mode) {
+  createMode = validMode(mode);
+  paintCreateTabs();
+  if (createMode === 'service' && !serviceEditors.create.draft) openCreateServiceEditor();
+}
 
 function controls() {
   const ready = !!selected, filled = !!$('message').value.trim();
+  const startSend = selectedMode === 'service' && serviceView && String(serviceView.state || '') === 'stopped';
   $('send').disabled = !ready || !filled;
+  $('send').textContent = startSend ? 'Start & send' : 'Send';
+  $('send').title = startSend
+    ? 'Resume this stopped service and send the instruction'
+    : 'Send an instruction; queued while PAI is busy';
   // Steer only redirects a running task; while idle it would just be a Send.
   $('steer').disabled = !ready || !filled || !sessionBusy;
   $('cancel').disabled = !ready;
@@ -984,12 +1266,15 @@ function reasoningControls() {
 }
 // The create form's reasoning default follows the configured default, but a
 // choice already made in the form wins: the same list serves both controls.
-function createReasoningOptions(options, current) {
-  const select = $('create-reasoning');
+function fillReasoningOptions(select, options, current) {
   if (!select) return;
   const keep = select.value;
   select.replaceChildren(...options.map(value => { const option = text('option', value); option.value = value; return option; }));
   select.value = options.includes(keep) ? keep : (current || options[0] || 'none');
+}
+function createReasoningOptions(options, current) {
+  fillReasoningOptions($('create-reasoning'), options, current);
+  fillReasoningOptions($('create-service-reasoning'), options, current);
 }
 function reasoningMetadata(value) {
   savedReasoning = typeof value === 'string' ? value.trim() : '';
@@ -2122,14 +2407,14 @@ async function action(kind, override) {
     // A canned override (the auto-reply button) leaves the draft alone.
     if (override === undefined && kind !== 'cancel' && selected === name && $('message').value === message) $('message').value = '';
     controls();
-    if (selected === name) { await loadSnapshot(); if (!stream) connect(); scheduleHistory(); }
+    if (selected === name) { await loadSnapshot(); if (!stream) connect(); scheduleHistory(); if (selectedMode === 'service') await loadService().catch(() => {}); }
     await sessions(true);
   } catch (e) {
     error(e);
     // The instruction may have reached the server before the failure, or only the
     // reply was lost. Re-read the authoritative state instead of guessing (and
     // never resend a mutation automatically: that would duplicate it).
-    if (selected === name) { await loadSnapshot().catch(() => {}); scheduleHistory(); }
+    if (selected === name) { await loadSnapshot().catch(() => {}); scheduleHistory(); if (selectedMode === 'service') scheduleService(); }
   }
 }
 // Delete a stored session after confirmation. Deleting the open session also
@@ -2353,11 +2638,19 @@ async function roles() {
   const group = $('session-role'), previous = selectedRole();
   group.replaceChildren(...data.roles.map(roleChoice));
   setSelectedRole(data.roles.includes(previous) ? previous : data.default_role);
+  serviceRoles = Array.isArray(data.roles) ? data.roles.slice() : [];
+  serviceDefaultRole = data.default_role || '';
   // The header role control switches an existing session's role.
   const header = $('session-role-select');
   const draft = roleDirty ? header.value : '';
   header.replaceChildren(...data.roles.map(option));
   header.value = data.roles.includes(draft || savedRole) ? (draft || savedRole) : '';
+  for (const editor of Object.values(serviceEditors)) {
+    if (!editor.draft) continue;
+    const select = serviceEditorEl(editor, 'role');
+    paintServiceRoleOptions(select, editor.draft.role);
+    if (select) editor.draft.role = select.value;
+  }
   controls();
 }
 async function applyRole(e) {
@@ -2409,19 +2702,24 @@ async function createSession(e) {
   } catch (err) { error(err); }
   finally { creating = false; $('create-session').disabled = false; }
 }
-// A service is created from its manifest, the same text `pai service create`
-// reads. The server runs the same validation. Ticking the box pre-approves its
-// command watchers; without it each probe waits for a grant in the panel.
+// A service is created from the shared form/TOML editor. The server runs the
+// same validation either way. Ticking the box pre-approves its command watchers;
+// without it each probe waits for a grant in the panel.
 async function createService(e) {
   e.preventDefault(); if (creating) return;
   const name = $('service-name').value.trim();
-  const manifest = $('service-manifest').value;
+  let manifest;
+  try { manifest = serviceEditorManifest(serviceEditors.create); }
+  catch (err) { error(err); return; }
   if (!name) { error(new Error('Enter a service name')); return; }
-  if (!manifest.trim()) { error(new Error('Enter a manifest')); return; }
   const version = generation;
+  const body = {name, manifest, approve_commands: $('service-approve').checked};
+  const model = normalizeModel($('create-service-model').value), reasoning = $('create-service-reasoning').value;
+  if (model) body.model = model;
+  if (reasoning) body.reasoning = reasoning;
   creating = true; $('create-service').disabled = true; $('error').textContent = '';
   try {
-    const view = await api('service', {name, manifest, approve_commands: $('service-approve').checked});
+    const view = await api('service', body);
     closeCreate();
     setMode('service', {url:false, load:false});
     await sessions(true);
@@ -2434,6 +2732,8 @@ function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
 }
 // ── Event wiring ────────────────────────────────────────────
+wireServiceEditor(serviceEditors.create);
+wireServiceEditor(serviceEditors.edit);
 $('login-form').onsubmit = async e => { e.preventDefault(); try { await api('login', {token:$('token').value}); $('token').value = ''; showApp(); const list = await sessions(true); await Promise.all([roles(), models(), loadReasoning(), info().catch(() => {})]); restoreSession(list); if (selected) connect(); } catch (err) { error(err); } };
 $('model-form').onsubmit = applyModel;
 $('reasoning-form').onsubmit = applyReasoning;
