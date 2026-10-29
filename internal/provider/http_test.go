@@ -15,9 +15,10 @@ import (
 // fastRetries keeps backoff out of the test's critical path.
 func fastRetries(t *testing.T) {
 	t.Helper()
-	old := retryBase
+	oldBase, oldTimeout := retryBase, timeoutRetryWait
 	retryBase = time.Millisecond
-	t.Cleanup(func() { retryBase = old })
+	timeoutRetryWait = time.Millisecond
+	t.Cleanup(func() { retryBase, timeoutRetryWait = oldBase, oldTimeout })
 }
 
 // A provider that is briefly unavailable should be retried, invisibly.
@@ -157,10 +158,10 @@ func TestPostHonoursContextDeadline(t *testing.T) {
 	}
 }
 
-// A TLS handshake timeout is a timeout by interface, but it failed before any
-// request reached the provider. It must keep the full connection retry budget,
-// not the smaller first-byte timeout budget.
-func TestTLSHandshakeTimeoutKeepsConnectionAttempts(t *testing.T) {
+// A request timeout gets the larger, fixed-pause retry budget. A TLS handshake
+// timeout is one such failure: it happens before any request reaches the
+// provider, so trying again is safe.
+func TestRequestTimeoutUsesTimeoutBudget(t *testing.T) {
 	fastRetries(t)
 	var calls atomic.Int32
 	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
@@ -171,8 +172,8 @@ func TestTLSHandshakeTimeoutKeepsConnectionAttempts(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the handshake failure")
 	}
-	if got := calls.Load(); got != requestAttempts {
-		t.Fatalf("calls = %d, want %d", got, requestAttempts)
+	if got := calls.Load(); got != timeoutAttempts {
+		t.Fatalf("calls = %d, want %d", got, timeoutAttempts)
 	}
 }
 

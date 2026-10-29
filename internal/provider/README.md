@@ -53,14 +53,13 @@ escape without Ctrl+C, so:
 
 Transient failures are retried **before any response data is delivered**: 429,
 5xx and connection errors get up to three attempts with exponential backoff
-(0.5 s, 1 s), and a timeout gets two attempts because each already waited two
-minutes. A TLS handshake timeout is the exception: it fails during connection
-setup, before any request reaches the provider, so it keeps the three-attempt
-connection budget. The transport's TLS handshake budget is 30 s, not the stdlib
-default of 10 s, because a gateway on another continent is a normal case here.
-`Retry-After` is honoured, but a pause longer than 15 seconds is reported rather
-than sat through. A 4xx other than 429 is never retried — the request
-itself was rejected.
+(0.5 s, 1 s). A request timeout gets five attempts with a fixed 5 s pause, because
+it is usually a transport hiccup rather than a rejected request. A TLS handshake
+timeout is one of those timeouts and keeps the five-attempt budget; the transport's
+TLS handshake budget is 30 s, not the stdlib default of 10 s, because a gateway
+on another continent is a normal case here. `Retry-After` is honoured, but a
+pause longer than 15 seconds is reported rather than sat through. A 4xx other
+than 429 is never retried — the request itself was rejected.
 
 A stream that stalls *after* delivering data is reported, never replayed: the
 reader already saw part of the answer, and resending would duplicate it on

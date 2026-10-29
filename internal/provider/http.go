@@ -48,10 +48,11 @@ const (
 
 	// requestAttempts is how many times one logical request may be sent when the
 	// failure happened before any response was delivered (429, 5xx, connection
-	// error). A timeout gets fewer attempts only when it could have waited the full
-	// first-byte budget; a TLS handshake timeout fails fast and keeps all attempts.
+	// error). A request timeout gets a larger budget because it is usually a
+	// transport hiccup, not a rejected request; the pause between those attempts
+	// is fixed so a flaky link gets time to recover.
 	requestAttempts = 3
-	timeoutAttempts = 2
+	timeoutAttempts = 5
 
 	// retryMaxWait is the longest Retry-After PAI will sit out. A provider asking
 	// for more than this is telling the caller to come back later; waiting half a
@@ -61,6 +62,10 @@ const (
 
 // retryBase is a variable so tests can compress the backoff.
 var retryBase = 500 * time.Millisecond
+
+// timeoutRetryWait is the fixed pause between timeout attempts. It is a variable
+// for the same test reason as retryBase.
+var timeoutRetryWait = 5 * time.Second
 
 // Two clients, because the header budget differs by call shape. SSE sends its
 // headers before generation, so a silent stream means a dead connection. A
@@ -152,7 +157,7 @@ func postJSONStreamWith(ctx context.Context, client *http.Client, name, endpoint
 			return resp, nil
 		}
 		lastErr = err
-		if attempt == 1 && isTimeout(err) && !isHandshakeTimeout(err) {
+		if isTimeout(err) {
 			attempts = timeoutAttempts
 		}
 		// Cancelled by the caller (Ctrl+C), and errors no retry can fix: stop here.
@@ -240,6 +245,9 @@ func retryWait(attempt int, err error) (time.Duration, bool) {
 		}
 		return he.RetryAfter, true
 	}
+	if isTimeout(err) {
+		return timeoutRetryWait, true
+	}
 	d := retryBase << (attempt - 1)
 	if d > 5*time.Second {
 		d = 5 * time.Second
@@ -250,14 +258,6 @@ func retryWait(attempt int, err error) (time.Duration, bool) {
 func isTimeout(err error) bool {
 	var t interface{ Timeout() bool }
 	return errors.As(err, &t) && t.Timeout()
-}
-
-// isHandshakeTimeout identifies the fast TLS-setup failure returned by
-// net/http. It is a timeout by interface, but it did not sit through the
-// first-byte budget: no request reached the provider, so all connection
-// attempts are still available.
-func isHandshakeTimeout(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "TLS handshake timeout")
 }
 
 func parseRetryAfter(value string) time.Duration {

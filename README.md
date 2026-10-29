@@ -321,7 +321,8 @@ routing id that gateway requires; a header you set with the same name wins.
 Requests are bounded so a silent provider cannot hang the run: 2 minutes to the
 first byte of a streamed call, 90 seconds of silence inside a stream, and 10
 minutes for a non-streaming completion. Transient 429/5xx/connection failures are
-retried (up to 3 attempts, honouring `Retry-After` up to 15 seconds), and a stream
+retried (up to 3 attempts, honouring `Retry-After` up to 15 seconds); request
+timeouts get up to 5 attempts with a fixed 5-second pause. A stream
 that stalls before showing anything is retried once. A stall after output has
 appeared is reported rather than replayed, so partial answers are never
 duplicated. `Ctrl+C` cancels immediately.
