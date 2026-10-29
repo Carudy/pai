@@ -55,6 +55,9 @@ type Turn struct {
 	// Essential marks a turn the user needs preserved: replay never elides it and a
 	// summary must keep its content. It is per-turn, revocable, and persisted.
 	Essential bool `json:"essential,omitempty"`
+	// EventID links a restored user/mail turn to the durable event that produced
+	// it. It is internal bookkeeping, not conversation content.
+	EventID int64 `json:"-"`
 }
 
 // Recorder persists conversation turns. A nil Recorder means "ephemeral".

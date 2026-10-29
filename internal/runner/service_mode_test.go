@@ -61,15 +61,19 @@ type serviceTestBackend struct {
 	provider provider.Provider
 	spec     string
 
-	mu       sync.Mutex
-	events   []core.Event
-	acked    []int64
-	nacked   []int64
-	nextWake *time.Time
+	mu     sync.Mutex
+	events []core.Event
+	acked  []int64
+	nacked []int64
+	// nackDelays/nackDead record the runner's retry policy decision.
+	nackDelays []time.Duration
+	nackDead   []bool
+	nextWake   *time.Time
 	// nextEventAt is what NextEventAt reports; tests set it to model a pending
 	// retry that has no watcher timer. nextEventErr models an unreadable store.
 	nextEventAt  *time.Time
 	nextEventErr error
+	appendErr    error
 	state        string
 	status       string
 }
@@ -97,6 +101,9 @@ func (b *serviceTestBackend) PrepareWorkspace(string, string) (*config.UserConfi
 func (b *serviceTestBackend) AppendEvent(sessionID string, e core.Event) (int64, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.appendErr != nil {
+		return 0, b.appendErr
+	}
 	e.ID = int64(len(b.events) + 1)
 	e.Session = sessionID
 	b.events = append(b.events, e)
@@ -110,10 +117,12 @@ func (b *serviceTestBackend) AckEvents(_ string, ids []int64) error {
 	return nil
 }
 
-func (b *serviceTestBackend) NackEvent(_ string, id int64, _ error) error {
+func (b *serviceTestBackend) NackEvent(_ string, id int64, _ error, retryAfter time.Duration, dead bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.nacked = append(b.nacked, id)
+	b.nackDelays = append(b.nackDelays, retryAfter)
+	b.nackDead = append(b.nackDead, dead)
 	return nil
 }
 

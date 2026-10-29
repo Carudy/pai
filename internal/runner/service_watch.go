@@ -48,12 +48,7 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 		return nil, nil
 	}
 
-	type observation struct {
-		spec config.WatcherSpec
-		res  watcher.Result
-		next time.Time
-	}
-	var fired []observation
+	var events []core.Event
 	var next *time.Time
 
 	// One budget for the whole pass, so a slow probe cannot starve the events the
@@ -137,12 +132,32 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 			continue
 		}
 		nextRun := res.NextRun
+		var ev core.Event
+		if res.Fire {
+			ev = watcherEvent(id, spec, res, now)
+			if eb, ok := m.backend.(ServiceEventBackend); ok {
+				eid, err := eb.AppendEvent(id, ev)
+				if err != nil {
+					// Do not advance the watcher state before its observation is durable. If
+					// the queue write fails, the same probe stays due and retries on the next
+					// activation instead of being marked as already reported and lost.
+					next = earlier(next, &now)
+					w.emit("error", fmt.Sprintf("could not queue watcher %q: %v", ws.Name, err))
+					m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "failed",
+						Detail: "could not queue the event; probe remains due: " + err.Error(), Next: now})
+					continue
+				}
+				ev.ID = eid
+			}
+		}
 		if err := wb.SetWatcherState(ws.ID, &probeNow, &nextRun, res.State, errorText(res.Err)); err != nil {
 			w.emit("error", fmt.Sprintf("could not persist watcher %q: %v", ws.Name, err))
 		}
 		next = earlier(next, &nextRun)
 		if res.Fire {
-			fired = append(fired, observation{spec: spec, res: res, next: nextRun})
+			events = append(events, ev)
+			m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: ws.Name, Outcome: "fired",
+				Detail: watcherDetail(spec, res), Next: nextRun})
 			continue
 		}
 		outcome := "quiet"
@@ -164,23 +179,6 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 			Detail: watcherDetail(spec, res), Reason: reason, Next: nextRun})
 	}
 
-	events := make([]core.Event, 0, len(fired))
-	for _, o := range fired {
-		ev := watcherEvent(id, o.spec, o.res, now)
-		if eb, ok := m.backend.(ServiceEventBackend); ok {
-			eid, err := eb.AppendEvent(id, ev)
-			if err != nil {
-				w.emit("error", fmt.Sprintf("could not queue watcher %q: %v", o.spec.Name, err))
-				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: o.spec.Name, Outcome: "failed",
-					Detail: "could not queue the event: " + err.Error(), Next: o.next})
-				continue
-			}
-			ev.ID = eid
-		}
-		events = append(events, ev)
-		m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: o.spec.Name, Outcome: "fired",
-			Detail: watcherDetail(o.spec, o.res), Next: o.next})
-	}
 	return events, next
 }
 
@@ -401,15 +399,19 @@ func hasSubstantive(events []core.Event) bool {
 
 // mergeEvents folds b into a, dropping events a already carries by id and
 // ordering the result the same way the scheduler does.
+// mergeEvents folds b into a. For a repeated id the later occurrence wins: a
+// probe that re-queued an event updates its payload in the store, and carrying
+// the stale copy into the wake would hide the new observation.
 func mergeEvents(a, b []core.Event) []core.Event {
-	seen := make(map[int64]bool, len(a)+len(b))
+	index := make(map[int64]int, len(a)+len(b))
 	out := make([]core.Event, 0, len(a)+len(b))
 	for _, ev := range append(append([]core.Event(nil), a...), b...) {
 		if ev.ID != 0 {
-			if seen[ev.ID] {
+			if i, ok := index[ev.ID]; ok {
+				out[i] = ev
 				continue
 			}
-			seen[ev.ID] = true
+			index[ev.ID] = len(out)
 		}
 		out = append(out, ev)
 	}

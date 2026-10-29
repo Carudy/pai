@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS turns (
   content TEXT NOT NULL,
   at      INTEGER NOT NULL,
   essential INTEGER NOT NULL DEFAULT 0,
+  event_id INTEGER,
   PRIMARY KEY (name, seq)
 );
 CREATE TABLE IF NOT EXISTS turn_overrides (
@@ -80,6 +81,12 @@ CREATE TABLE IF NOT EXISTS turn_overrides (
 		}
 	}
 	if err := s.ensureColumn("turns", "essential", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("turns", "event_id", "INTEGER"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS turns_event ON turns(name, event_id) WHERE event_id IS NOT NULL`); err != nil {
 		return err
 	}
 	// Service-session columns. The immutable id is added and backfilled before the
@@ -122,6 +129,7 @@ CREATE TABLE IF NOT EXISTS events (
   last_error   TEXT
 );
 CREATE INDEX IF NOT EXISTS events_due ON events(session_id, state, available_at);
+CREATE INDEX IF NOT EXISTS events_done ON events(state, created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS events_dedup
   ON events(session_id, dedup_key) WHERE dedup_key IS NOT NULL AND state = 'pending';
 CREATE TABLE IF NOT EXISTS watchers (
@@ -142,6 +150,11 @@ CREATE TABLE IF NOT EXISTS watchers (
 	}
 	// No worker survives the process, so a lease left by a crash is pending work.
 	if err := s.ResetLeases(); err != nil {
+		return err
+	}
+	// Old delivered events are audit history, not work. Prune them at startup so
+	// a long-running service's queue does not grow without bound.
+	if err := s.pruneDoneEvents(); err != nil {
 		return err
 	}
 	// v2: events gained a numeric priority. Older rows carry 0, so backfill from
@@ -262,6 +275,15 @@ func (s *sqliteStore) Create(meta Meta) (*Session, error) {
 	return &Session{Meta: meta}, nil
 }
 
+func (s *sqliteStore) HasTurnEvent(name string, eventID int64) (bool, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(1) FROM turns WHERE name = ? AND event_id = ?`, name, eventID).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (s *sqliteStore) Get(name string) (*Session, error) {
 	var (
 		m         Meta
@@ -282,7 +304,7 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 	m.CreatedAt, m.UpdatedAt = time.Unix(createdAt, 0), time.Unix(updatedAt, 0)
 	m.NextWake = unixPtr(nextWake)
 
-	rows, err := s.db.Query(`SELECT seq, role, kind, content, at, essential FROM turns WHERE name = ? ORDER BY seq`, name)
+	rows, err := s.db.Query(`SELECT seq, role, kind, content, at, essential, event_id FROM turns WHERE name = ? ORDER BY seq`, name)
 	if err != nil {
 		return nil, err
 	}
@@ -294,12 +316,14 @@ func (s *sqliteStore) Get(name string) (*Session, error) {
 			t         core.Turn
 			at        int64
 			essential int
+			eventID   sql.NullInt64
 		)
-		if err := rows.Scan(&t.Seq, &t.Role, &t.Kind, &t.Content, &at, &essential); err != nil {
+		if err := rows.Scan(&t.Seq, &t.Role, &t.Kind, &t.Content, &at, &essential, &eventID); err != nil {
 			return nil, err
 		}
 		t.At = time.Unix(at, 0)
 		t.Essential = essential != 0
+		t.EventID = eventID.Int64
 		sess.Turns = append(sess.Turns, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -411,8 +435,8 @@ func (s *sqliteStore) Append(name string, turns ...core.Turn) error {
 			at = now
 		}
 		if _, err := tx.Exec(
-			`INSERT INTO turns(name, seq, role, kind, content, at, essential) VALUES(?, ?, ?, ?, ?, ?, ?)`,
-			name, seq, t.Role, t.Kind, t.Content, at.Unix(), boolInt(t.Essential)); err != nil {
+			`INSERT INTO turns(name, seq, role, kind, content, at, essential, event_id) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+			name, seq, t.Role, t.Kind, t.Content, at.Unix(), boolInt(t.Essential), nullableInt(t.EventID)); err != nil {
 			return err
 		}
 	}
@@ -523,6 +547,13 @@ func boolInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func nullableInt(n int64) any {
+	if n == 0 {
+		return nil
+	}
+	return n
 }
 
 // turnExists reports whether the named session holds that turn, distinguishing

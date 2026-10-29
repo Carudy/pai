@@ -1118,7 +1118,10 @@ function paintService() {
   }
   for (const ev of queued) {
     const row = text('div', '', 'queue-row');
-    row.append(text('span', ev.class || 'event', 'queue-class'));
+    const dead = ev.state === 'dead';
+    const cls = text('span', (ev.class || 'event') + (dead ? ' · dead' : ''), 'queue-class');
+    if (dead) cls.classList.toggle('error', true);
+    row.append(cls);
     row.append(text('span', ev.priority ? 'p' + ev.priority : '—', 'queue-priority'));
     row.append(text('span', ev.source || '—', 'queue-source'));
     row.append(text('span', formatTimeExact(ev.at) || '—', 'queue-time'));

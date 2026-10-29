@@ -44,13 +44,17 @@ See the [module map](../organization.md) for the storage adapter boundary.
   `core.Event` queue, and its watchers. Events use states
   `pending/leased/done/dead`; a lease left by a crash is reset to pending on the
   next open, and a dedupe key replaces an existing pending event rather than
-  stacking duplicates. Events are ordered by `priority` descending (bigger is
+  stacking duplicates. Delivered (`done`) events older than 30 days are pruned
+  when the store opens and after an ack; dead-lettered events stay visible for
+  inspection. Events are ordered by `priority` descending (bigger is
   more urgent), then deadline and arrival; `DueEvents` only returns work whose
-  retry time has arrived, while `QueuedEvents` also lists leased work for
-  inspection. `NextEventAt` reports the earliest pending retry so a nacked event
+  retry time has arrived, while `QueuedEvents` also lists leased and dead work
+  for inspection. `NextEventAt` reports the earliest pending retry so a nacked event
   can schedule the next wake instead of leaving the session idle. Watchers are
   keyed by `(session_id, name)` and keep their last observed state, next run, and
-  last error.
+  last error. A user/mail turn records its originating event in
+  `turns.event_id`; `HasTurnEvent` lets a restarted service skip re-recording an
+  event whose turn was already written.
 - State changes (`SetServiceState`, `SetNextWake`, `SetUsage`) deliberately leave
   `updated_at` alone: a timer probe must not reorder the session list every cycle.
 - `ServiceInfo` adds the status document and manifest spec to `Meta`, so listing

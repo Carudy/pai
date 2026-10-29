@@ -112,7 +112,10 @@ type Backend interface {
 type ServiceEventBackend interface {
 	AppendEvent(sessionID string, e core.Event) (int64, error)
 	AckEvents(sessionID string, ids []int64) error
-	NackEvent(sessionID string, id int64, cause error) error
+	// NackEvent returns an event to pending with retryAfter, or moves it to the
+	// dead state when dead is true. The runner owns the retry policy; the backend
+	// only persists the decision.
+	NackEvent(sessionID string, id int64, cause error, retryAfter time.Duration, dead bool) error
 	DueEvents(sessionID string, now time.Time, limit int) ([]core.Event, error)
 	// NextEventAt is the earliest pending retry time (zero/false when none). The
 	// scheduler uses it so a nacked or recovered event always schedules its own
@@ -179,6 +182,9 @@ type QueuedEvent struct {
 	At       time.Time `json:"at"`
 	Deadline time.Time `json:"deadline"`
 	Attempts int       `json:"attempts,omitempty"`
+	// State is pending, leased, or dead. Dead entries stay visible for inspection
+	// instead of disappearing with the pending queue.
+	State string `json:"state,omitempty"`
 }
 
 // ServiceView is the projection a client needs to inspect one resident session:

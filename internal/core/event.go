@@ -116,6 +116,9 @@ type Event struct {
 	At       time.Time
 	Deadline time.Time // zero means no deadline
 	Attempts int
+	// State is inspection-only (pending/leased/dead). Wake events leave it empty;
+	// QueuedEvents fills it so the service view can show a dead-lettered item.
+	State string
 }
 
 // EffectivePriority resolves Priority, falling back to the class band.

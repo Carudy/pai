@@ -128,7 +128,7 @@ func (s *sqliteStore) DueEvents(sessionID string, now time.Time, limit int) ([]c
 	}
 	rows, err := s.db.Query(`
 SELECT id, session_id, class, priority, kind, source, payload, COALESCE(dedup_key, ''),
-       created_at, deadline, attempts
+       created_at, deadline, attempts, state
 FROM events
 WHERE session_id = ? AND state = 'pending' AND available_at <= ?
 ORDER BY priority DESC, (deadline IS NULL), deadline, created_at, id
@@ -140,18 +140,19 @@ LIMIT ?`, sessionID, now.Unix(), limit)
 }
 
 // QueuedEvents lists what is waiting, including events whose retry time has not
-// arrived and events leased by a worker. The scheduler only ever acts on
-// DueEvents; this is for inspection.
+// arrived, events leased by a worker, and dead-lettered events. The scheduler
+// only ever acts on DueEvents; this is for inspection. Pending work sorts first
+// so a pile of dead letters cannot hide a live item.
 func (s *sqliteStore) QueuedEvents(sessionID string, limit int) ([]core.Event, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	rows, err := s.db.Query(`
 SELECT id, session_id, class, priority, kind, source, payload, COALESCE(dedup_key, ''),
-       created_at, deadline, attempts
+       created_at, deadline, attempts, state
 FROM events
-WHERE session_id = ? AND state IN ('pending', 'leased')
-ORDER BY priority DESC, (deadline IS NULL), deadline, created_at, id
+WHERE session_id = ? AND state IN ('pending', 'leased', 'dead')
+ORDER BY (state = 'dead'), priority DESC, (deadline IS NULL), deadline, created_at, id
 LIMIT ?`, sessionID, limit)
 	if err != nil {
 		return nil, err
@@ -170,7 +171,7 @@ func scanEvents(rows *sql.Rows) ([]core.Event, error) {
 			deadline sql.NullInt64
 		)
 		if err := rows.Scan(&ev.ID, &ev.Session, &class, &ev.Priority, &ev.Kind, &ev.Source, &ev.Payload,
-			&ev.DedupKey, &created, &deadline, &ev.Attempts); err != nil {
+			&ev.DedupKey, &created, &deadline, &ev.Attempts, &ev.State); err != nil {
 			return nil, err
 		}
 		ev.Class = core.EventClass(class)
@@ -191,13 +192,27 @@ func (s *sqliteStore) LeaseEvents(ids []int64, until time.Time) error {
 	return err
 }
 
+// doneEventRetention is how long delivered events stay in the table for
+// inspection. Pending, leased, and dead events are never pruned.
+const doneEventRetention = 30 * 24 * time.Hour
+
+func (s *sqliteStore) pruneDoneEvents() error {
+	_, err := s.db.Exec(`DELETE FROM events WHERE state = 'done' AND created_at < ?`,
+		time.Now().Add(-doneEventRetention).Unix())
+	return err
+}
+
 func (s *sqliteStore) AckEvents(ids []int64) error {
 	if len(ids) == 0 {
 		return nil
 	}
 	query := `UPDATE events SET state = 'done', lease_until = NULL WHERE id IN (` + idPlaceholders(len(ids)) + `)`
-	_, err := s.db.Exec(query, idValues(ids)...)
-	return err
+	if _, err := s.db.Exec(query, idValues(ids)...); err != nil {
+		return err
+	}
+	// Best-effort: pruning is housekeeping, not part of acknowledging the wake.
+	_ = s.pruneDoneEvents()
+	return nil
 }
 
 // NackEvent returns an event to pending, or moves it to dead when the caller has

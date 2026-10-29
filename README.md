@@ -703,14 +703,17 @@ A user instruction is an immediate wake, not a wait for the next timer. The
 head-of-activation probe pass is deferred for that wake, so the reply is not
 queued behind commands; the deferred probes run on the following activation. The
 instruction is recorded as a user turn, so it stays in the transcript and in the
-history the model reads later.
+history the model reads later. That turn carries the originating event id, so a
+crash between recording and acknowledging cannot make a restart record it twice.
 
 There is no periodic "check for messages" timer. Queued work drives the
 schedule: after every activation PAI folds the earliest pending retry into the
 next wake, and a restart does the same at startup. A queue read that fails is
 treated as a retry, not as "nothing pending", so a transient store error cannot
-strand work until an unrelated message arrives. Stopping a service is the only
-state that intentionally leaves queued events waiting.
+strand work until an unrelated message arrives. A failed activation backs off
+(30s, 2m, 10m, 30m, then 1h) and is dead-lettered after the fifth retry; the dead
+entry stays visible in the Queue instead of retrying forever. Stopping a service
+is the only state that intentionally leaves queued events waiting.
 
 ### Probe contract
 
@@ -773,7 +776,8 @@ confirmations still apply. Delivery rejects self-mail, unknown targets, and
 oversized messages, and bounds a mailbox's due peer events as cheap
 backpressure. Only roles that list `mail` can send; any resident session can
 receive. `pai service show` and the web panel's **Queue** section list pending
-mail and probe events, including ones waiting for a retry.
+mail and probe events, including ones waiting for a retry, and dead-lettered
+events are marked as such.
 
 ## 🌐 Browser / server mode
 

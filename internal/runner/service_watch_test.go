@@ -506,8 +506,10 @@ func (b *multiServiceBackend) AppendEvent(_ string, _ core.Event) (int64, error)
 	return int64(b.events), nil
 }
 
-func (b *multiServiceBackend) AckEvents(string, []int64) error      { return nil }
-func (b *multiServiceBackend) NackEvent(string, int64, error) error { return nil }
+func (b *multiServiceBackend) AckEvents(string, []int64) error { return nil }
+func (b *multiServiceBackend) NackEvent(string, int64, error, time.Duration, bool) error {
+	return nil
+}
 func (b *multiServiceBackend) DueEvents(string, time.Time, int) ([]core.Event, error) {
 	return nil, nil
 }
@@ -660,6 +662,75 @@ func TestWorkerForwardsFormatDiagnostics(t *testing.T) {
 	case d := <-diags:
 		t.Fatalf("full model output leaked into diagnostics: %+v", d)
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+// A failed activation backs off instead of waking every 30s forever. The last
+// attempt dead-letters the event so the service can go quiet and the operator can
+// inspect it in the queue.
+func TestEventRetryBacksOffThenDeadLetters(t *testing.T) {
+	m, backend := newWatchService(t, &serviceTestProvider{done: make(chan int, 1)})
+	w := &worker{m: m, sessionID: "sid-w"}
+	wake := core.Wake{Events: []core.Event{
+		{ID: 1, Source: "watch:quick", Attempts: 0},
+		{ID: 2, Source: "watch:dead", Attempts: 5},
+	}}
+	if err := w.ackWake(wake, errors.New("provider down")); err != nil {
+		t.Fatal(err)
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if len(backend.nackDelays) != 2 || backend.nackDelays[0] != 30*time.Second || backend.nackDelays[1] != 0 {
+		t.Fatalf("delays = %v", backend.nackDelays)
+	}
+	if len(backend.nackDead) != 2 || backend.nackDead[0] || !backend.nackDead[1] {
+		t.Fatalf("dead = %v", backend.nackDead)
+	}
+}
+
+// A probe whose event cannot be queued must stay due: advancing the watcher
+// state first would mark the observation as already reported and silently lose it.
+func TestProbeQueueFailureKeepsWatcherDue(t *testing.T) {
+	past := time.Now().Add(-time.Minute)
+	spec := config.WatcherSpec{Name: "tick", Interval: time.Minute}
+	fp := &serviceTestProvider{done: make(chan int, 1)}
+	backend := &watchTestBackend{
+		serviceTestBackend: &serviceTestBackend{
+			meta:      Meta{Name: "svc", ID: "sid-w", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
+			provider:  fp,
+			spec:      `{"goal":"g","role":"devops","workspace":"/w"}`,
+			appendErr: errors.New("database is locked"),
+		},
+		watchers: []WatcherState{{
+			ID: "w1", SessionID: "sid-w", Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
+			Enabled: true, NextRun: &past,
+		}},
+	}
+	m := New(context.Background(), backend, 2)
+	t.Cleanup(m.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	next, err := m.Activate(ctx, "svc", clockWake())
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if next == nil || next.After(time.Now()) {
+		t.Fatalf("next = %v, want the probe due immediately", next)
+	}
+	w := backend.watcher(t, spec.Name)
+	if w.LastRun != nil || w.LastState != "" {
+		t.Fatalf("watcher advanced despite the queue failure: %+v", w)
+	}
+}
+
+// A probe may refresh a pending event whose id is already in the recovered due
+// set. The wake must carry the refreshed payload, not the stale copy.
+func TestMergeEventsPrefersNewestPayload(t *testing.T) {
+	old := core.Event{ID: 7, Class: core.EventWatcher, Priority: 50, Payload: "old"}
+	fresh := core.Event{ID: 7, Class: core.EventWatcher, Priority: 50, Payload: "fresh"}
+	got := mergeEvents([]core.Event{old}, []core.Event{fresh})
+	if len(got) != 1 || got[0].Payload != "fresh" {
+		t.Fatalf("merged = %+v, want the fresh payload", got)
 	}
 }
 

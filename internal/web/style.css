@@ -2685,6 +2685,10 @@ header p {
     font-weight: 650;
 }
 
+.queue-class.error {
+    color: var(--red);
+}
+
 .queue-priority {
     color: var(--muted);
     font-weight: 650;

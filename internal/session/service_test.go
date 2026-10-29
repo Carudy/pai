@@ -42,6 +42,31 @@ func TestCreateAssignsImmutableID(t *testing.T) {
 	}
 }
 
+func TestTurnEventIDIsDurable(t *testing.T) {
+	s := openSQLiteStore(t)
+	if _, err := s.Create(Meta{Name: "svc", Role: "devops", Model: "test:model", Cwd: "/w", Mode: "service"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Append("svc", core.Turn{Role: "user", Kind: core.KindInput, Content: "check", EventID: 42}); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := s.HasTurnEvent("svc", 42)
+	if err != nil || !ok {
+		t.Fatalf("HasTurnEvent = %v, %v; want true", ok, err)
+	}
+	ok, err = s.HasTurnEvent("svc", 99)
+	if err != nil || ok {
+		t.Fatalf("HasTurnEvent(99) = %v, %v; want false", ok, err)
+	}
+	got, err := s.Get("svc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Turns) != 1 || got.Turns[0].EventID != 42 {
+		t.Fatalf("turns = %+v", got.Turns)
+	}
+}
+
 // A database created before the identity columns existed gains them on open, and
 // the backfilled id is stable across reopens.
 func TestOldDatabaseGainsIdentityAndServiceColumns(t *testing.T) {
@@ -314,6 +339,28 @@ func TestQueuedEventsShowsWaitingWork(t *testing.T) {
 	}
 }
 
+func TestOldDoneEventsArePruned(t *testing.T) {
+	s := openSQLiteStore(t)
+	created, err := s.Create(Meta{Name: "svc", Role: "devops", Model: "test:model", Mode: "service"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.AppendEvent(core.Event{Session: created.Meta.ID, Class: core.EventUser, Kind: "test", Source: "user", At: time.Now().Add(-31 * 24 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AckEvents([]int64{id}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(1) FROM events WHERE id = ?`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("old done event was not pruned: %d rows", n)
+	}
+}
+
 func TestNackRetriesThenDies(t *testing.T) {
 	s := openSQLiteStore(t)
 	created, err := s.Create(Meta{Name: "svc", Role: "devops", Model: "test:model", Mode: "service"})
@@ -341,6 +388,10 @@ func TestNackRetriesThenDies(t *testing.T) {
 	}
 	if n, err := s.PendingEvents(created.Meta.ID); err != nil || n != 0 {
 		t.Fatalf("dead event counted as pending: %d, %v", n, err)
+	}
+	queued, err := s.QueuedEvents(created.Meta.ID, 10)
+	if err != nil || len(queued) != 1 || queued[0].State != "dead" || queued[0].Attempts != 2 {
+		t.Fatalf("queued = %+v, %v; want the dead event", queued, err)
 	}
 }
 

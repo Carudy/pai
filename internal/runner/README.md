@@ -35,7 +35,10 @@ when the queue has more, it returns `next = now` so the scheduler keeps draining
 rather than waiting for the next timer. After every activation the earliest
 pending retry (`NextEventAt`) is folded into the next wake, so a nacked or
 recovered event cannot leave the session idle until an unrelated message. A
-failed queue read is treated as a retry, never as an empty queue. Queue order is
+failed queue read is treated as a retry, never as an empty queue. Failed
+activations back off (30s, 2m, 10m, 30m, then 1h) and are dead-lettered after
+the fifth retry; the dead entry stays visible in the service queue rather than
+being retried forever. Queue order is
 numeric: `Event.Priority`
 descending (bigger is more urgent), with class defaults ranging from safety 100
 to telemetry 10; a probe's manifest `priority` overrides its watcher/timer

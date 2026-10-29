@@ -134,6 +134,15 @@ func NewRecorder(store Store, name string) *Recorder {
 
 func (r *Recorder) AppendTurn(t core.Turn) error { return r.store.Append(r.name, t) }
 
+// HasTurnEvent reports whether this session already recorded the turn produced
+// by a durable event.
+func (r *Recorder) HasTurnEvent(eventID int64) (bool, error) {
+	if eventID == 0 {
+		return false, nil
+	}
+	return r.store.HasTurnEvent(r.name, eventID)
+}
+
 // SetUsage records the last request's token accounting, which is what calibrates the
 // token estimate (see Meta.TokenScale).
 func (r *Recorder) SetUsage(reported, estimate int) error {

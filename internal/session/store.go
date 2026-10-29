@@ -15,6 +15,9 @@ type Store interface {
 	List() ([]Meta, error)
 	// Append adds turns to an existing session, or ErrNotFound.
 	Append(name string, turns ...core.Turn) error
+	// HasTurnEvent reports whether a turn was already recorded for a durable event,
+	// so a recovered user/mail event is not appended twice after a crash.
+	HasTurnEvent(name string, eventID int64) (bool, error)
 	// SetModel updates metadata without changing conversation history.
 	SetModel(name, model string) error
 	// SetUsage records the last request's reported prompt size and the estimate PAI

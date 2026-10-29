@@ -206,10 +206,10 @@ func serviceShow(name string, stdout io.Writer, log *tui.Logger) int {
 	if queued, err := ss.QueuedEvents(info.ID, 20); err == nil && len(queued) > 0 {
 		fmt.Fprintln(stdout, "queue:")
 		tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "  CLASS\tPRIORITY\tSOURCE\tAT\tATTEMPTS\tDETAIL")
+		fmt.Fprintln(tw, "  STATE\tCLASS\tPRIORITY\tSOURCE\tAT\tATTEMPTS\tDETAIL")
 		for _, ev := range queued {
-			fmt.Fprintf(tw, "  %s\t%d\t%s\t%s\t%d\t%s\n",
-				ev.Class, ev.Priority, ev.Source, formatWake(&ev.At), ev.Attempts,
+			fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\t%s\t%d\t%s\n",
+				emptyOr(ev.State, "-"), ev.Class, ev.Priority, ev.Source, formatWake(&ev.At), ev.Attempts,
 				emptyOr(clip(strings.TrimSpace(ev.Payload), 60), "-"))
 		}
 		if err := tw.Flush(); err != nil {

@@ -20,6 +20,26 @@ type serviceResult struct {
 	err error
 }
 
+// eventRetryDelays is the backoff for a failed activation. It is bounded: a
+// permanently broken model/provider call must not wake the service every 30s
+// forever. The first retry is quick (the common transient case); later retries
+// are slow enough to be cheap. After the last delay the event is dead-lettered
+// and stays visible in the service queue.
+var eventRetryDelays = []time.Duration{
+	30 * time.Second,
+	2 * time.Minute,
+	10 * time.Minute,
+	30 * time.Minute,
+	time.Hour,
+}
+
+func eventRetryPolicy(attempt int) (time.Duration, bool) {
+	if attempt > 0 && attempt <= len(eventRetryDelays) {
+		return eventRetryDelays[attempt-1], false
+	}
+	return 0, true
+}
+
 // StartServices registers every persisted service with the scheduler. Chat
 // sessions are untouched. It is called once by the composition root after the
 // manager is built.
@@ -631,22 +651,30 @@ func (w *worker) ackWake(wake core.Wake, cause error) error {
 	if !ok || w.sessionID == "" {
 		return nil
 	}
-	ids := make([]int64, 0, len(wake.Events))
-	for _, ev := range wake.Events {
-		if ev.ID != 0 {
-			ids = append(ids, ev.ID)
-		}
-	}
-	if len(ids) == 0 {
-		return nil
-	}
 	if cause == nil {
+		ids := make([]int64, 0, len(wake.Events))
+		for _, ev := range wake.Events {
+			if ev.ID != 0 {
+				ids = append(ids, ev.ID)
+			}
+		}
+		if len(ids) == 0 {
+			return nil
+		}
 		return eb.AckEvents(w.sessionID, ids)
 	}
 	var first error
-	for _, id := range ids {
-		if err := eb.NackEvent(w.sessionID, id, cause); err != nil && first == nil {
+	for _, ev := range wake.Events {
+		if ev.ID == 0 {
+			continue
+		}
+		delay, dead := eventRetryPolicy(ev.Attempts + 1)
+		if err := eb.NackEvent(w.sessionID, ev.ID, cause, delay, dead); err != nil && first == nil {
 			first = err
+		}
+		if dead {
+			w.m.diag(Diagnostic{Session: w.name, Kind: "event", Outcome: "dead-lettered",
+				Detail: fmt.Sprintf("%s after %d attempts: %s", ev.Source, ev.Attempts+1, boundedPayload(cause.Error(), "activation failed"))})
 		}
 	}
 	return first

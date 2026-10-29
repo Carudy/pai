@@ -116,6 +116,18 @@ func recordDirectInput(rt *Runtime, conv *conversation, events []core.Event, del
 				continue
 			}
 			delivered[ev.ID] = true
+			// A crash after recording the turn but before acking the event leaves the
+			// event pending. The in-memory map is empty after a restart, so ask the
+			// recorder whether this event's turn is already durable.
+			if rec, ok := rt.Recorder.(interface{ HasTurnEvent(int64) (bool, error) }); ok {
+				if exists, err := rec.HasTurnEvent(ev.ID); err != nil {
+					if rt.Logger != nil {
+						rt.Logger.Errorf("checking delivered event %d: %v\n", ev.ID, err)
+					}
+				} else if exists {
+					continue
+				}
+			}
 		}
 		if n := len(conv.history); n > 0 {
 			last := conv.history[n-1]
@@ -126,7 +138,7 @@ func recordDirectInput(rt *Runtime, conv *conversation, events []core.Event, del
 		conv.history = append(conv.history, provider.Message{
 			Role: provider.RoleUser, Kind: core.KindInput, Content: text,
 		})
-		rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: text})
+		rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: text, EventID: ev.ID})
 	}
 }
 

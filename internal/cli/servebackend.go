@@ -73,7 +73,7 @@ func (b *serveBackend) AckEvents(_ string, ids []int64) error {
 	return store.AckEvents(ids)
 }
 
-func (b *serveBackend) NackEvent(_ string, id int64, cause error) error {
+func (b *serveBackend) NackEvent(_ string, id int64, cause error, retryAfter time.Duration, dead bool) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	store, err := b.serviceStore()
@@ -84,9 +84,7 @@ func (b *serveBackend) NackEvent(_ string, id int64, cause error) error {
 	if cause != nil {
 		msg = cause.Error()
 	}
-	// A failed activation is retried after a short backoff; the durable attempts
-	// count is there for a later dead-letter policy.
-	return store.NackEvent(id, time.Now().Add(30*time.Second), msg, false)
+	return store.NackEvent(id, time.Now().Add(retryAfter), msg, dead)
 }
 
 func (b *serveBackend) DueEvents(sessionID string, now time.Time, limit int) ([]core.Event, error) {
@@ -188,7 +186,7 @@ func (b *serveBackend) serviceViewLocked(name string) (runner.ServiceView, error
 	for _, ev := range queued {
 		view.Queue = append(view.Queue, runner.QueuedEvent{
 			ID: ev.ID, Class: ev.Class.String(), Kind: ev.Kind, Source: ev.Source,
-			Payload: ev.Payload, At: ev.At, Deadline: ev.Deadline, Attempts: ev.Attempts,
+			Payload: ev.Payload, At: ev.At, Deadline: ev.Deadline, Attempts: ev.Attempts, State: ev.State,
 		})
 	}
 	return view, nil
@@ -890,6 +888,12 @@ func (r *serveRecorder) AppendTurn(t core.Turn) error {
 		return fmt.Errorf("append session turn: %w", err)
 	}
 	return nil
+}
+
+func (r *serveRecorder) HasTurnEvent(eventID int64) (bool, error) {
+	r.backend.mu.Lock()
+	defer r.backend.mu.Unlock()
+	return r.backend.store.HasTurnEvent(r.name, eventID)
 }
 
 // SetUsage persists the token accounting the estimate is calibrated from.
