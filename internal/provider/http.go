@@ -41,9 +41,15 @@ const (
 	// limit can stop a dead call.
 	nonStreamTimeout = 10 * time.Minute
 
+	// tlsHandshakeTimeout is the transport's own connection budget. The stdlib
+	// default is 10 seconds, which is short for a gateway on another continent; a
+	// failure here happens before any request was sent, so it is safe to retry.
+	tlsHandshakeTimeout = 30 * time.Second
+
 	// requestAttempts is how many times one logical request may be sent when the
 	// failure happened before any response was delivered (429, 5xx, connection
-	// error). A timeout gets fewer attempts: each one already waited 2 minutes.
+	// error). A timeout gets fewer attempts only when it could have waited the full
+	// first-byte budget; a TLS handshake timeout fails fast and keeps all attempts.
 	requestAttempts = 3
 	timeoutAttempts = 2
 
@@ -75,6 +81,7 @@ func newHTTPClient(headerTimeout time.Duration) *http.Client {
 	// stdlib defaults; only the budgets change.
 	t := base.Clone()
 	t.ResponseHeaderTimeout = headerTimeout
+	t.TLSHandshakeTimeout = tlsHandshakeTimeout
 	return &http.Client{Transport: t}
 }
 
@@ -145,7 +152,7 @@ func postJSONStreamWith(ctx context.Context, client *http.Client, name, endpoint
 			return resp, nil
 		}
 		lastErr = err
-		if attempt == 1 && isTimeout(err) {
+		if attempt == 1 && isTimeout(err) && !isHandshakeTimeout(err) {
 			attempts = timeoutAttempts
 		}
 		// Cancelled by the caller (Ctrl+C), and errors no retry can fix: stop here.
@@ -243,6 +250,14 @@ func retryWait(attempt int, err error) (time.Duration, bool) {
 func isTimeout(err error) bool {
 	var t interface{ Timeout() bool }
 	return errors.As(err, &t) && t.Timeout()
+}
+
+// isHandshakeTimeout identifies the fast TLS-setup failure returned by
+// net/http. It is a timeout by interface, but it did not sit through the
+// first-byte budget: no request reached the provider, so all connection
+// attempts are still available.
+func isHandshakeTimeout(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "TLS handshake timeout")
 }
 
 func parseRetryAfter(value string) time.Duration {

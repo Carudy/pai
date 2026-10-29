@@ -157,6 +157,34 @@ func TestPostHonoursContextDeadline(t *testing.T) {
 	}
 }
 
+// A TLS handshake timeout is a timeout by interface, but it failed before any
+// request reached the provider. It must keep the full connection retry budget,
+// not the smaller first-byte timeout budget.
+func TestTLSHandshakeTimeoutKeepsConnectionAttempts(t *testing.T) {
+	fastRetries(t)
+	var calls atomic.Int32
+	client := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return nil, handshakeTimeoutErr{}
+	})}
+	_, err := postJSONStreamWith(context.Background(), client, "test", "https://example.invalid", "k", nil, []byte(`{}`), 0)
+	if err == nil {
+		t.Fatal("expected the handshake failure")
+	}
+	if got := calls.Load(); got != requestAttempts {
+		t.Fatalf("calls = %d, want %d", got, requestAttempts)
+	}
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type handshakeTimeoutErr struct{}
+
+func (handshakeTimeoutErr) Error() string { return "net/http: TLS handshake timeout" }
+func (handshakeTimeoutErr) Timeout() bool { return true }
+
 func TestParseRetryAfter(t *testing.T) {
 	if got := parseRetryAfter("7"); got != 7*time.Second {
 		t.Errorf("seconds = %v", got)

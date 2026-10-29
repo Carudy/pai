@@ -238,31 +238,40 @@ func parseResponses(raw []byte) (*ChatCompletion, error) {
 	}
 
 	text, reasoning := responsesParts(&r)
-	choice := Choice{Index: 0, Message: Message{Role: RoleAssistant, Content: text}}
+	choice := Choice{Index: 0, Message: Message{Role: RoleAssistant, Content: text}, FinishReason: responsesFinishReason(&r)}
 	if reasoning != "" {
 		choice.Reasoning = &Reasoning{Content: reasoning}
-	}
-	if r.Status == "completed" || r.Status == "" {
-		choice.FinishReason = FinishReasonStop
 	}
 	return &ChatCompletion{ID: r.ID, Choices: []Choice{choice}, Usage: responsesToUsage(r.Usage)}, nil
 }
 
-// responsesStatusError turns a failed or truncated response into an error rather
-// than a half-parsed success; the caller feeds the error back to the model.
+// responsesFinishReason maps the Responses status onto the same vocabulary as
+// chat completions. Incomplete is not a transport failure: the provider returned
+// whatever it managed to generate, and the reason tells the parser whether a
+// token cap, a content filter, or something else stopped it.
+func responsesFinishReason(r *rawResponses) string {
+	if r.Status == "incomplete" {
+		if r.IncompleteDetails != nil && r.IncompleteDetails.Reason != "" {
+			return r.IncompleteDetails.Reason
+		}
+		return FinishReasonIncomplete
+	}
+	if r.Status == "completed" || r.Status == "" {
+		return FinishReasonStop
+	}
+	return ""
+}
+
+// responsesStatusError turns a failed response into an error. An incomplete
+// response is not an error here: its partial content and incomplete reason are
+// returned to the parser, which can retry with a smaller answer instead of
+// discarding what the model already produced.
 func responsesStatusError(r *rawResponses) error {
 	if r.Error != nil && r.Error.Message != "" {
 		return fmt.Errorf("responses API (%s): %s", r.Error.Code, r.Error.Message)
 	}
-	switch r.Status {
-	case "failed":
+	if r.Status == "failed" {
 		return errors.New("responses API: request failed")
-	case "incomplete":
-		reason := "unknown"
-		if r.IncompleteDetails != nil && r.IncompleteDetails.Reason != "" {
-			reason = r.IncompleteDetails.Reason
-		}
-		return fmt.Errorf("responses API: response incomplete (%s)", reason)
 	}
 	return nil
 }
@@ -332,7 +341,23 @@ func responsesStreamReader(_ context.Context, resp *http.Response, spec provider
 			chunkChan <- ChatCompletionChunk{Choices: []ChunkChoice{{FinishReason: FinishReasonStop}}}
 			errChan <- nil
 			return
-		case "response.failed", "response.incomplete", "error":
+		case "response.incomplete":
+			// Keep the deltas already forwarded and label why generation ended, so
+			// the parser can retry a too-large answer instead of turning it into a
+			// terminal provider error.
+			reason := FinishReasonIncomplete
+			if ev.Response != nil {
+				if ev.Response.Usage != nil {
+					chunkChan <- ChatCompletionChunk{Usage: responsesToUsage(ev.Response.Usage)}
+				}
+				if ev.Response.IncompleteDetails != nil && ev.Response.IncompleteDetails.Reason != "" {
+					reason = ev.Response.IncompleteDetails.Reason
+				}
+			}
+			chunkChan <- ChatCompletionChunk{Choices: []ChunkChoice{{FinishReason: reason}}}
+			errChan <- nil
+			return
+		case "response.failed", "error":
 			errChan <- responsesEventError(ev)
 			return
 		}
@@ -360,11 +385,6 @@ func responsesEventError(ev rawResponsesEvent) error {
 		return fmt.Errorf("responses API (%s): %s", ev.Response.Error.Code, ev.Response.Error.Message)
 	case ev.Code != "" || ev.Message != "":
 		return fmt.Errorf("responses API (%s): %s", ev.Code, ev.Message)
-	case ev.Type == "response.incomplete":
-		if ev.Response != nil && ev.Response.IncompleteDetails != nil && ev.Response.IncompleteDetails.Reason != "" {
-			return fmt.Errorf("responses API: response incomplete (%s)", ev.Response.IncompleteDetails.Reason)
-		}
-		return errors.New("responses API: response incomplete")
 	}
 	return errors.New("responses API: request failed")
 }

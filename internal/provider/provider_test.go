@@ -333,22 +333,49 @@ func TestResponsesStreamUsage(t *testing.T) {
 	}
 }
 
+// An incomplete Responses object is not a terminal error: keep the output it did
+// produce and carry the reason, so the parser can retry a too-large answer.
+func TestResponsesIncompleteKeepsPartialContent(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"id":"r1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","content":[{"type":"output_text","text":"partial"}]}],"usage":{"input_tokens":10,"output_tokens":8000,"total_tokens":8010}}`)
+	}))
+	defer srv.Close()
+
+	p, err := CreateClient(ProviderConfig{Name: "openai", Model: "m", Protocol: ProtocolResponses, BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cc, err := p.Completion(context.Background(), CompletionParams{Messages: []Message{{Role: RoleUser, Content: "go"}}})
+	if err != nil {
+		t.Fatalf("Completion: %v", err)
+	}
+	if len(cc.Choices) != 1 || cc.Choices[0].Message.Content != "partial" {
+		t.Fatalf("choices = %+v", cc.Choices)
+	}
+	if cc.Choices[0].FinishReason != "max_output_tokens" {
+		t.Fatalf("finish reason = %q", cc.Choices[0].FinishReason)
+	}
+	if cc.Usage == nil || cc.Usage.CompletionTokens != 8000 {
+		t.Fatalf("usage = %+v", cc.Usage)
+	}
+}
+
 func TestResponsesStreamTerminators(t *testing.T) {
 	cases := []struct {
-		name      string
-		frames    string
-		wantErr   string
-		wantClean bool
+		name       string
+		frames     string
+		wantErr    string
+		wantFinish string
 	}{
 		{
-			name:      "chat-style [DONE] without a terminal event is marked incomplete",
-			frames:    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\ndata: [DONE]\n\n",
-			wantClean: true,
+			name:       "chat-style [DONE] without a terminal event is marked incomplete",
+			frames:     "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\ndata: [DONE]\n\n",
+			wantFinish: FinishReasonIncomplete,
 		},
 		{
-			name:      "socket EOF without a terminal event is marked incomplete",
-			frames:    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n",
-			wantClean: true,
+			name:       "socket EOF without a terminal event is marked incomplete",
+			frames:     "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n",
+			wantFinish: FinishReasonIncomplete,
 		},
 		{
 			name:    "response.failed",
@@ -361,9 +388,9 @@ func TestResponsesStreamTerminators(t *testing.T) {
 			wantErr: "slow down",
 		},
 		{
-			name:    "incomplete",
-			frames:  "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n",
-			wantErr: "max_output_tokens",
+			name:       "incomplete keeps partial content and names the cap",
+			frames:     "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\ndata: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n",
+			wantFinish: "max_output_tokens",
 		},
 	}
 	for _, tc := range cases {
@@ -384,12 +411,12 @@ func TestResponsesStreamTerminators(t *testing.T) {
 				}
 			}
 			err := <-errs
-			if tc.wantClean {
+			if tc.wantFinish != "" {
 				if err != nil {
-					t.Fatalf("error = %v, want clean end", err)
+					t.Fatalf("error = %v, want a finish reason", err)
 				}
-				if finishReason != FinishReasonIncomplete {
-					t.Fatalf("finish reason = %q, want %q", finishReason, FinishReasonIncomplete)
+				if finishReason != tc.wantFinish {
+					t.Fatalf("finish reason = %q, want %q", finishReason, tc.wantFinish)
 				}
 				return
 			}
