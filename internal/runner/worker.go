@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Carudy/pai/internal/config"
@@ -427,10 +428,23 @@ func (w *worker) ToolResult(r core.ToolResult) {
 	w.phase = "waiting_model"
 	w.emitLocked("tool_result", r)
 }
-func (w *worker) Notice(s string)           { w.emit("notice", s) }
-func (w *worker) Output(s string)           { w.emit("output", s) }
-func (w *worker) Separator()                { w.emit("separator", nil) }
-func (w *worker) Debugf(string, ...any)     {}
+func (w *worker) Notice(s string) { w.emit("notice", s) }
+func (w *worker) Output(s string) { w.emit("output", s) }
+func (w *worker) Separator()      { w.emit("separator", nil) }
+
+// Debugf forwards the parser's bounded format-error diagnostics to the operator
+// log. The full model output stays out of diagnostics; the notice in the
+// transcript already carries a tail, and the debug lines name the finish reason,
+// byte count, and token counts needed to tell a limit from a dropped stream.
+func (w *worker) Debugf(f string, a ...any) {
+	msg := fmt.Sprintf(f, a...)
+	if !strings.HasPrefix(msg, "[Format Error") && !strings.HasPrefix(msg, "[Format Retry") {
+		return
+	}
+	msg = strings.Join(strings.Fields(msg), " ")
+	w.m.diag(Diagnostic{Session: w.name, Kind: "model", Outcome: "format error",
+		Detail: boundedPayloadLimit(msg, 1200, "format error")})
+}
 func (w *worker) Errorf(f string, a ...any) { w.emit("notice", fmt.Sprintf(f, a...)) }
 
 // Observer and Prompter have incompatible Ask methods, so the observer delegates

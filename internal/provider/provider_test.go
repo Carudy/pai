@@ -96,7 +96,7 @@ func TestChatCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cc, err := p.Completion(context.Background(), CompletionParams{Messages: []Message{{Role: RoleUser, Content: "yo"}}})
+	cc, err := p.Completion(context.Background(), CompletionParams{Messages: []Message{{Role: RoleUser, Content: "yo"}}, MaxTokens: 1234})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,6 +114,9 @@ func TestChatCompletion(t *testing.T) {
 	}
 	if _, ok := gotBody["stream_options"]; ok {
 		t.Errorf("stream_options sent on a non-streaming request: %v", gotBody["stream_options"])
+	}
+	if gotBody["max_tokens"] != float64(1234) {
+		t.Errorf("max_tokens = %v, want 1234", gotBody["max_tokens"])
 	}
 }
 
@@ -149,6 +152,38 @@ func TestChatCompletionStream(t *testing.T) {
 	}
 }
 
+// A chat-completions stream that never sends a finish_reason is not a normal
+// completion. Mark it, so the parser reports a dropped terminal event instead of
+// guessing that the output hit a token limit.
+func TestChatStreamWithoutFinishReasonIsIncomplete(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	p, err := CreateClient(ProviderConfig{Name: "openai", Model: "m", BaseURL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunks, errs := p.CompletionStream(context.Background(), CompletionParams{Stream: true})
+	finishReason := ""
+	for chunk := range chunks {
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason != "" {
+				finishReason = choice.FinishReason
+			}
+		}
+	}
+	if err := <-errs; err != nil {
+		t.Fatal(err)
+	}
+	if finishReason != FinishReasonIncomplete {
+		t.Fatalf("finish reason = %q, want %q", finishReason, FinishReasonIncomplete)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Responses API
 // ---------------------------------------------------------------------------
@@ -178,6 +213,7 @@ func TestResponsesCompletion(t *testing.T) {
 		},
 		ReasoningEffort: ReasoningEffortHigh,
 		ResponseFormat:  &ResponseFormat{Type: "json_object"},
+		MaxTokens:       4321,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -208,6 +244,9 @@ func TestResponsesCompletion(t *testing.T) {
 	}
 	if gotBody["text"].(map[string]any)["format"].(map[string]any)["type"] != "json_object" {
 		t.Errorf("text = %v", gotBody["text"])
+	}
+	if gotBody["max_output_tokens"] != float64(4321) {
+		t.Errorf("max_output_tokens = %v, want 4321", gotBody["max_output_tokens"])
 	}
 	input := gotBody["input"].([]any)
 	if len(input) != 3 {
@@ -302,8 +341,13 @@ func TestResponsesStreamTerminators(t *testing.T) {
 		wantClean bool
 	}{
 		{
-			name:      "chat-style [DONE] is tolerated",
+			name:      "chat-style [DONE] without a terminal event is marked incomplete",
 			frames:    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\ndata: [DONE]\n\n",
+			wantClean: true,
+		},
+		{
+			name:      "socket EOF without a terminal event is marked incomplete",
+			frames:    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n",
 			wantClean: true,
 		},
 		{
@@ -331,12 +375,21 @@ func TestResponsesStreamTerminators(t *testing.T) {
 
 			p, _ := CreateClient(ProviderConfig{Name: "openai", Model: "m", Protocol: ProtocolResponses, BaseURL: srv.URL})
 			chunks, errs := p.CompletionStream(context.Background(), CompletionParams{Stream: true})
-			for range chunks {
+			finishReason := ""
+			for chunk := range chunks {
+				for _, choice := range chunk.Choices {
+					if choice.FinishReason != "" {
+						finishReason = choice.FinishReason
+					}
+				}
 			}
 			err := <-errs
 			if tc.wantClean {
 				if err != nil {
 					t.Fatalf("error = %v, want clean end", err)
+				}
+				if finishReason != FinishReasonIncomplete {
+					t.Fatalf("finish reason = %q, want %q", finishReason, FinishReasonIncomplete)
 				}
 				return
 			}

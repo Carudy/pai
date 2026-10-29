@@ -22,6 +22,17 @@ type Ports struct {
 // Core chat
 // ---------------------------------------------------------------------------
 
+// ChatResult is one model reply plus the metadata PAI needs to explain an
+// incomplete response. FinishReason is the provider's own value, or a sentinel
+// such as provider.FinishReasonIncomplete when the stream ended without one.
+type ChatResult struct {
+	Content        string
+	History        []provider.Message
+	Usage          *provider.Usage
+	PromptEstimate int
+	FinishReason   string
+}
+
 // chat sends messages to the LLM and returns the assistant's content as a JSON
 // string plus token usage. It always requests JSON mode; the caller parses with
 // ParseResponse.
@@ -35,7 +46,7 @@ func chat(
 	p Ports,
 	history []provider.Message,
 	stream bool,
-) (content string, newHistory []provider.Message, usage *provider.Usage, promptEstimate int, err error) {
+) (ChatResult, error) {
 
 	params := provider.CompletionParams{
 		Model:           cfg.Model,
@@ -43,30 +54,44 @@ func chat(
 		Stream:          stream,
 		ResponseFormat:  &provider.ResponseFormat{Type: "json_object"},
 		ReasoningEffort: cfg.ReasoningEffort,
+		MaxTokens:       cfg.MaxOutputTokens,
 	}
 	// The estimate travels back with the response so the caller can pair it with the
 	// reported prompt size: their ratio is what calibrates later estimates.
-	promptEstimate = EstimateTokens(params.Messages)
-
+	promptEstimate := EstimateTokens(params.Messages)
+	var (
+		content      string
+		usage        *provider.Usage
+		finishReason string
+		err          error
+	)
 	showReasoning := cfg.ReasoningEffort != provider.ReasoningEffortNone
 	if stream {
-		content, usage, err = doStream(ctx, p, params, showReasoning)
+		content, usage, finishReason, err = doStream(ctx, p, params, showReasoning)
 	} else {
 		var resp *provider.ChatCompletion
 		resp, err = p.Provider.Completion(ctx, params)
 		if err == nil && resp != nil {
-			if p.Logger != nil && len(resp.Choices) > 0 && resp.Choices[0].FinishReason != "" {
-				p.Logger.Debugf("[Provider] finish_reason=%q\n", resp.Choices[0].FinishReason)
+			if len(resp.Choices) > 0 {
+				finishReason = resp.Choices[0].FinishReason
+			}
+			if p.Logger != nil && finishReason != "" {
+				p.Logger.Debugf("[Provider] finish_reason=%q\n", finishReason)
 			}
 			content, usage = extractCompletion(resp, showReasoning, p.Observer)
 		}
 	}
 	if err != nil {
-		return "", nil, nil, 0, err
+		return ChatResult{}, err
 	}
 
-	newHistory = append(history, provider.Message{Role: provider.RoleAssistant, Content: content, Kind: core.KindOutput})
-	return content, newHistory, usage, promptEstimate, nil
+	return ChatResult{
+		Content:        content,
+		History:        append(history, provider.Message{Role: provider.RoleAssistant, Content: content, Kind: core.KindOutput}),
+		Usage:          usage,
+		PromptEstimate: promptEstimate,
+		FinishReason:   finishReason,
+	}, nil
 }
 
 // extractCompletion unpacks a non-streaming response, streaming any reasoning
@@ -79,22 +104,20 @@ func extractCompletion(resp *provider.ChatCompletion, showReasoning bool, obs co
 	if showReasoning && choice.Reasoning != nil && choice.Reasoning.Content != "" {
 		obs.Reasoning(choice.Reasoning.Content)
 	}
-	if hitTokenLimit(choice.FinishReason) {
-		obs.Notice("model output reached its token limit; the JSON response may be truncated")
-	}
 	return choice.Message.Content, resp.Usage
 }
 
-// hitTokenLimit reports the provider values that mean the model ran out of
-// output budget. OpenAI-compatible servers use "length"; some use "max_tokens".
-func hitTokenLimit(reason string) bool {
-	return reason == "length" || reason == "max_tokens"
+// Chat sends the conversation and returns the complete result, including the
+// provider's finish reason. Callers that only need the text use ChatStr.
+func Chat(ctx context.Context, cfg *config.UserConfig, rp *RolePrompt, p Ports, history []provider.Message) (ChatResult, error) {
+	return chat(ctx, cfg, rp, p, history, cfg.Streaming)
 }
 
 // ChatStr sends the conversation and returns the assistant's raw JSON string, plus the
 // estimated token size of the prompt it sent.
 func ChatStr(ctx context.Context, cfg *config.UserConfig, rp *RolePrompt, p Ports, history []provider.Message) (string, []provider.Message, *provider.Usage, int, error) {
-	return chat(ctx, cfg, rp, p, history, cfg.Streaming)
+	result, err := Chat(ctx, cfg, rp, p, history)
+	return result.Content, result.History, result.Usage, result.PromptEstimate, err
 }
 
 // ---------------------------------------------------------------------------
@@ -110,14 +133,14 @@ func doStream(
 	p Ports,
 	params provider.CompletionParams,
 	showReasoning bool,
-) (string, *provider.Usage, error) {
+) (string, *provider.Usage, string, error) {
 	for attempt := 1; ; attempt++ {
-		content, usage, shown, err := streamOnce(ctx, p, params, showReasoning)
+		content, usage, finishReason, shown, err := streamOnce(ctx, p, params, showReasoning)
 		if err == nil {
-			return content, usage, nil
+			return content, usage, finishReason, nil
 		}
 		if shown || attempt >= 2 || !errors.Is(err, provider.ErrStalled) || ctx.Err() != nil {
-			return "", nil, err
+			return "", nil, "", err
 		}
 		p.Observer.Notice("model stream stalled before any output; retrying once")
 	}
@@ -131,11 +154,10 @@ func streamOnce(
 	p Ports,
 	params provider.CompletionParams,
 	showReasoning bool,
-) (content string, usage *provider.Usage, shown bool, err error) {
+) (content string, usage *provider.Usage, finishReason string, shown bool, err error) {
 	chunkChan, errChan := p.Provider.CompletionStream(ctx, params)
 
 	var fullContent strings.Builder
-	var finishReason string
 	for chunk := range chunkChan {
 		// Usage typically arrives in the final chunk.
 		if chunk.Usage != nil {
@@ -156,15 +178,12 @@ func streamOnce(
 	}
 
 	if err := <-errChan; err != nil {
-		return "", nil, shown, err
+		return "", nil, "", shown, err
 	}
 	if p.Logger != nil && finishReason != "" {
 		p.Logger.Debugf("[Provider] finish_reason=%q\n", finishReason)
 	}
-	if hitTokenLimit(finishReason) {
-		p.Observer.Notice("model output reached its token limit; the JSON response may be truncated")
-	}
-	return fullContent.String(), usage, shown, nil
+	return fullContent.String(), usage, finishReason, shown, nil
 }
 
 // ---------------------------------------------------------------------------

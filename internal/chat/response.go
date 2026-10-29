@@ -15,10 +15,19 @@ import (
 const maxFormatRetries = 3
 
 // ErrTruncatedResponse means the model's output did not contain one complete
-// brace-balanced object. In practice this is almost always a response cut off by
-// the output-token limit; the caller uses it to ask for a shorter retry instead
-// of a generic format correction.
+// brace-balanced object. The provider's finish reason is what distinguishes a
+// token limit from a dropped stream or malformed output; this error only says
+// the JSON itself is incomplete.
 var ErrTruncatedResponse = errors.New("no complete JSON object in AI response (unbalanced braces, likely truncated)")
+
+// logHead returns the first max runes of s, for a bounded debug line.
+func logHead(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
 
 // logTail returns the last max runes of s, for a bounded debug line. It never
 // splits a UTF-8 sequence.
@@ -28,6 +37,66 @@ func logTail(s string, max int) string {
 		return s
 	}
 	return "…" + string(r[len(r)-max:])
+}
+
+// ReplyMeta is the provider metadata for the content being parsed. It is what
+// turns "unbalanced braces" into an explainable diagnosis instead of a guess.
+type ReplyMeta struct {
+	FinishReason string
+	Usage        *provider.Usage
+}
+
+// isIncompleteFinish reports provider outcomes where the content may be legitimately
+// partial. A length limit is the common case; aborted and resource-interrupted
+// responses are not normal stops either.
+func isIncompleteFinish(reason string) bool {
+	switch reason {
+	case provider.FinishReasonLength, provider.FinishReasonMaxTokens, "max_output_tokens",
+		provider.FinishReasonAborted, provider.FinishReasonFiltered,
+		provider.FinishReasonIncomplete, "insufficient_system_resource":
+		return true
+	}
+	return false
+}
+
+// finishReasonExplanation names what the provider said, without assuming it was
+// a token limit. The distinction matters: a dropped terminal event, a content
+// filter, and a short JSON error call for different fixes.
+func finishReasonExplanation(reason string) string {
+	switch reason {
+	case provider.FinishReasonLength, provider.FinishReasonMaxTokens, "max_output_tokens":
+		return "the provider hit its output token limit (finish_reason=" + reason + ")"
+	case provider.FinishReasonIncomplete:
+		return "the provider stream ended without a terminal event"
+	case provider.FinishReasonAborted:
+		return "the provider aborted generation (finish_reason=aborted)"
+	case "insufficient_system_resource":
+		return "the provider ran out of inference resources (finish_reason=insufficient_system_resource)"
+	case provider.FinishReasonFiltered:
+		return "the provider filtered the output (finish_reason=content_filter)"
+	case provider.FinishReasonStop:
+		return "the provider reported a normal stop, so the model emitted incomplete JSON"
+	case "":
+		return "the provider reported no finish_reason"
+	default:
+		return "the provider stopped for finish_reason=" + reason
+	}
+}
+
+func incompleteNotice(meta ReplyMeta, attempt int, content string) string {
+	tokens := ""
+	if meta.Usage != nil && meta.Usage.CompletionTokens > 0 {
+		tokens = fmt.Sprintf(", %d output tokens", meta.Usage.CompletionTokens)
+		if meta.Usage.ReasoningTokens > 0 {
+			tokens += fmt.Sprintf(" (%d reasoning)", meta.Usage.ReasoningTokens)
+		}
+	}
+	notice := fmt.Sprintf("Model response was incomplete (%s; %d bytes%s); omitted it and retrying (%d/%d)",
+		finishReasonExplanation(meta.FinishReason), len(content), tokens, attempt, maxFormatRetries)
+	if tail := logTail(content, 240); tail != "" {
+		notice += "; tail: " + fmt.Sprintf("%q", tail)
+	}
+	return notice
 }
 
 // Response is one agent response: a single JSON object with an action, a payload,
@@ -142,6 +211,21 @@ func ParseResponseWithRetry(
 	content string,
 	history []provider.Message,
 ) (*Response, []provider.Message, error) {
+	return ParseResponseWithRetryMeta(ctx, cfg, rp, p, content, ReplyMeta{}, history)
+}
+
+// ParseResponseWithRetryMeta is ParseResponseWithRetry with the provider's finish
+// reason and usage. Those fields are the difference between reporting the real
+// cause of an incomplete response and guessing at a token limit.
+func ParseResponseWithRetryMeta(
+	ctx context.Context,
+	cfg *config.UserConfig,
+	rp *RolePrompt,
+	p Ports,
+	content string,
+	meta ReplyMeta,
+	history []provider.Message,
+) (*Response, []provider.Message, error) {
 	var (
 		resp *Response
 		err  error
@@ -155,10 +239,15 @@ func ParseResponseWithRetry(
 			return resp, history, nil
 		}
 
-		truncated := errors.Is(err, ErrTruncatedResponse)
+		truncated := errors.Is(err, ErrTruncatedResponse) || isIncompleteFinish(meta.FinishReason)
 		if p.Logger != nil {
-			p.Logger.Debugf("[Format Error attempt %d/%d] bytes=%d truncated=%v: %v\n",
-				attempt+1, maxFormatRetries, len(content), truncated, err)
+			completion, reasoning := 0, 0
+			if meta.Usage != nil {
+				completion, reasoning = meta.Usage.CompletionTokens, meta.Usage.ReasoningTokens
+			}
+			p.Logger.Debugf("[Format Error attempt %d/%d] bytes=%d finish_reason=%q completion_tokens=%d reasoning_tokens=%d truncated=%v: %v\n",
+				attempt+1, maxFormatRetries, len(content), meta.FinishReason, completion, reasoning, truncated, err)
+			p.Logger.Debugf("[Format Error head]: %s\n", logHead(content, 400))
 			p.Logger.Debugf("[Format Error tail]: %s\n", logTail(content, 400))
 		}
 
@@ -172,13 +261,11 @@ func ParseResponseWithRetry(
 				// parsing succeeds.
 				if n := len(history); n > 0 && history[n-1].Role == provider.RoleAssistant {
 					if p.Logger != nil {
-						p.Logger.Debugf("[Format Retry] omitting truncated assistant turn (%d bytes)\n", len(history[n-1].Content))
+						p.Logger.Debugf("[Format Retry] omitting incomplete assistant turn (%d bytes)\n", len(history[n-1].Content))
 					}
-					history[n-1].Content = "[previous response was truncated and omitted]"
+					history[n-1].Content = "[previous response was incomplete and omitted]"
 				}
-				p.Observer.Notice(fmt.Sprintf(
-					"Model response was cut off (likely the output token limit); retrying with a shorter request (%d/%d)",
-					attempt+1, maxFormatRetries))
+				p.Observer.Notice(incompleteNotice(meta, attempt+1, content))
 			} else {
 				p.Observer.Notice(fmt.Sprintf("Response format error, retrying (%d/%d): %v", attempt+1, maxFormatRetries, err))
 			}
@@ -187,13 +274,21 @@ func ParseResponseWithRetry(
 Reply with exactly ONE complete JSON object — every { needs a matching }, no prose and no code fences.
 A tool action looks like:
 %s
-The other actions take a string payload: {"action":"done|ask|terminate","payload":"<string>","reason":"<short>"}
-If the previous response was cut off, shorten the payload or split the work into several smaller tool calls; do not repeat the truncated text.`,
+The other actions take a string payload: {"action":"done|ask|terminate","payload":"<string>","reason":"<short>"}`,
 				err, ToolExample())
+			if truncated {
+				correctionMsg = fmt.Sprintf(`[system] Your previous response was incomplete (%s). Do not repeat the truncated text.
+Reply with exactly ONE complete JSON object — every { needs a matching }, no prose and no code fences.
+Keep this response short. If a file or report is too large, split it into several smaller write/edit calls.
+A tool action looks like:
+%s`,
+					finishReasonExplanation(meta.FinishReason), ToolExample())
+			}
 			history = append(history, provider.Message{Role: provider.RoleUser, Content: correctionMsg})
 
 			retryStart := time.Now()
-			content, history, _, _, err = ChatStr(ctx, cfg, rp, p, history)
+			result, err := Chat(ctx, cfg, rp, p, history)
+			content, history, meta.FinishReason, meta.Usage = result.Content, result.History, result.FinishReason, result.Usage
 			if p.Logger != nil {
 				p.Logger.Debugf("[Format Retry %d] request took %s\n", attempt+1, time.Since(retryStart))
 			}

@@ -23,13 +23,20 @@ See the [module map](../organization.md) for the surrounding layers.
   per-activation situation block after history and before the tail. It is a
   projection, never a recorded turn, and the head stays byte-identical so the
   prefix cache still matches.
-- `ChatStr` uses `Ports` for provider calls, observation, and logging,
-  respecting configured streaming and reporting token usage. A stream that fails
+- `Chat` / `ChatStr` use `Ports` for provider calls, observation, and logging,
+  respecting configured streaming and reporting token usage. `Chat` also returns
+  the provider's `finish_reason`, or a sentinel when a stream ended without its
+  terminal event; the parser uses it to distinguish a token limit from a dropped
+  stream or malformed output. A stream that fails
   is retried once **only** when nothing had been rendered yet (a stall that
   already showed reasoning or content is reported instead, so partial output is
   never duplicated); the transport's own bounded waits and retries are described
   in [`internal/provider`](../provider/README.md).
-- `ParseResponse` / `ParseResponseWithRetry` validate model actions.
+- `ParseResponse` / `ParseResponseWithRetry` / `ParseResponseWithRetryMeta`
+  validate model actions. The Meta variant is what turns an incomplete JSON
+  object into an accurate notice (finish reason, bytes, output/reasoning tokens,
+  and a bounded tail); served workers forward those format diagnostics to the
+  operator log without writing the whole model answer there.
 - `Truncate`, `CompactHistory`, `TrimHistory`, and `summarize.go` bound model context;
   shortening replay does not replace durable session history. Both compaction
   layers window by **user turn** (a user instruction plus every tool call it

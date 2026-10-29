@@ -320,11 +320,12 @@ func step(
 
 	ports := rt.chatPorts()
 
-	content, newHistory, usage, promptEstimate, err := chat.ChatStr(ctx, cfg, rp, ports, history)
+	result, err := chat.Chat(ctx, cfg, rp, ports, history)
 	if err != nil {
 		return stepResult{outcome: outcomeTerminate}, err
 	}
-	history = newHistory
+	content, history, usage := result.Content, result.History, result.Usage
+	promptEstimate, finishReason := result.PromptEstimate, result.FinishReason
 
 	rt.Logger.Debugf("[AI Output]:\n%s\n", content)
 
@@ -350,7 +351,7 @@ func step(
 		rt.promptTokens = chat.ScaleTokens(chat.EstimateTokens(rp.Messages(chat.ServedHistory(history, cfg.Context))), rt.TokenScale)
 	}
 
-	resp, history, err := chat.ParseResponseWithRetry(ctx, cfg, rp, ports, content, history)
+	resp, history, err := chat.ParseResponseWithRetryMeta(ctx, cfg, rp, ports, content, chat.ReplyMeta{FinishReason: finishReason, Usage: usage}, history)
 	if err != nil {
 		return stepResult{outcome: outcomeTerminate}, err
 	}

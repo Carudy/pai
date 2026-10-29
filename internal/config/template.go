@@ -26,6 +26,9 @@ default_role = "devops"
 streaming = true
 # Extended thinking: "low" | "medium" | "high" | "none".
 # reasoning = "none"
+# Optional cap on generated tokens. Omit to use the provider's default; raise it
+# when long file writes or reports keep ending with finish_reason="length".
+# max_output_tokens = 65536
 # Keep the session alive for follow-up input instead of exiting after one task.
 # interactive = true
 # Provider:model suggestions for the web model dropdown. A suggestion list (not

@@ -111,6 +111,7 @@ func streamReader(ctx context.Context, resp *http.Response, spec providerSpec, c
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sawFinish := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -122,17 +123,31 @@ func streamReader(ctx context.Context, resp *http.Response, spec providerSpec, c
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
+			if !sawFinish {
+				// The terminal event is the only place a finish_reason normally lives.
+				// Mark a stream that omitted it, so the parser can report a dropped
+				// terminal event instead of guessing at a token limit.
+				chunkChan <- ChatCompletionChunk{Choices: []ChunkChoice{{FinishReason: FinishReasonIncomplete}}}
+			}
 			errChan <- nil
 			return
 		}
 
 		chunk := parseChunk(data)
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason != "" {
+				sawFinish = true
+			}
+		}
 		chunkChan <- chunk
 	}
 
 	if err := scanner.Err(); err != nil {
 		errChan <- fmt.Errorf("%s: scan stream: %w", spec.name, err)
 	} else {
+		if !sawFinish {
+			chunkChan <- ChatCompletionChunk{Choices: []ChunkChoice{{FinishReason: FinishReasonIncomplete}}}
+		}
 		errChan <- nil
 	}
 }
@@ -157,6 +172,9 @@ func buildRequestBody(params CompletionParams, stream bool, spec providerSpec) m
 
 	if params.ResponseFormat != nil {
 		body["response_format"] = params.ResponseFormat
+	}
+	if params.MaxTokens > 0 {
+		body["max_tokens"] = params.MaxTokens
 	}
 
 	if spec.bodyEnricher != nil {

@@ -67,7 +67,7 @@ func TestStreamRetriesAStallBeforeOutput(t *testing.T) {
 	fp := &retryProvider{reply: "hello"}
 	obs := &recordingObserver{}
 
-	got, _, err := doStream(context.Background(), Ports{Provider: fp, Observer: obs}, provider.CompletionParams{}, false)
+	got, _, _, err := doStream(context.Background(), Ports{Provider: fp, Observer: obs}, provider.CompletionParams{}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestStreamDoesNotRetryAfterReasoning(t *testing.T) {
 	fp := &retryProvider{reasoning: "thinking", reply: "hello"}
 	obs := &recordingObserver{}
 
-	_, _, err := doStream(context.Background(), Ports{Provider: fp, Observer: obs}, provider.CompletionParams{}, true)
+	_, _, _, err := doStream(context.Background(), Ports{Provider: fp, Observer: obs}, provider.CompletionParams{}, true)
 	if !errors.Is(err, provider.ErrStalled) {
 		t.Fatalf("error = %v, want ErrStalled", err)
 	}
@@ -108,7 +108,7 @@ func TestStreamDoesNotRetryOtherErrors(t *testing.T) {
 	fp := &retryProvider{reply: "hello", firstErr: errors.New("bad response format")}
 	obs := &recordingObserver{}
 
-	if _, _, err := doStream(context.Background(), Ports{Provider: fp, Observer: obs}, provider.CompletionParams{}, false); err == nil {
+	if _, _, _, err := doStream(context.Background(), Ports{Provider: fp, Observer: obs}, provider.CompletionParams{}, false); err == nil {
 		t.Fatal("expected the provider error")
 	}
 	if fp.calls != 1 {
@@ -181,7 +181,7 @@ func TestTruncatedRetryOmitsLargeAssistantTurn(t *testing.T) {
 	}
 	var sawPlaceholder, sawTruncated bool
 	for _, m := range fp.seen[0] {
-		if m.Role == provider.RoleAssistant && m.Content == "[previous response was truncated and omitted]" {
+		if m.Role == provider.RoleAssistant && m.Content == "[previous response was incomplete and omitted]" {
 			sawPlaceholder = true
 		}
 		if strings.Contains(m.Content, `"host":"h"`) {
@@ -194,32 +194,55 @@ func TestTruncatedRetryOmitsLargeAssistantTurn(t *testing.T) {
 	if sawTruncated {
 		t.Fatal("retry request still contains the full truncated response")
 	}
-	if len(obs.notices) == 0 || !strings.Contains(obs.notices[0], "cut off") {
+	if len(obs.notices) == 0 || !strings.Contains(obs.notices[0], "incomplete") {
 		t.Fatalf("notices = %v", obs.notices)
 	}
 }
 
-// A length-limited response is valid transport but incomplete content. Say so,
-// so the parser's "truncated" retry is not mistaken for a slow network.
-func TestNoticesTokenLimit(t *testing.T) {
+// The finish reason must reach the caller intact; the parser uses it to name the
+// real cause instead of guessing that every incomplete object hit a token limit.
+func TestFinishReasonReachesTheParser(t *testing.T) {
 	for _, stream := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
 			fp := &finishProvider{reason: "length"}
-			obs := &recordingObserver{}
+			cfg := &config.UserConfig{DefaultModel: "test:model", Streaming: stream}
 			if stream {
-				if _, _, err := doStream(context.Background(), Ports{Provider: fp, Observer: obs}, provider.CompletionParams{}, false); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				truncated, err := fp.Completion(context.Background(), provider.CompletionParams{})
+				_, _, reason, err := doStream(context.Background(), Ports{Provider: fp, Observer: &recordingObserver{}}, provider.CompletionParams{}, false)
 				if err != nil {
 					t.Fatal(err)
 				}
-				extractCompletion(truncated, false, obs)
+				if reason != "length" {
+					t.Fatalf("finish reason = %q, want length", reason)
+				}
+				return
 			}
-			if len(obs.notices) != 1 || !strings.Contains(obs.notices[0], "token limit") {
-				t.Fatalf("notices = %v", obs.notices)
+			result, err := Chat(context.Background(), cfg, &RolePrompt{}, Ports{Provider: fp, Observer: &recordingObserver{}}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.FinishReason != "length" {
+				t.Fatalf("finish reason = %q, want length", result.FinishReason)
 			}
 		})
+	}
+}
+
+// The notice must distinguish a token limit from a dropped stream or a normal
+// stop; the old wording blamed the output limit for every unbalanced object.
+func TestIncompleteNoticeNamesTheCause(t *testing.T) {
+	content := strings.Repeat("x", 32123) + `,"reason":"cut`
+	limit := incompleteNotice(ReplyMeta{FinishReason: "length", Usage: &provider.Usage{CompletionTokens: 8000, ReasoningTokens: 1200}}, 1, content)
+	for _, want := range []string{"output token limit", "8000 output tokens", "1200 reasoning", fmt.Sprintf("%d bytes", len(content)), `tail: "…`} {
+		if !strings.Contains(limit, want) {
+			t.Errorf("notice %q does not contain %q", limit, want)
+		}
+	}
+	dropped := incompleteNotice(ReplyMeta{FinishReason: provider.FinishReasonIncomplete}, 2, "partial")
+	if !strings.Contains(dropped, "stream ended without a terminal event") {
+		t.Errorf("dropped-stream notice = %q", dropped)
+	}
+	normal := incompleteNotice(ReplyMeta{FinishReason: provider.FinishReasonStop}, 3, "partial")
+	if !strings.Contains(normal, "normal stop") {
+		t.Errorf("normal-stop notice = %q", normal)
 	}
 }

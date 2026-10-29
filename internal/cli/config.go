@@ -35,6 +35,7 @@ var configKeys = map[string]configKey{
 	"preset_models":                  {section: "app", key: "preset_models", kind: "model_list"},
 	"streaming":                      {section: "app", key: "streaming", kind: "bool"},
 	"reasoning":                      {section: "app", key: "reasoning", kind: "reasoning"},
+	"max_output_tokens":              {section: "app", key: "max_output_tokens", kind: "int"},
 	"interactive":                    {section: "app", key: "interactive", kind: "bool"},
 	"session.persist":                {section: "session", key: "persist", kind: "bool"},
 	"session.max_turns":              {section: "session", key: "max_turns", kind: "int"},
@@ -318,6 +319,8 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 			return "none"
 		}
 		return string(cfg.ReasoningEffort)
+	case "max_output_tokens":
+		return strconv.Itoa(cfg.MaxOutputTokens)
 	case "interactive":
 		return strconv.FormatBool(cfg.Interactive)
 	case "context.exec_limit":

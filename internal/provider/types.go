@@ -22,6 +22,18 @@ const (
 	ReasoningEffortNone   ReasoningEffort = "none"
 )
 
+// Finish reasons PAI distinguishes. The chat-completions values are the
+// provider's own; FinishReasonIncompleteStream is synthesized when a stream ends
+// without its terminal event, because that is not a normal completion.
+const (
+	FinishReasonStop       = "stop"
+	FinishReasonLength     = "length"
+	FinishReasonMaxTokens  = "max_tokens"
+	FinishReasonAborted    = "aborted"
+	FinishReasonFiltered   = "content_filter"
+	FinishReasonIncomplete = "incomplete_stream"
+)
+
 // Message in a chat conversation.
 type Message struct {
 	Role    string `json:"role"`
@@ -47,6 +59,10 @@ type CompletionParams struct {
 	Stream          bool            `json:"stream,omitempty"`
 	ReasoningEffort ReasoningEffort `json:"reasoning_effort,omitempty"`
 	ResponseFormat  *ResponseFormat `json:"response_format,omitempty"`
+	// MaxTokens is an optional cap on generated tokens. Zero omits the field and
+	// leaves the provider default in place. The chat transport maps it to
+	// max_tokens and the Responses transport to max_output_tokens.
+	MaxTokens int `json:"-"`
 }
 
 // ChatCompletion for blocking responses.

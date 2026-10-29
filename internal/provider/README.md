@@ -15,7 +15,9 @@ See the [module map](../organization.md) for the chat layer above this package.
   (`opencode.ai`) it generates the `x-opencode-session` routing id that gateway
   requires. A user-supplied header of the same name always wins.
 - `Message`, `CompletionParams`, `ChatCompletion`, and `ChatCompletionChunk`
-  model requests, complete replies, and streaming deltas.
+  model requests, complete replies, and streaming deltas. `CompletionParams.MaxTokens`
+  is opt-in: the chat transport sends it as `max_tokens`, the Responses transport as
+  `max_output_tokens`; zero omits the field and keeps the provider default.
 - `ReasoningEffort` and `Usage` carry reasoning controls and token accounting.
 - `openai.go` implements the chat completions transport (HTTP + `data:` SSE),
   including provider-specific request enrichment for built-in providers. Streamed
@@ -24,7 +26,11 @@ See the [module map](../organization.md) for the chat layer above this package.
 - `responses.go` implements OpenAI's Responses API (`POST /responses`), whose
   named SSE events and reasoning-summary shape are flattened into the same
   `ChatCompletion`/`ChatCompletionChunk` types. Requests are stateless
-  (`store = false`).
+  (`store = false`). A `response.completed` event becomes a normal `stop`; a
+  stream that ends with `[DONE]` or EOF without it is marked
+  `incomplete_stream`, so the parser does not mistake a dropped terminal event
+  for a normal completion (or for a token limit). The chat-completions stream
+  applies the same rule when no chunk carried a `finish_reason`.
 - `http.go` holds the shared JSON-POST plumbing both transports use.
 
 ## Timeouts and retries

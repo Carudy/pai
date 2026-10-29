@@ -8,7 +8,10 @@ See the [module map](../organization.md) for its near-leaf position.
 - `UserConfig` holds settings; `LoadUserConfig` loads them from `Path()`.
 - `types.go` defines TOML shapes, built-in defaults, and context budgets.
   Defaults include streaming enabled, role `devops`, model
-  `deepseek:deepseek-v4-flash`, and three recap exchanges.
+  `deepseek:deepseek-v4-flash`, and three recap exchanges. `max_output_tokens`
+  is opt-in (0 = the provider default); the provider layer maps it to
+  `max_tokens` for chat completions and `max_output_tokens` for the Responses
+  API, which is the lever when long outputs end with `finish_reason=length`.
 - `SetModel` resolves the `provider:model` selection; `LoadRoleExtra` reads the
   selected role's extra intro text, and `LoadRoleExtraEntry` also returns tools
   the user added under that role. `PresetModels` are the cleaned `provider:model`

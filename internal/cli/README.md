@@ -22,7 +22,8 @@ transitions. A service is run by `pai serve`, which registers every
   `web.New`: `serve.go` owns flags, the entry point, and shutdown; `servebackend.go`
   implements the runner backend; `serveauth.go` handles origins and tokens;
   `serveactivity.go` writes the activity log, and `servediag.go` writes the
-  detailed `--debug-log` stream (probe verdicts, activation decisions, model spend).
+  detailed `--debug-log` stream (probe verdicts, activation decisions, model spend,
+  and bounded parser format failures with finish reason and token counts).
 - `conn.go` is the terminal client for a running server; it wires `conn.Client`
   to `tui.NewLineObserver` and never opens the store. Its target resolves from
   flags, then `PAI_SERVE_*`, then the `[conn]` section of `config.toml`.

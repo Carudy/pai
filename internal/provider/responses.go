@@ -105,6 +105,9 @@ func responsesBody(params CompletionParams, stream bool) map[string]any {
 	if params.ResponseFormat != nil {
 		body["text"] = map[string]any{"format": map[string]any{"type": params.ResponseFormat.Type}}
 	}
+	if params.MaxTokens > 0 {
+		body["max_output_tokens"] = params.MaxTokens
+	}
 	return body
 }
 
@@ -239,6 +242,9 @@ func parseResponses(raw []byte) (*ChatCompletion, error) {
 	if reasoning != "" {
 		choice.Reasoning = &Reasoning{Content: reasoning}
 	}
+	if r.Status == "completed" || r.Status == "" {
+		choice.FinishReason = FinishReasonStop
+	}
 	return &ChatCompletion{ID: r.ID, Choices: []Choice{choice}, Usage: responsesToUsage(r.Usage)}, nil
 }
 
@@ -299,6 +305,10 @@ func responsesStreamReader(_ context.Context, resp *http.Response, spec provider
 		// The API ends on a terminal event, but chat-completions-style gateways
 		// append [DONE]; accept both.
 		if data == "[DONE]" {
+			// A gateway may append [DONE] instead of the documented terminal event.
+			// Mark the stream incomplete so the parser can distinguish a dropped
+			// terminal event from a normal stop when the content is not valid JSON.
+			chunkChan <- ChatCompletionChunk{Choices: []ChunkChoice{{FinishReason: FinishReasonIncomplete}}}
 			errChan <- nil
 			return
 		}
@@ -319,6 +329,7 @@ func responsesStreamReader(_ context.Context, resp *http.Response, spec provider
 			if ev.Response != nil && ev.Response.Usage != nil {
 				chunkChan <- ChatCompletionChunk{Usage: responsesToUsage(ev.Response.Usage)}
 			}
+			chunkChan <- ChatCompletionChunk{Choices: []ChunkChoice{{FinishReason: FinishReasonStop}}}
 			errChan <- nil
 			return
 		case "response.failed", "response.incomplete", "error":
@@ -331,7 +342,10 @@ func responsesStreamReader(_ context.Context, resp *http.Response, spec provider
 		errChan <- fmt.Errorf("%s: scan stream: %w", spec.name, err)
 		return
 	}
-	// Some gateways just close the socket without a terminal event.
+	// Some gateways just close the socket without a terminal event. Mark that
+	// explicitly: the output may be complete, but PAI must not call it a normal
+	// stop and then guess "token limit" when the JSON is incomplete.
+	chunkChan <- ChatCompletionChunk{Choices: []ChunkChoice{{FinishReason: FinishReasonIncomplete}}}
 	errChan <- nil
 }
 

@@ -26,3 +26,22 @@ func TestStreamingDefaultAndExplicitOverride(t *testing.T) {
 		})
 	}
 }
+
+// max_output_tokens is opt-in: zero means the provider's default. A negative
+// value is clamped rather than sent as an invalid request.
+func TestMaxOutputTokens(t *testing.T) {
+	for _, tc := range []struct {
+		body string
+		want int
+	}{{"", 0}, {"[app]\nmax_output_tokens = 65536", 65536}, {"[app]\nmax_output_tokens = -1", 0}} {
+		var raw tomlConfig
+		if err := toml.Unmarshal([]byte(tc.body), &raw); err != nil {
+			t.Fatal(err)
+		}
+		cfg := defaultConfig()
+		cfg.fromTOML(&raw)
+		if cfg.MaxOutputTokens != tc.want {
+			t.Fatalf("%q: max_output_tokens = %d, want %d", tc.body, cfg.MaxOutputTokens, tc.want)
+		}
+	}
+}

@@ -106,6 +106,10 @@ type tomlConfig struct {
 		Streaming       *bool                    `toml:"streaming"`
 		ReasoningEffort provider.ReasoningEffort `toml:"reasoning"`
 		Interactive     bool                     `toml:"interactive"`
+		// MaxOutputTokens is an optional cap on generated tokens. Zero leaves the
+		// provider's default in place; a model that consistently ends with
+		// finish_reason=length needs a larger cap here (or a smaller task).
+		MaxOutputTokens int `toml:"max_output_tokens"`
 		// PresetModels are provider:model suggestions offered by frontends; a
 		// suggestion list, never an allowlist.
 		PresetModels []string `toml:"preset_models"`
@@ -172,12 +176,15 @@ type tomlConfig struct {
 // session is interactive — deliberately does NOT live here; see role.Session.
 // Keeping that separation is what lets config stay a near-leaf package.
 type UserConfig struct {
-	ProvidersConfigs  map[string]ProviderConfig
-	DefaultModel      string
-	DefaultRole       string
-	Streaming         bool
-	ReasoningEffort   provider.ReasoningEffort
-	Interactive       bool
+	ProvidersConfigs map[string]ProviderConfig
+	DefaultModel     string
+	DefaultRole      string
+	Streaming        bool
+	ReasoningEffort  provider.ReasoningEffort
+	Interactive      bool
+	// MaxOutputTokens is the optional per-request output cap. Zero means the
+	// provider's own default.
+	MaxOutputTokens   int
 	TavilyAPIKey      string
 	PaperSearchSource string
 	// PaperSearchEmail optionally identifies Crossref requests for its polite pool.
@@ -344,6 +351,7 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 		cfg.Streaming = *raw.App.Streaming
 	}
 	cfg.ReasoningEffort = raw.App.ReasoningEffort
+	cfg.MaxOutputTokens = max(raw.App.MaxOutputTokens, 0)
 	cfg.Interactive = raw.App.Interactive
 	cfg.TavilyAPIKey = raw.Tool.TavilyAPIKey
 	if raw.Tool.PaperSearchSource != "" {

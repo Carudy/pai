@@ -196,6 +196,9 @@ default_model = "deepseek:deepseek-v4-flash"
 default_role  = "devops"      # see `pai role ls` for the available roles
 streaming     = true        # token-by-token output
 reasoning     = "low"       # "low" | "medium" | "high" (omit for none)
+# Optional cap on generated tokens. Omit for the provider default; raise it when
+# long file writes or reports keep ending with finish_reason="length".
+# max_output_tokens = 65536
 interactive   = false       # if true, auto-enables -i mode
 # Extra provider:model suggestions offered by frontends (the web model dropdown).
 # A suggestion list, never an allowlist; when default_model is unset, the first
@@ -944,7 +947,11 @@ What it covers:
   bounded status;
 - **event**: pending events recovered from the store after a restart;
 - **service**: created, edited, stopped, started;
-- **model**: reported prompt/completion/cached tokens per call;
+- **model**: reported prompt/completion/cached tokens per call, and parser
+  format failures with the provider's finish reason, byte/output-token counts,
+  and a bounded head/tail. The full model answer stays out of the operator log;
+  the transcript notice carries a bounded tail, and `pai -d` enables the raw
+  debug writer for local runs.
 - **prompt**: a pending approval, which is the commonest reason a resident session
   looks alive but does nothing;
 - **notice/error**: the same messages the transcript shows, so a stalled stream,

@@ -633,6 +633,36 @@ func TestRenderSituationOmitsRecordedMail(t *testing.T) {
 	}
 }
 
+// The served worker has no terminal debug writer, so parser format failures must
+// reach the operator diagnostics directly. Full model output is not forwarded;
+// the bounded format line already names the reason, size, and tokens.
+func TestWorkerForwardsFormatDiagnostics(t *testing.T) {
+	m, _ := newWatchService(t, &serviceTestProvider{done: make(chan int, 1)})
+	diags, unsubscribe, err := m.SubscribeDiagnostics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+
+	w := &worker{m: m, name: "svc"}
+	w.Debugf("[Format Error attempt 1/3] bytes=32123 finish_reason=%q completion_tokens=8000 truncated=true", "length")
+	select {
+	case d := <-diags:
+		if d.Kind != "model" || d.Outcome != "format error" || !strings.Contains(d.Detail, "finish_reason=\"length\"") {
+			t.Fatalf("diagnostic = %+v", d)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("format diagnostic was not forwarded")
+	}
+
+	w.Debugf("[AI Output]:\nsecret model text")
+	select {
+	case d := <-diags:
+		t.Fatalf("full model output leaked into diagnostics: %+v", d)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
 // A pending event that survived a restart must wake the session even when no
 // timer would; otherwise mail or a queued probe result can sleep indefinitely.
 func TestStartNextPrefersPendingEvents(t *testing.T) {
