@@ -66,8 +66,12 @@ type serviceTestBackend struct {
 	acked    []int64
 	nacked   []int64
 	nextWake *time.Time
-	state    string
-	status   string
+	// nextEventAt is what NextEventAt reports; tests set it to model a pending
+	// retry that has no watcher timer. nextEventErr models an unreadable store.
+	nextEventAt  *time.Time
+	nextEventErr error
+	state        string
+	status       string
 }
 
 func (b *serviceTestBackend) List() ([]Meta, error) { return []Meta{b.meta}, nil }
@@ -115,6 +119,18 @@ func (b *serviceTestBackend) NackEvent(_ string, id int64, _ error) error {
 
 func (b *serviceTestBackend) DueEvents(string, time.Time, int) ([]core.Event, error) {
 	return nil, nil
+}
+
+func (b *serviceTestBackend) NextEventAt(string) (time.Time, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.nextEventErr != nil {
+		return time.Time{}, false, b.nextEventErr
+	}
+	if b.nextEventAt == nil {
+		return time.Time{}, false, nil
+	}
+	return *b.nextEventAt, true, nil
 }
 
 func (b *serviceTestBackend) SetNextWake(_ string, at *time.Time) error {
@@ -188,36 +204,6 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // A registered service starts a resident worker on its first scheduler wake,
 // runs one activation, acks the event, and returns to suspended. A user Send
 // becomes a durable event and wakes the same worker.
-func TestManagerReschedulesServiceHeartbeat(t *testing.T) {
-	fp := &serviceTestProvider{
-		replies: []string{`{"action":"done","payload":"ok","reason":"done"}`},
-		done:    make(chan int, 4),
-	}
-	backend := &serviceTestBackend{
-		meta:     Meta{Name: "svc", ID: "sid-2", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
-		provider: fp,
-		spec:     `{"goal":"g","role":"devops","workspace":"/w","report_interval":"15s"}`,
-	}
-	m := New(context.Background(), backend, 2)
-	defer m.Close()
-	if err := m.StartServices(); err != nil {
-		t.Fatal(err)
-	}
-	if !m.WakeService("svc", core.Wake{Reason: "user", Events: []core.Event{{ID: 1, Class: core.EventUser}}}) {
-		t.Fatal("wake rejected")
-	}
-	select {
-	case <-fp.done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("the service never ran")
-	}
-	waitFor(t, "the next heartbeat", func() bool { return backend.next() != nil })
-	next := backend.next()
-	if next == nil || next.Before(time.Now()) {
-		t.Fatalf("next wake = %v, want a future time", next)
-	}
-}
-
 func TestManagerRunsServiceWakes(t *testing.T) {
 	fp := &serviceTestProvider{
 		replies: []string{

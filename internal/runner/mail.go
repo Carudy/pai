@@ -99,7 +99,9 @@ func (m *Manager) deliverMail(from, to, text string) error {
 	}
 	// A known service that was not registered yet (created outside StartServices):
 	// registering and retrying once is enough; the event is already durable.
-	m.scheduler.Register(to, nil)
+	// Register due now rather than dormant, so the event is still swept if the
+	// second Wake loses a concurrent unregister/register race.
+	m.scheduler.Register(to, &now)
 	m.scheduler.Wake(to, wake)
 	return nil
 }

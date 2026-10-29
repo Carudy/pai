@@ -807,7 +807,7 @@ function paintService() {
   for (const w of watchers) {
     const spec = specOf(w);
     const row = text('div', '', 'watcher-row');
-    const label = w.name === '_report' ? 'report (heartbeat)' : w.name;
+    const label = w.name;
     const name = text('span', label, 'watcher-name');
     name.title = spec.command ? spec.command : (spec.prompt ? spec.prompt : label);
     row.append(name);
@@ -868,7 +868,7 @@ function paintService() {
 function starterManifest() {
   const role = selectedRole() || 'devops';
   const workspace = serverCwd || '/path/to/workspace';
-  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\nreport_interval = "1h"\n# report_on_change = true\n\n# [[watcher]]\n# name = "river-level"\n# interval = "60s"\n# command = "scripts/check_river"\n# prompt = "Say what changed and whether it needs action."\n# repeat_after = "15m"\n# severity = "high"\n\n# [[watcher]]\n# name = "tick"\n# interval = "5m"\n# prompt = "Report the current state in one line."\n';
+  return '[service]\ngoal = ""\nrole = "' + role + '"\nworkspace = "' + workspace + '"\n\n# A periodic report is just a timer watcher.\n# [[watcher]]\n# name = "heartbeat"\n# interval = "1h"\n# prompt = "Report what changed since the last report. If nothing changed, yield."\n\n# [[watcher]]\n# name = "river-level"\n# interval = "60s"\n# command = "scripts/check_river"\n# prompt = "Say what changed and whether it needs action."\n# repeat_after = "15m"\n# priority = 70\n\n# [[watcher]]\n# name = "tick"\n# interval = "5m"\n# prompt = "Report the current state in one line."\n';
 }
 function paintCreateTabs() {
   for (const mode of ['chat', 'service']) {

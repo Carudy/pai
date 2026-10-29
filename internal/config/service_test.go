@@ -11,8 +11,6 @@ const validManifest = `
 goal      = "monitor river level and gate state"
 role      = "devops"
 workspace = "/srv/hydro"
-report_interval = "1h"
-report_on_change = true
 
 [[watcher]]
 name    = "river-level"
@@ -36,9 +34,6 @@ func TestParseServiceManifest(t *testing.T) {
 	}
 	if m.Goal == "" || m.Role != "devops" || m.Workspace != "/srv/hydro" {
 		t.Fatalf("manifest = %+v", m)
-	}
-	if m.ReportInterval != time.Hour || !m.ReportOnChange {
-		t.Fatalf("service fields = %+v", m)
 	}
 	if len(m.Watchers) != 2 {
 		t.Fatalf("watchers = %+v", m.Watchers)
@@ -68,8 +63,7 @@ func TestParseServiceManifest(t *testing.T) {
 	if m.Watchers[1].Prompt != "Report the current state in one line." {
 		t.Fatalf("timer prompt = %q", m.Watchers[1].Prompt)
 	}
-	if m.JSON == "" || !strings.Contains(m.JSON, `"report_interval":"1h0m0s"`) ||
-		!strings.Contains(m.JSON, `"watchers":[`) {
+	if m.JSON == "" || !strings.Contains(m.JSON, `"watchers":[`) {
 		t.Fatalf("canonical json = %s", m.JSON)
 	}
 
@@ -77,8 +71,7 @@ func TestParseServiceManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.ReportInterval != time.Hour || len(stored.Watchers) != 2 ||
-		stored.Watchers[0].Interval != time.Minute {
+	if len(stored.Watchers) != 2 || stored.Watchers[0].Interval != time.Minute {
 		t.Fatalf("stored manifest = %+v", stored)
 	}
 	if stored.Watchers[0].RepeatAfter != 15*time.Minute {
@@ -97,7 +90,6 @@ func TestServiceManifestRejectsBadInput(t *testing.T) {
 		}, "goal is required"},
 		{"missing role", func(s string) string { return strings.Replace(s, `role      = "devops"`, `role = ""`, 1) }, "role is required"},
 		{"missing workspace", func(s string) string { return strings.Replace(s, `workspace = "/srv/hydro"`, `workspace = ""`, 1) }, "workspace is required"},
-		{"short report", func(s string) string { return strings.Replace(s, `"1h"`, `"1s"`, 1) }, "at least 10s"},
 		{"short interval", func(s string) string { return strings.Replace(s, `interval = "60s"`, `interval = "1s"`, 1) }, "interval must be at least"},
 		{"long interval", func(s string) string { return strings.Replace(s, `interval = "60s"`, `interval = "48h"`, 1) }, "longer than 24h"},
 		{"bad timeout", func(s string) string { return strings.Replace(s, `timeout = "10s"`, `timeout = "2m"`, 1) }, "timeout must not exceed"},
@@ -109,6 +101,12 @@ func TestServiceManifestRejectsBadInput(t *testing.T) {
 			return strings.Replace(s, `severity = "high"`, "priority = 70\nseverity = \"high\"", 1)
 		}, "not both"},
 		{"priority out of range", func(s string) string { return strings.Replace(s, `severity = "high"`, `priority = 101`, 1) }, "between 1 and 100"},
+		{"removed report_interval", func(s string) string {
+			return strings.Replace(s, `workspace = "/srv/hydro"`, "workspace = \"/srv/hydro\"\nreport_interval = \"1h\"", 1)
+		}, "report_interval was removed"},
+		{"removed report_on_change", func(s string) string {
+			return strings.Replace(s, `workspace = "/srv/hydro"`, "workspace = \"/srv/hydro\"\nreport_on_change = true", 1)
+		}, "report_on_change was removed"},
 		{"duplicate watcher", func(s string) string {
 			return s + "\n[[watcher]]\nname = \"river-level\"\ninterval = \"30s\"\n"
 		}, "duplicate watcher"},
@@ -153,8 +151,7 @@ func TestRenderServiceManifestTOMLRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-parse rendered manifest: %v\n%s", err, text)
 	}
-	if back.Goal != m.Goal || back.Role != m.Role || back.Workspace != m.Workspace ||
-		back.ReportInterval != m.ReportInterval || back.ReportOnChange != m.ReportOnChange {
+	if back.Goal != m.Goal || back.Role != m.Role || back.Workspace != m.Workspace {
 		t.Fatalf("service fields = %+v, want %+v", back, m)
 	}
 	if len(back.Watchers) != len(m.Watchers) {

@@ -219,6 +219,15 @@ func (s *sqliteStore) PendingEvents(sessionID string) (int, error) {
 	return n, err
 }
 
+func (s *sqliteStore) NextEventAt(sessionID string) (time.Time, bool, error) {
+	var at sql.NullInt64
+	err := s.db.QueryRow(`SELECT MIN(available_at) FROM events WHERE session_id = ? AND state = 'pending'`, sessionID).Scan(&at)
+	if err != nil || !at.Valid {
+		return time.Time{}, false, err
+	}
+	return time.Unix(at.Int64, 0), true, nil
+}
+
 func (s *sqliteStore) ResetLeases() error {
 	_, err := s.db.Exec(`UPDATE events SET state = 'pending', lease_until = NULL WHERE state = 'leased'`)
 	return err

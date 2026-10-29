@@ -114,12 +114,16 @@ type ServiceEventBackend interface {
 	AckEvents(sessionID string, ids []int64) error
 	NackEvent(sessionID string, id int64, cause error) error
 	DueEvents(sessionID string, now time.Time, limit int) ([]core.Event, error)
+	// NextEventAt is the earliest pending retry time (zero/false when none). The
+	// scheduler uses it so a nacked or recovered event always schedules its own
+	// wake, even when no watcher is due.
+	NextEventAt(sessionID string) (time.Time, bool, error)
 	SetNextWake(name string, at *time.Time) error
 }
 
-// ServiceInfoBackend exposes a service's stored manifest JSON. The runner reads
-// report_interval and report_on_change from it, and falls back to its interval
-// when the backend cannot persist watcher state.
+// ServiceInfoBackend exposes a service's stored manifest JSON. The runner uses it
+// for the standing goal and, when the backend cannot persist watcher state, for
+// the manifest's intervals.
 type ServiceInfoBackend interface {
 	ServiceSpec(name string) (string, error)
 }

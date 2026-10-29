@@ -579,8 +579,6 @@ restart.
 goal             = "Watch the river gauge and report only when it matters."
 role             = "devops"
 workspace        = "~/work/river"
-report_interval  = "15m"     # heartbeat; omit to wake only on events
-report_on_change = true      # drop a heartbeat when no probe fired
 
 [[watcher]]
 name         = "river-level"
@@ -592,6 +590,11 @@ repeat_after = "10m"        # re-alert while true; omit = once per episode
 priority     = 70           # 1..100; bigger is more urgent (see below)
 
 [[watcher]]
+name     = "heartbeat"      # a periodic report is just a timer watcher
+interval = "15m"
+prompt   = "Report what changed since the last report. If nothing changed, yield."
+
+[[watcher]]
 name     = "tide-sample"    # no command = a timer
 interval = "13m"
 prompt   = "Report the tide reading and whether it changed."
@@ -601,8 +604,8 @@ A watcher with a `command` is a predicate: the command prints `1`/`true` (plus
 optional summary text) and the watcher decides. Without a `command` it is a
 timer: it fires every interval and its `prompt` is the wake context. Both kinds
 may carry a `prompt` — for a command probe it is extra guidance appended to the
-output when the probe fires. The built-in `_report` heartbeat created by
-`report_interval` carries one.
+output when the probe fires. There is no separate heartbeat setting: a periodic
+report is a timer watcher whose prompt says what to report.
 
 ## Priority
 
@@ -694,6 +697,13 @@ queued behind commands; the deferred probes run on the following activation. The
 instruction is recorded as a user turn, so it stays in the transcript and in the
 history the model reads later.
 
+There is no periodic "check for messages" timer. Queued work drives the
+schedule: after every activation PAI folds the earliest pending retry into the
+next wake, and a restart does the same at startup. A queue read that fails is
+treated as a retry, not as "nothing pending", so a transient store error cannot
+strand work until an unrelated message arrives. Stopping a service is the only
+state that intentionally leaves queued events waiting.
+
 ### Probe contract
 
 A `command` watcher is a predicate, not a parser: it runs in the workspace and
@@ -719,7 +729,8 @@ long activation is not immediately re-alerted. Without it a watcher fires once
 per continuous episode: the latch clears when the predicate goes false, so a
 level condition cannot wake the model on every probe by accident. Debouncing a
 flappy signal belongs in the probe script, where the condition's shape is known.
-`report_on_change` makes `report_interval` mean "only when something changed".
+A heartbeat that should speak only when something changed must decide that in
+its own probe or prompt; there is no cross-watcher "changed" flag.
 
 While a fire is **outstanding** — it woke the model but that wake has not been
 handled — the next situation lists it under `### Open items`. The watcher keeps

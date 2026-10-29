@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/runner"
 	"github.com/Carudy/pai/internal/session"
 	"github.com/Carudy/pai/internal/tui"
@@ -34,7 +33,6 @@ func TestServiceCreateListShow(t *testing.T) {
 goal = "watch the river"
 role = "devops"
 workspace = "`+workspace+`"
-report_interval = "30s"
 
 [[watcher]]
 name = "tick"
@@ -62,7 +60,7 @@ interval = "45s"
 	if code := runServiceCmd(context.Background(), []string{"show", "svc"}, &out, log); code != 0 {
 		t.Fatalf("show: %s", out.String())
 	}
-	for _, want := range []string{"workspace:", "report_interval", "tick", "watchers:"} {
+	for _, want := range []string{"workspace:", "priority", "tick", "watchers:"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("show output is missing %q:\n%s", want, out.String())
 		}
@@ -110,17 +108,11 @@ interval = "45s"
 		t.Fatal("store does not expose service state")
 	}
 	watchers, err := ss.Watchers(meta.Meta.ID)
-	if err != nil || len(watchers) != 2 {
+	if err != nil || len(watchers) != 1 {
 		t.Fatalf("watchers = %+v, %v", watchers, err)
 	}
-	// report_interval is stored as the reserved timer watcher, next to the
-	// manifest's own probes.
-	names := map[string]bool{}
-	for _, w := range watchers {
-		names[w.Name] = true
-	}
-	if !names["tick"] || !names[config.ReportWatcherName] {
-		t.Fatalf("watcher names = %v, want tick and %s", names, config.ReportWatcherName)
+	if watchers[0].Name != "tick" {
+		t.Fatalf("watcher = %+v, want tick", watchers[0])
 	}
 	info, err := ss.ServiceInfo("svc")
 	if err != nil || !strings.Contains(info.Spec, `"goal":"watch the river"`) {
@@ -353,7 +345,6 @@ func TestServiceEditWhileStopped(t *testing.T) {
 goal = "first"
 role = "devops"
 workspace = "`+workspace+`"
-report_interval = "30s"
 
 [[watcher]]
 name = "tick"
@@ -491,7 +482,6 @@ func TestServeBackendCreateService(t *testing.T) {
 goal = "watch the river"
 role = "devops"
 workspace = "` + workspace + `"
-report_interval = "1h"
 
 [[watcher]]
 name = "level"
@@ -506,7 +496,7 @@ command = "echo 1"
 	backend := &serveBackend{store: store, cwd: workspace}
 
 	// Without pre-approval the service is saved anyway; the first probe is what
-	// asks. A timer runs no code, so it is never gated.
+	// asks.
 	pending, err := backend.CreateService("pending", manifest, false)
 	if err != nil {
 		t.Fatalf("create without approval: %v", err)
@@ -514,9 +504,6 @@ command = "echo 1"
 	for _, w := range pending.Watchers {
 		if w.Name == "level" && w.ApprovedAt != nil {
 			t.Fatal("a command watcher was pre-approved without being asked")
-		}
-		if w.Name == config.ReportWatcherName && w.ApprovedAt == nil {
-			t.Fatal("a timer runs no command, so it must not wait for a grant")
 		}
 	}
 
@@ -531,8 +518,8 @@ command = "echo 1"
 	for _, w := range view.Watchers {
 		names[w.Name] = true
 	}
-	if !names["level"] || !names[config.ReportWatcherName] {
-		t.Fatalf("watchers = %v, want level and %s", names, config.ReportWatcherName)
+	if !names["level"] {
+		t.Fatalf("watchers = %v, want level", names)
 	}
 
 	if _, err := backend.CreateService("svc", manifest, true); err == nil || !strings.Contains(err.Error(), "already exists") {
@@ -553,7 +540,7 @@ command = "echo 1"
 	}
 
 	got, err := backend.ServiceView("svc")
-	if err != nil || got.Spec == "" || len(got.Watchers) != 2 {
+	if err != nil || got.Spec == "" || len(got.Watchers) != 1 {
 		t.Fatalf("read back = %+v, %v", got, err)
 	}
 }

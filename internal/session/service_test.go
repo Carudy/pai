@@ -299,6 +299,19 @@ func TestQueuedEventsShowsWaitingWork(t *testing.T) {
 	if queued[0].Attempts != 1 {
 		t.Fatalf("attempts = %d, want the nack counted", queued[0].Attempts)
 	}
+
+	// The nacked mail defines the next wake; the leased watcher is in flight and
+	// must not schedule a second activation.
+	at, ok, err := s.NextEventAt(created.Meta.ID)
+	if err != nil || !ok || at.Unix() != now.Add(time.Hour).Unix() {
+		t.Fatalf("next event = %v, %v, %v; want the mail retry", at, ok, err)
+	}
+	if err := s.AckEvents([]int64{mail}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.NextEventAt(created.Meta.ID); err != nil || ok {
+		t.Fatalf("next event after ack = %v, %v; want none", ok, err)
+	}
 }
 
 func TestNackRetriesThenDies(t *testing.T) {

@@ -35,7 +35,7 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 		return nil, nil
 	}
 	m.mu.Lock()
-	id, dir, parked := w.sessionID, w.workingDir, w.parked
+	id, dir := w.sessionID, w.workingDir
 	name := w.name
 	m.mu.Unlock()
 	if id == "" {
@@ -46,13 +46,6 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 	if err != nil {
 		w.emit("error", "could not read watchers: "+err.Error())
 		return nil, nil
-	}
-
-	manifest := m.serviceManifest(name)
-	if manifest != nil && manifest.ReportInterval > 0 && !hasWatcher(watchers, config.ReportWatcherName) {
-		if added, ok := m.ensureReportWatcher(wb, id, manifest.ReportInterval, now); ok {
-			watchers = append(watchers, added)
-		}
 	}
 
 	type observation struct {
@@ -171,31 +164,8 @@ func (m *Manager) probeDue(ctx context.Context, w *worker, now time.Time) ([]cor
 			Detail: watcherDetail(spec, res), Reason: reason, Next: nextRun})
 	}
 
-	// report_on_change means "report only when something changed": the report
-	// tick is a heartbeat, not news, so it is dropped when no other probe fired. Being
-	// parked on a question suppresses it too — a heartbeat would only re-ask.
-	changed := false
-	for _, o := range fired {
-		if o.spec.Name != config.ReportWatcherName {
-			changed = true
-			break
-		}
-	}
-
 	events := make([]core.Event, 0, len(fired))
 	for _, o := range fired {
-		if o.spec.Name == config.ReportWatcherName {
-			if manifest != nil && manifest.ReportOnChange && !changed {
-				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: o.spec.Name, Outcome: "quiet",
-					Detail: "report dropped: nothing changed", Next: o.next})
-				continue
-			}
-			if parked {
-				m.diag(Diagnostic{Session: name, Kind: "watcher", Subject: o.spec.Name, Outcome: "deferred",
-					Detail: "report dropped: parked on a question", Next: o.next})
-				continue
-			}
-		}
 		ev := watcherEvent(id, o.spec, o.res, now)
 		if eb, ok := m.backend.(ServiceEventBackend); ok {
 			eid, err := eb.AppendEvent(id, ev)
@@ -251,27 +221,6 @@ func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result,
 		Session: sessionID, Class: class, Priority: spec.Priority, Kind: kind,
 		Source: "watch:" + spec.Name, Payload: payload, DedupKey: "watch:" + spec.Name, At: now,
 	}
-}
-
-// ensureReportWatcher materializes service.report_interval as a timer watcher. It
-// is a watcher rather than a special case so the heartbeat shares one persisted
-// schedule, one due check, and one next-wake computation with every other probe.
-func (m *Manager) ensureReportWatcher(wb ServiceWatcherBackend, sessionID string, every time.Duration, now time.Time) (WatcherState, bool) {
-	spec := config.WatcherSpec{
-		Name: config.ReportWatcherName, Interval: every,
-		Timeout:  min(10*time.Second, every),
-		Prompt:   config.ReportPrompt,
-		Priority: config.WatcherPriorityTimer,
-	}
-	at := now.Add(every)
-	ws := WatcherState{
-		SessionID: sessionID, Name: spec.Name, Spec: config.MarshalWatcherSpec(spec),
-		Enabled: true, ApprovedAt: &now, NextRun: &at,
-	}
-	if err := wb.PutWatcher(ws); err != nil {
-		return WatcherState{}, false
-	}
-	return ws, true
 }
 
 // dueEvents returns pending events whose retry time has come, so work survives a
@@ -465,15 +414,6 @@ func mergeEvents(a, b []core.Event) []core.Event {
 		out = append(out, ev)
 	}
 	return core.PrepareEvents(out)
-}
-
-func hasWatcher(list []WatcherState, name string) bool {
-	for _, ws := range list {
-		if ws.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func earlier(a, b *time.Time) *time.Time {

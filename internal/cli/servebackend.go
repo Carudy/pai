@@ -99,6 +99,16 @@ func (b *serveBackend) DueEvents(sessionID string, now time.Time, limit int) ([]
 	return store.DueEvents(sessionID, now, limit)
 }
 
+func (b *serveBackend) NextEventAt(sessionID string) (time.Time, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.serviceStore()
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	return store.NextEventAt(sessionID)
+}
+
 func (b *serveBackend) SetNextWake(name string, at *time.Time) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()

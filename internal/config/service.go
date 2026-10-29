@@ -20,13 +20,6 @@ const (
 	MinWatchInterval = 10 * time.Second
 	// MaxWatchersPerService bounds the probe pool a single service can create.
 	MaxWatchersPerService = 8
-	// ReportWatcherName is the reserved timer watcher that carries
-	// service.report_interval. Manifest watcher names must start with a letter,
-	// so a user cannot collide with it.
-	ReportWatcherName = "_report"
-	// ReportPrompt is the reserved heartbeat's instruction: it is what the model
-	// reads when the report interval comes due.
-	ReportPrompt = "Report what changed since the last report. If nothing changed, yield."
 	// maxCommand bounds a probe's command text. The command is stored in the
 	// session row and shown in approval and inspection output.
 	maxCommand = 4 << 10
@@ -37,12 +30,10 @@ const (
 
 // ServiceManifest is one parsed, normalized manifest.
 type ServiceManifest struct {
-	Goal           string
-	Role           string
-	Workspace      string
-	ReportInterval time.Duration
-	ReportOnChange bool
-	Watchers       []WatcherSpec
+	Goal      string
+	Role      string
+	Workspace string
+	Watchers  []WatcherSpec
 	// JSON is the canonical stored representation.
 	JSON string
 }
@@ -69,11 +60,9 @@ type serviceFile struct {
 }
 
 type serviceSection struct {
-	Goal           string `toml:"goal"`
-	Role           string `toml:"role"`
-	Workspace      string `toml:"workspace"`
-	ReportInterval string `toml:"report_interval,omitempty"`
-	ReportOnChange bool   `toml:"report_on_change,omitempty"`
+	Goal      string `toml:"goal"`
+	Role      string `toml:"role"`
+	Workspace string `toml:"workspace"`
 }
 
 // Probe priorities stay below a user instruction by default, so an alarm does
@@ -152,8 +141,17 @@ type watchSection struct {
 // ParseServiceManifest parses and validates a manifest file.
 func ParseServiceManifest(data []byte) (*ServiceManifest, error) {
 	var raw serviceFile
-	if err := toml.Unmarshal(data, &raw); err != nil {
+	meta, err := toml.Decode(string(data), &raw)
+	if err != nil {
 		return nil, fmt.Errorf("parse service manifest: %w", err)
+	}
+	// The old top-level heartbeat is gone: a periodic report is just a timer
+	// watcher now. Refuse the keys rather than silently ignoring them.
+	for _, key := range meta.Undecoded() {
+		switch key.String() {
+		case "service.report_interval", "service.report_on_change":
+			return nil, fmt.Errorf("%s was removed; add a timer [[watcher]] with a prompt instead", key)
+		}
 	}
 	manifest, err := normalizeManifest(raw)
 	if err != nil {
@@ -181,11 +179,9 @@ func MarshalServiceManifest(m *ServiceManifest) (string, error) {
 // manifest was written in; the canonical stored form remains JSON.
 func RenderServiceManifestTOML(m *ServiceManifest) (string, error) {
 	raw := serviceFile{Service: serviceSection{
-		Goal:           m.Goal,
-		Role:           m.Role,
-		Workspace:      m.Workspace,
-		ReportInterval: durationString(m.ReportInterval),
-		ReportOnChange: m.ReportOnChange,
+		Goal:      m.Goal,
+		Role:      m.Role,
+		Workspace: m.Workspace,
 	}}
 	for _, w := range m.Watchers {
 		raw.Watchers = append(raw.Watchers, watchSection{
@@ -202,15 +198,11 @@ func RenderServiceManifestTOML(m *ServiceManifest) (string, error) {
 	return buf.String(), nil
 }
 
-// NextWake returns the earliest heartbeat or watcher interval from now. A
-// service with no report interval and no watchers waits for external events.
+// NextWake returns the earliest watcher interval from now. A service with no
+// watchers waits for external events.
 func (m *ServiceManifest) NextWake(now time.Time) (time.Time, bool) {
 	var next time.Time
 	found := false
-	if m.ReportInterval > 0 {
-		next = now.Add(m.ReportInterval)
-		found = true
-	}
 	for _, w := range m.Watchers {
 		if w.Interval <= 0 {
 			continue
@@ -235,12 +227,7 @@ func ParseStoredServiceSpec(spec string) (*ServiceManifest, error) {
 		return nil, fmt.Errorf("parse stored service spec: %w", err)
 	}
 	manifest := &ServiceManifest{
-		Goal: raw.Goal, Role: raw.Role, Workspace: raw.Workspace,
-		ReportOnChange: raw.ReportOnChange, JSON: spec,
-	}
-	var err error
-	if manifest.ReportInterval, err = parseDuration(raw.ReportInterval); err != nil {
-		return nil, fmt.Errorf("stored report_interval: %w", err)
+		Goal: raw.Goal, Role: raw.Role, Workspace: raw.Workspace, JSON: spec,
 	}
 	for _, w := range raw.Watchers {
 		spec, err := watcherFromJSON(w)
@@ -284,10 +271,9 @@ func watcherFromJSON(raw watcherJSON) (WatcherSpec, error) {
 
 func normalizeManifest(raw serviceFile) (*ServiceManifest, error) {
 	manifest := &ServiceManifest{
-		Goal:           strings.TrimSpace(raw.Service.Goal),
-		Role:           strings.TrimSpace(raw.Service.Role),
-		Workspace:      strings.TrimSpace(raw.Service.Workspace),
-		ReportOnChange: raw.Service.ReportOnChange,
+		Goal:      strings.TrimSpace(raw.Service.Goal),
+		Role:      strings.TrimSpace(raw.Service.Role),
+		Workspace: strings.TrimSpace(raw.Service.Workspace),
 	}
 	if manifest.Goal == "" {
 		return nil, fmt.Errorf("service.goal is required")
@@ -300,13 +286,6 @@ func normalizeManifest(raw serviceFile) (*ServiceManifest, error) {
 	}
 	if manifest.Workspace == "" {
 		return nil, fmt.Errorf("service.workspace is required")
-	}
-	var err error
-	if manifest.ReportInterval, err = parseDuration(raw.Service.ReportInterval); err != nil {
-		return nil, fmt.Errorf("service.report_interval: %w", err)
-	}
-	if manifest.ReportInterval > 0 && manifest.ReportInterval < MinWatchInterval {
-		return nil, fmt.Errorf("service.report_interval must be at least %s", MinWatchInterval)
 	}
 	if len(raw.Watchers) > MaxWatchersPerService {
 		return nil, fmt.Errorf("at most %d watchers are allowed", MaxWatchersPerService)
@@ -395,12 +374,10 @@ func durationString(d time.Duration) string {
 }
 
 type manifestJSON struct {
-	Goal           string        `json:"goal"`
-	Role           string        `json:"role"`
-	Workspace      string        `json:"workspace"`
-	ReportInterval string        `json:"report_interval,omitempty"`
-	ReportOnChange bool          `json:"report_on_change,omitempty"`
-	Watchers       []watcherJSON `json:"watchers,omitempty"`
+	Goal      string        `json:"goal"`
+	Role      string        `json:"role"`
+	Workspace string        `json:"workspace"`
+	Watchers  []watcherJSON `json:"watchers,omitempty"`
 }
 
 type watcherJSON struct {
@@ -417,7 +394,6 @@ type watcherJSON struct {
 func manifestJSONOf(m *ServiceManifest) manifestJSON {
 	out := manifestJSON{
 		Goal: m.Goal, Role: m.Role, Workspace: m.Workspace,
-		ReportInterval: durationString(m.ReportInterval), ReportOnChange: m.ReportOnChange,
 	}
 	for _, w := range m.Watchers {
 		out.Watchers = append(out.Watchers, watcherJSONOf(w))

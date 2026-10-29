@@ -56,6 +56,11 @@ type ServiceStore interface {
 	// QueuedEvents returns pending and leased events whatever their retry time,
 	// most urgent first. It is the operator view; delivery uses DueEvents.
 	QueuedEvents(sessionID string, limit int) ([]core.Event, error)
+	// NextEventAt returns the earliest availability time among pending events.
+	// It lets the scheduler wake a session for a queued retry even when no
+	// watcher timer is due, so durable work cannot go idle. Leased events are in
+	// flight and are not included.
+	NextEventAt(sessionID string) (time.Time, bool, error)
 	// LeaseEvents marks events in flight, so a crash can distinguish them from
 	// pending work and reset them on the next open.
 	LeaseEvents(ids []int64, until time.Time) error

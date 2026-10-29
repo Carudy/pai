@@ -115,7 +115,7 @@ func newWatchService(t *testing.T, fp *serviceTestProvider, watchers ...WatcherS
 		serviceTestBackend: &serviceTestBackend{
 			meta:     Meta{Name: "svc", ID: "sid-w", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
 			provider: fp,
-			spec:     `{"goal":"watch the river","role":"devops","workspace":"/w","report_interval":"1h"}`,
+			spec:     `{"goal":"watch the river","role":"devops","workspace":"/w"}`,
 		},
 		watchers: watchers,
 	}
@@ -331,34 +331,6 @@ func TestServiceGoalReachesThePromptHead(t *testing.T) {
 	}
 }
 
-// report_interval is materialized as the reserved timer watcher, so the heartbeat
-// shares the probes' schedule instead of being a second, drifting timer.
-func TestServiceReportWatcherIsCreated(t *testing.T) {
-	fp := &serviceTestProvider{
-		replies: []string{`{"action":"done","payload":"ok","reason":"done"}`},
-		done:    make(chan int, 2),
-	}
-	m, backend := newWatchService(t, fp)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	wake := core.Wake{Reason: "user", Events: []core.Event{{ID: 1, Class: core.EventUser, Kind: "user_input"}}}
-	next, err := m.Activate(ctx, "svc", wake)
-	if err != nil {
-		t.Fatalf("Activate: %v", err)
-	}
-	if fp.CallCount() != 1 {
-		t.Fatalf("model calls = %d, want 1", fp.CallCount())
-	}
-	w := backend.watcher(t, config.ReportWatcherName)
-	if !w.Enabled || w.NextRun == nil || !w.NextRun.After(time.Now()) {
-		t.Fatalf("report watcher = %+v, want a future next run", w)
-	}
-	if next == nil || !next.After(time.Now()) {
-		t.Fatalf("next wake = %v, want the report watcher's time", next)
-	}
-}
-
 // The situation names the watcher that fired and carries its output, so the
 // model can tell a probe result apart from an instruction. The scheduler's own
 // clock tick is not repeated: the probe that fired already explains the wake.
@@ -376,14 +348,12 @@ func TestRenderSituationNamesWatchers(t *testing.T) {
 	wake := core.Wake{Reason: "timer", Events: []core.Event{
 		{Class: core.EventTimer, Kind: "timer", Source: "clock"},
 		{Class: core.EventWatcher, Kind: "watch", Source: "watch:river-level", Payload: "mode=flood level=3.7"},
-		{Class: core.EventTimer, Kind: "timer", Source: "watch:" + config.ReportWatcherName, Payload: "Report what changed."},
 		{Class: core.EventTimer, Kind: "timer", Source: "watch:tick", Payload: "Report the state in one line."},
 		{Class: core.EventUser, Kind: "user_input", Payload: "check the gate"},
 	}}
 	got := renderSituation(wake, nil)
 	for _, want := range []string{
 		`- watcher "river-level" fired: mode=flood level=3.7`,
-		"- periodic report is due: Report what changed.",
 		`- timer "tick" fired: Report the state in one line.`,
 	} {
 		if !strings.Contains(got, want) {
@@ -443,8 +413,8 @@ func TestServiceRecoversDueEvents(t *testing.T) {
 }
 
 // An activation that ends by asking parks the session: the question is visible
-// in status, and the report heartbeat stops until a human (or a probe) wakes it.
-func TestServiceParksOnAskAndSuppressesHeartbeat(t *testing.T) {
+// in status until a human (or a probe) wakes it again.
+func TestServiceParksOnAsk(t *testing.T) {
 	fp := &serviceTestProvider{
 		replies: []string{`{"action":"ask","payload":"which gate should open?","reason":"need input"}`},
 		done:    make(chan int, 2),
@@ -460,18 +430,6 @@ func TestServiceParksOnAskAndSuppressesHeartbeat(t *testing.T) {
 	state, status := backend.persistedState()
 	if state != StateParked || !strings.Contains(status, "which gate") {
 		t.Fatalf("state = %q, status = %q; want parked with the question", state, status)
-	}
-
-	// The report tick is due, but a heartbeat would only repeat the question.
-	backend.dueNow(t, config.ReportWatcherName)
-	if _, err := m.Activate(ctx, "svc", clockWake()); err != nil {
-		t.Fatalf("Activate after ask: %v", err)
-	}
-	if fp.CallCount() != 1 {
-		t.Fatalf("model calls = %d, want the parked service to skip the heartbeat", fp.CallCount())
-	}
-	if state, _ := backend.persistedState(); state != StateParked {
-		t.Fatalf("state = %q, want it to stay parked", state)
 	}
 }
 
@@ -552,6 +510,9 @@ func (b *multiServiceBackend) AckEvents(string, []int64) error      { return nil
 func (b *multiServiceBackend) NackEvent(string, int64, error) error { return nil }
 func (b *multiServiceBackend) DueEvents(string, time.Time, int) ([]core.Event, error) {
 	return nil, nil
+}
+func (b *multiServiceBackend) NextEventAt(string) (time.Time, bool, error) {
+	return time.Time{}, false, nil
 }
 func (b *multiServiceBackend) SetNextWake(string, *time.Time) error { return nil }
 
@@ -659,26 +620,106 @@ func TestRenderSituationOmitsRecordedMail(t *testing.T) {
 	}
 }
 
-// A due event that survived a restart must wake the session even when no timer
-// would; otherwise mail or a queued probe result can sleep indefinitely.
-func TestStartNextPrefersDueEvents(t *testing.T) {
+// A pending event that survived a restart must wake the session even when no
+// timer would; otherwise mail or a queued probe result can sleep indefinitely.
+func TestStartNextPrefersPendingEvents(t *testing.T) {
 	backend := &watchTestBackend{
 		serviceTestBackend: &serviceTestBackend{
 			meta: Meta{Name: "svc", ID: "sid", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
 		},
-		due: []core.Event{{ID: 1, Class: core.EventPeer, Kind: "mail", Payload: "hello"}},
 	}
 	m := New(context.Background(), backend, 2)
 	t.Cleanup(m.Close)
 	now := time.Now()
+	due := now.Add(-time.Second)
+	backend.nextEventAt = &due
 	if next := m.startNext(backend.meta, now); next == nil || next.After(now) {
 		t.Fatalf("next = %v, want due now for a pending event", next)
 	}
-	backend.due = nil
+	backend.nextEventAt = nil
 	future := now.Add(time.Hour)
 	backend.meta.NextWake = &future
 	if next := m.startNext(backend.meta, now); next == nil || !next.Equal(future) {
 		t.Fatalf("next = %v, want the stored wake", next)
+	}
+}
+
+// An unreadable queue is not an empty queue: startup must retry shortly rather
+// than reading the error as "nothing to do" and sleeping forever.
+func TestStartNextRetriesOnQueueError(t *testing.T) {
+	backend := &watchTestBackend{
+		serviceTestBackend: &serviceTestBackend{
+			meta: Meta{Name: "svc", ID: "sid", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
+		},
+	}
+	backend.nextEventErr = errors.New("database is locked")
+	m := New(context.Background(), backend, 2)
+	t.Cleanup(m.Close)
+	now := time.Now()
+	next := m.startNext(backend.meta, now)
+	if next == nil {
+		t.Fatal("next = nil, want a retry after a queue read error")
+	}
+	if next.Before(now) || next.After(now.Add(pendingRetryDelay+time.Second)) {
+		t.Fatalf("next = %v, want a retry within %v", next, pendingRetryDelay)
+	}
+}
+
+// The same rule after an activation: a failed queue read must schedule a retry,
+// even when the activation itself found nothing substantive to do.
+func TestActivationSchedulesRetryOnQueueError(t *testing.T) {
+	fp := &serviceTestProvider{done: make(chan int, 1)}
+	backend := &watchTestBackend{
+		serviceTestBackend: &serviceTestBackend{
+			meta:     Meta{Name: "svc", ID: "sid-w", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
+			provider: fp,
+			spec:     `{"goal":"g","role":"devops","workspace":"/w"}`,
+		},
+	}
+	backend.nextEventErr = errors.New("database is locked")
+	m := New(context.Background(), backend, 2)
+	t.Cleanup(m.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	next, err := m.Activate(ctx, "svc", clockWake())
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if fp.CallCount() != 0 {
+		t.Fatalf("model calls = %d, want none", fp.CallCount())
+	}
+	if next == nil || next.Before(start) || next.After(start.Add(pendingRetryDelay+time.Second)) {
+		t.Fatalf("next = %v, want a retry within %v", next, pendingRetryDelay)
+	}
+}
+
+// A pending event with a future retry time (a nack) must become the next wake
+// even when no watcher is due, so it cannot go idle until another message.
+func TestActivationSchedulesPendingRetry(t *testing.T) {
+	fp := &serviceTestProvider{done: make(chan int, 1)}
+	backend := &watchTestBackend{
+		serviceTestBackend: &serviceTestBackend{
+			meta:     Meta{Name: "svc", ID: "sid-w", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
+			provider: fp,
+			spec:     `{"goal":"g","role":"devops","workspace":"/w"}`,
+		},
+	}
+	retry := time.Now().Add(2 * time.Minute)
+	backend.nextEventAt = &retry
+	m := New(context.Background(), backend, 2)
+	t.Cleanup(m.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	next, err := m.Activate(ctx, "svc", clockWake())
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if fp.CallCount() != 0 {
+		t.Fatalf("model calls = %d, want none for a bare clock tick", fp.CallCount())
+	}
+	if next == nil || next.Sub(retry).Abs() > time.Second {
+		t.Fatalf("next = %v, want the pending retry %v", next, retry)
 	}
 }
 

@@ -1430,7 +1430,7 @@ async function verifyServiceMode() {
       {id: 7, class: 'peer', priority: 60, kind: 'mail', source: 'session:alice', payload: 'check the gate', at: '2026-10-27T11:58:00Z', attempts: 0},
     ],
     watchers: [
-      {name: '_report', enabled: true, spec: '{"interval":"1h"}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
+      {name: 'heartbeat', enabled: true, spec: '{"interval":"1h","priority":30}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
       {name: 'river', enabled: true, approved_at: '2026-10-27T10:00:00Z', spec: '{"command":"cat state.json","interval":"60s"}', last_state: '{"fired":1793000000,"reported":true}', last_error: 'courier failed'},
     ],
   };
@@ -1441,7 +1441,7 @@ async function verifyServiceMode() {
   assert.match(p.get('service-status').textContent, /level 3\.8/, 'the last report is shown');
   assert.equal(p.get('service-watchers').children.length, 3, 'a header plus every probe');
   assert.equal(p.get('service-watchers').children[0].children[0].textContent, 'Watcher', 'the probe table has aligned columns');
-  assert.equal(p.get('service-watchers').children[1].children[0].textContent, 'report (heartbeat)', 'the reserved probe is labelled');
+  assert.equal(p.get('service-watchers').children[1].children[0].textContent, 'heartbeat', 'the timer probe is labelled');
   assert.match(p.get('service-watchers').children[2].children[4].textContent, /courier failed/, 'a probe error is shown');
   assert.match(p.get('service-manifest-view').textContent, /"goal": "watch the river"/, 'the manifest is pretty-printed');
   assert.equal(p.get('service-queue').children.length, 2, 'a header plus one queued message');

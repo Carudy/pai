@@ -65,16 +65,59 @@ func (m *Manager) StartServices() error {
 
 // startNext is the timer a service is registered with at startup. A durable
 // event may have been appended just before the process stopped; there is no
-// in-memory wake to replay it, so look once and make the session due now.
-// Without this, mail or a watcher event with no matching timer could sleep until
-// an unrelated wake.
+// in-memory wake to replay it, so use the earliest pending retry time. Without
+// this, mail or a watcher event with no matching timer could sleep until an
+// unrelated wake.
 func (m *Manager) startNext(meta Meta, now time.Time) *time.Time {
 	if events, ok := m.backend.(ServiceEventBackend); ok && meta.ID != "" {
-		if due, err := events.DueEvents(meta.ID, now, 1); err == nil && len(due) > 0 {
-			return &now
+		at, queued, err := events.NextEventAt(meta.ID)
+		switch {
+		case err != nil:
+			// Do not read a broken store as "no work": retry shortly. A service
+			// that starts with a transient database error must not sleep forever.
+			retry := now.Add(pendingRetryDelay)
+			m.diag(Diagnostic{Session: meta.Name, Kind: "service", Outcome: "deferred",
+				Detail: "could not check pending events: " + err.Error(), Next: retry})
+			return earlier(meta.NextWake, &retry)
+		case queued:
+			return earlier(meta.NextWake, &at)
 		}
 	}
 	return meta.NextWake
+}
+
+// pendingRetryDelay is how soon a service looks again when its durable queue
+// cannot be read. It is deliberately short: the retry is a recovery path, not a
+// polling interval, and it stops once the store answers.
+const pendingRetryDelay = 30 * time.Second
+
+// nextPendingEvent is the earliest retry among durable events that are not due
+// yet. After an activation, a nacked event has a future availability time; this
+// makes that time the next wake instead of letting the session go idle. A failed
+// read is a retry, never "nothing queued" — otherwise a transient store error
+// would strand work until an unrelated message arrived.
+func (m *Manager) nextPendingEvent(w *worker) *time.Time {
+	events, ok := m.backend.(ServiceEventBackend)
+	if !ok {
+		return nil
+	}
+	m.mu.Lock()
+	id := w.sessionID
+	m.mu.Unlock()
+	if id == "" {
+		return nil
+	}
+	at, queued, err := events.NextEventAt(id)
+	if err != nil {
+		retry := time.Now().Add(pendingRetryDelay)
+		m.diag(Diagnostic{Session: w.name, Kind: "activation", Outcome: "deferred",
+			Detail: "could not check pending events: " + err.Error(), Next: retry})
+		return &retry
+	}
+	if !queued {
+		return nil
+	}
+	return &at
 }
 
 // RegisterService schedules a service by name without preparing its runtime.
@@ -100,7 +143,7 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 		// A preparation failure (including a settings change that is retiring the
 		// worker) must not silently unschedule the service: ask the scheduler to
 		// look again shortly.
-		retry := time.Now().Add(30 * time.Second)
+		retry := time.Now().Add(pendingRetryDelay)
 		return &retry, err
 	}
 	now := time.Now()
@@ -135,6 +178,7 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 			now := time.Now()
 			next = earlier(next, &now)
 		}
+		next = earlier(next, m.nextPendingEvent(w))
 		m.persistNextWake(w, name, next)
 		// Worth a line even though no model call happens: it is the difference
 		// between "the probe ran and found nothing" and "the service is dead".
@@ -151,7 +195,7 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	if err != nil {
 		// The wake's events were nacked with a backoff; make sure the scheduler
 		// looks again even if no watcher would have woken the service.
-		retry := time.Now().Add(30 * time.Second)
+		retry := time.Now().Add(pendingRetryDelay)
 		probeNext = earlier(probeNext, &retry)
 		m.diag(Diagnostic{Session: name, Kind: "activation", Outcome: "failed", Detail: err.Error()})
 	}
@@ -160,6 +204,7 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 		now := time.Now()
 		at = earlier(at, &now)
 	}
+	at = earlier(at, m.nextPendingEvent(w))
 	m.persistNextWake(w, name, at)
 	return at, err
 }
@@ -209,9 +254,10 @@ func (m *Manager) sendServiceEvent(name, text string) error {
 		return ErrStopped
 	}
 
+	now := time.Now()
 	ev := core.Event{
 		Session: id, Class: core.EventUser, Kind: "user_input", Source: "user",
-		Payload: text, At: time.Now(),
+		Payload: text, At: now,
 	}
 	if eb, ok := m.backend.(ServiceEventBackend); ok && id != "" {
 		eid, err := eb.AppendEvent(id, ev)
@@ -233,7 +279,9 @@ func (m *Manager) sendServiceEvent(name, text string) error {
 	if stopped {
 		return ErrStopped
 	}
-	m.scheduler.Register(name, nil)
+	// Register due now, not dormant: if the second Wake also loses a race, the
+	// timer still sweeps the durable event instead of leaving it queued forever.
+	m.scheduler.Register(name, &now)
 	if m.scheduler.Wake(name, wake) {
 		return nil
 	}
@@ -768,14 +816,6 @@ func (m *Manager) nextWatcherRun(w *worker, now time.Time) *time.Time {
 		retry := now.Add(30 * time.Second)
 		return &retry
 	}
-	// A user wake skips the probe pass, but a report interval still needs its
-	// reserved watcher: materialize it here so the heartbeat is not lost.
-	manifest := m.serviceManifest(name)
-	if manifest != nil && manifest.ReportInterval > 0 && !hasWatcher(watchers, config.ReportWatcherName) {
-		if added, ok := m.ensureReportWatcher(wb, id, manifest.ReportInterval, now); ok {
-			watchers = append(watchers, added)
-		}
-	}
 	var next *time.Time
 	for _, ws := range watchers {
 		if !ws.Enabled {
@@ -817,9 +857,7 @@ func renderSituation(wake core.Wake, open []openItem) string {
 		case ev.Class == core.EventTimer && strings.HasPrefix(ev.Source, "watch:"):
 			name := strings.TrimPrefix(ev.Source, "watch:")
 			payload := boundedPayload(ev.Payload, "")
-			if name == config.ReportWatcherName {
-				fmt.Fprintf(&b, "- periodic report is due: %s\n", boundedPayload(ev.Payload, "report"))
-			} else if payload != "" {
+			if payload != "" {
 				fmt.Fprintf(&b, "- timer %q fired: %s\n", name, payload)
 			} else {
 				fmt.Fprintf(&b, "- timer %q fired\n", name)

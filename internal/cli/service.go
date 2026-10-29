@@ -40,8 +40,7 @@ card a chat tool call uses (once / trust session / always). A command name alrea
 trusted for the session counts as a grant.
 A manifest edit is only allowed while the service is stopped; the role, workspace,
 spec, and watcher set are replaced, while the session's history and queued events
-are kept. report_interval is stored as the reserved timer watcher _report and
-shown with the others. Deleting is the one irreversible action: it removes the
+are kept. A periodic report is just a timer watcher. Deleting is the one irreversible action: it removes the
 service's transcript, queued events, and watcher grants as well as the row, so a
 recreate starts clean. A chat session is refused here; use ` + "`pai session rm`" + `.
 
@@ -527,16 +526,6 @@ func newService(store session.Store, name string, manifest *config.ServiceManife
 	return created.Meta, next, nil
 }
 
-// reportWatcherSpec is the reserved heartbeat. It is a watcher, not a special
-// case, so it shares one persisted schedule with every other probe.
-func reportWatcherSpec(every time.Duration) config.WatcherSpec {
-	return config.WatcherSpec{
-		Name: config.ReportWatcherName, Interval: every,
-		Timeout: min(10*time.Second, every),
-		Prompt:  config.ReportPrompt,
-	}
-}
-
 // reconcileWatchers makes the stored watcher set match a manifest: unchanged
 // specs keep their observation state and their grant, changed or new ones start
 // clean, and rows no longer in the manifest are removed. dueNow is for an edit:
@@ -549,9 +538,6 @@ func reportWatcherSpec(every time.Duration) config.WatcherSpec {
 // run asks through the ordinary confirmation card.
 func reconcileWatchers(ss session.ServiceStore, sessionID string, manifest *config.ServiceManifest, now time.Time, existing []session.Watcher, dueNow, approveCommands bool) error {
 	specs := append([]config.WatcherSpec(nil), manifest.Watchers...)
-	if manifest.ReportInterval > 0 {
-		specs = append(specs, reportWatcherSpec(manifest.ReportInterval))
-	}
 	byName := make(map[string]session.Watcher, len(existing))
 	for _, w := range existing {
 		byName[w.Name] = w

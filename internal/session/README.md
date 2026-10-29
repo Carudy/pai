@@ -47,8 +47,10 @@ See the [module map](../organization.md) for the storage adapter boundary.
   stacking duplicates. Events are ordered by `priority` descending (bigger is
   more urgent), then deadline and arrival; `DueEvents` only returns work whose
   retry time has arrived, while `QueuedEvents` also lists leased work for
-  inspection. Watchers are keyed by `(session_id, name)` and keep their last
-  observed state, next run, and last error.
+  inspection. `NextEventAt` reports the earliest pending retry so a nacked event
+  can schedule the next wake instead of leaving the session idle. Watchers are
+  keyed by `(session_id, name)` and keep their last observed state, next run, and
+  last error.
 - State changes (`SetServiceState`, `SetNextWake`, `SetUsage`) deliberately leave
   `updated_at` alone: a timer probe must not reorder the session list every cycle.
 - `ServiceInfo` adds the status document and manifest spec to `Meta`, so listing
