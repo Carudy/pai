@@ -63,14 +63,15 @@ See the [module map](../organization.md) for the storage adapter boundary.
 ## Groups
 
 - `GroupStore` (also type-asserted on a `Store`) is the group directory:
-  `groups` (name, lead, member cap) and `group_members`, which references the
-  immutable session id so a rename cannot move a session and deleting one drops
-  its membership through the foreign key. A session is in at most one group, and
-  the lead must be a member.
+  `groups` (name, shared goal, optional lead, member cap) and `group_members`,
+  which references the immutable session id so a rename cannot move a session
+  and deleting one drops its membership through the foreign key. A session is in
+  at most one group, and a lead, when set, must be a member.
 - Membership reads are single indexed lookups, so nothing is scanned or
   backfilled at startup.
 - A group carries no scheduler state: it owns no wake counter and cannot pause a
-  member. The only durable facts are the roster and the lead.
+  member. The only durable facts are the roster, the shared goal, and an optional
+  lead.
 - Migrations are additive: existing databases gain `id`, `mode`, `state`,
   `status`, `spec`, and `next_wake`, rows are backfilled with an immutable id,
   and `PRAGMA user_version` is set. v2 adds `events.priority` and backfills it

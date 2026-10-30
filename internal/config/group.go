@@ -18,12 +18,17 @@ const (
 	// MaxGroupMembers is a structural cap. Fan-out and listing cost grow with the
 	// member count, and a group is a working set, not an org chart.
 	MaxGroupMembers = 32
+	// maxGroupGoal bounds the shared goal. It is rendered into every member's
+	// prompt head, so a long paste would be paid for by the whole group every
+	// wake.
+	maxGroupGoal = 1 << 10
 )
 
 // GroupManifest is one parsed, normalized group definition.
 type GroupManifest struct {
 	Name       string
-	Lead       string
+	Goal       string // optional shared goal, rendered into each member's head
+	Lead       string // optional escalation hint; no routing role
 	MaxMembers int
 	Members    []string
 }
@@ -35,6 +40,7 @@ type groupFile struct {
 }
 
 type groupSection struct {
+	Goal       string `toml:"goal"`
 	Lead       string `toml:"lead"`
 	MaxMembers int    `toml:"max_members"`
 }
@@ -59,11 +65,15 @@ func ParseGroupManifest(data []byte) (*GroupManifest, error) {
 	}
 	m := &GroupManifest{
 		Name:       strings.TrimSpace(raw.Name),
+		Goal:       strings.TrimSpace(raw.Group.Goal),
 		Lead:       strings.TrimSpace(raw.Group.Lead),
 		MaxMembers: raw.Group.MaxMembers,
 	}
 	if m.Name == "" {
 		return nil, fmt.Errorf("a group manifest needs a name")
+	}
+	if len(m.Goal) > maxGroupGoal {
+		return nil, fmt.Errorf("goal is longer than %d bytes", maxGroupGoal)
 	}
 	if m.MaxMembers == 0 {
 		m.MaxMembers = DefaultGroupMaxMembers
@@ -90,11 +100,9 @@ func ParseGroupManifest(data []byte) (*GroupManifest, error) {
 		return nil, fmt.Errorf("%d members exceed max_members %d", len(m.Members), m.MaxMembers)
 	}
 	if m.Lead == "" {
-		// One member is the common case for a first group; defaulting the lead
-		// keeps the manifest short without making an ambiguous one silently pick.
-		m.Lead = m.Members[0]
-	}
-	if !seen[m.Lead] {
+		// No default: silently choosing a member would imply an authority the
+		// group does not grant. A lead is only an escalation hint.
+	} else if !seen[m.Lead] {
 		return nil, fmt.Errorf("the lead %q must be one of the members", m.Lead)
 	}
 	return m, nil
@@ -105,7 +113,12 @@ func ParseGroupManifest(data []byte) (*GroupManifest, error) {
 func RenderGroupManifestTOML(m *GroupManifest) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "name = %q\n\n[group]\n", m.Name)
-	fmt.Fprintf(&b, "lead        = %q\n", m.Lead)
+	if m.Goal != "" {
+		fmt.Fprintf(&b, "goal = %q\n", m.Goal)
+	}
+	if m.Lead != "" {
+		fmt.Fprintf(&b, "lead = %q\n", m.Lead)
+	}
 	fmt.Fprintf(&b, "max_members = %d\n", m.MaxMembers)
 	for _, name := range m.Members {
 		fmt.Fprintf(&b, "\n[[member]]\nname = %q\n", name)

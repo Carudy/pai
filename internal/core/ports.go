@@ -102,7 +102,9 @@ type Sessions interface {
 // the tool reports that rather than failing the run. Delivery never grants trust
 // or widens the sender's or receiver's tool set.
 type Mailer interface {
-	DeliverMail(to, text string, meta MailMeta) error
+	// DeliverMail queues a message and returns how many sessions received a copy
+	// (one for an addressed message, one per other member for a group address).
+	DeliverMail(to, text string, meta MailMeta) (int, error)
 }
 
 // MailMeta is the provenance of one message: the chain of work it belongs to and

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 func groupHelp() string {
 	return `SUBCOMMANDS
   list, ls                     List groups with their lead and member count
-  show, cat <name>             Show members, today's wakes, and the budget
+  show, cat <name>             Show the goal, members, and state
   create, new --file F         Create a group from a manifest
   add <group> <session>        Add an existing service session to a group
   rm-member <group> <session>  Remove a member (the lead cannot be removed)
@@ -28,16 +29,17 @@ func groupHelp() string {
 
 A group is a membership boundary over existing service sessions, not a new kind
 of process: each member keeps its own role, model, workspace, and watchers. It
-decides who may mail whom and which session receives ` + "`group:<name>`" + ` (a
-message to the group goes to its lead, never to every member).
+decides who may mail whom, and it gives every member the same three things: a
+shared goal, the roster, and (if their role lacks it) the ` + "`mail`" + ` tool. It
+schedules nothing and budgets nothing.
 
-Mail never crosses a group edge, and a session outside every group may only
-mail another ungrouped session. A human instruction is never affected by a
-group.
+` + "`group:<name>`" + ` broadcasts to every other member, so a group address is one
+message and N copies, not N². ` + "`lead`" + ` is optional and is only an escalation
+hint — it plays no role in addressing.
 
 The store is exclusive, so stop ` + "`pai serve`" + ` before creating, editing, or removing a
-group; a running server still enforces membership and budgets for the groups it
-finds at startup.
+group; a running server enforces the membership it read at startup, so a change
+takes effect when the server restarts.
 `
 }
 
@@ -184,6 +186,9 @@ func groupShow(name string, stdout io.Writer, log *tui.Logger) int {
 	fmt.Fprintf(stdout, "id:          %s\n", g.ID)
 	fmt.Fprintf(stdout, "lead:        %s\n", emptyOr(g.LeadName, "-"))
 	fmt.Fprintf(stdout, "members:     %d/%d\n", len(members), g.MaxMembers)
+	if goal := strings.TrimSpace(g.Goal); goal != "" {
+		fmt.Fprintf(stdout, "goal:        %s\n", goal)
+	}
 	fmt.Fprintln(stdout, "member               state")
 	for _, m := range members {
 		fmt.Fprintf(stdout, "%-20s %s\n", m.Name, emptyOr(state[m.SessionID], "-"))
@@ -254,21 +259,30 @@ func groupCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 		}
 		ids = append(ids, meta.ID)
 	}
-	lead, exists := byName[manifest.Lead]
-	if !exists {
-		log.Errorf("Error: the lead %q is not a session\n", manifest.Lead)
-		return 1
+	leadID := ""
+	if manifest.Lead != "" {
+		lead, exists := byName[manifest.Lead]
+		if !exists {
+			log.Errorf("Error: the lead %q is not a session\n", manifest.Lead)
+			return 1
+		}
+		leadID = lead.ID
 	}
 	group := core.Group{
 		Name:       manifest.Name,
-		LeadID:     lead.ID,
+		Goal:       manifest.Goal,
+		LeadID:     leadID,
 		MaxMembers: manifest.MaxMembers,
 	}
 	if err := gs.CreateGroup(group, ids); err != nil {
 		log.Errorf("Error creating group: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "created group %s with %d member(s); lead %s\n", manifest.Name, len(ids), manifest.Lead)
+	leadNote := "no lead"
+	if manifest.Lead != "" {
+		leadNote = "lead " + manifest.Lead
+	}
+	fmt.Fprintf(stdout, "created group %s with %d member(s); %s\n", manifest.Name, len(ids), leadNote)
 	return 0
 }
 

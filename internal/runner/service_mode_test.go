@@ -60,6 +60,9 @@ type serviceTestBackend struct {
 	meta     Meta
 	provider provider.Provider
 	spec     string
+	// role overrides the default role, so a test can prepare a session whose role
+	// does not declare a tool the host adds.
+	role string
 
 	mu     sync.Mutex
 	events []core.Event
@@ -90,8 +93,12 @@ func (b *serviceTestBackend) Prepare(name string) (*config.UserConfig, provider.
 }
 
 func (b *serviceTestBackend) PrepareWorkspace(string, string) (*config.UserConfig, provider.Provider, core.Recorder, []provider.Message, func(), Meta, error) {
+	role := b.role
+	if role == "" {
+		role = "devops"
+	}
 	cfg := &config.UserConfig{
-		DefaultRole:  "devops",
+		DefaultRole:  role,
 		DefaultModel: "test:model",
 		Context:      config.ContextConfig{KeepTurns: 4, ExecLimit: 8000, HeadLines: 80, TailLines: 40},
 	}

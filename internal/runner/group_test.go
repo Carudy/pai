@@ -107,7 +107,7 @@ func TestMailRespectsTheGroupBoundary(t *testing.T) {
 		{"lone", "coord", "only its members"},
 		{"lone", "solo", ""},
 	} {
-		err := m.deliverMail(tc.from, tc.to, "hi", core.MailMeta{})
+		_, err := m.deliverMail(tc.from, tc.to, "hi", core.MailMeta{})
 		switch {
 		case tc.wantErr == "" && err != nil:
 			t.Errorf("%s -> %s: %v", tc.from, tc.to, err)
@@ -117,30 +117,121 @@ func TestMailRespectsTheGroupBoundary(t *testing.T) {
 	}
 }
 
-// `group:<name>` addresses the lead, not every member: a group of N then has N
-// addressed edges instead of N².
-func TestGroupAddressReachesTheLead(t *testing.T) {
+// `group:<name>` fans out to every other member, one durable event each, with
+// the sender excluded. Addressed mail stays the narrow path.
+func TestGroupAddressBroadcasts(t *testing.T) {
 	m, backend := groupManager(t)
-	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}, {"m1", "met"}})
 	m.mu.Lock()
 	m.stoppedServices["coord"] = true
+	m.stoppedServices["met"] = true
 	m.mu.Unlock()
 
-	if err := m.deliverMail("hydro", "group:hydro", "status?", core.MailMeta{}); err != nil {
+	sent, err := m.deliverMail("hydro", "group:hydro", "status?", core.MailMeta{})
+	if err != nil {
 		t.Fatalf("group mail: %v", err)
 	}
+	if sent != 2 {
+		t.Fatalf("recipients = %d, want 2", sent)
+	}
 	events := backend.eventsSnapshot()
-	if len(events) != 1 || events[0].Session != "c1" {
-		t.Fatalf("events = %+v, want one on the lead", events)
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want one per other member", events)
+	}
+	seen := map[string]bool{}
+	for _, ev := range events {
+		if ev.Kind != "broadcast" || ev.Class != core.EventPeer {
+			t.Fatalf("event = %+v, want a peer broadcast", ev)
+		}
+		if ev.Session == "h1" {
+			t.Fatal("the sender received its own broadcast")
+		}
+		seen[ev.Session] = true
+	}
+	if !seen["c1"] || !seen["m1"] {
+		t.Fatalf("recipients = %v", seen)
 	}
 
-	if err := m.deliverMail("lone", "group:hydro", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "not a member") {
+	if _, err := m.deliverMail("lone", "group:hydro", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "not a member") {
 		t.Fatalf("non-member -> group = %v", err)
 	}
-	if err := m.deliverMail("coord", "group:hydro", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "no one to address") {
-		t.Fatalf("lead -> own group = %v", err)
-	}
-	if err := m.deliverMail("hydro", "group:nope", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "does not exist") {
+	if _, err := m.deliverMail("hydro", "group:nope", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "does not exist") {
 		t.Fatalf("unknown group = %v", err)
+	}
+}
+
+// A grouped session's head carries the team: its name, shared goal, lead, and
+// the roster it can address, and `mail` is added by the session layer even when
+// the role does not declare it.
+func TestGroupedServicePromptCarriesTheGroup(t *testing.T) {
+	fp := &serviceTestProvider{
+		replies: []string{`{"action":"yield","payload":{},"reason":"ok"}`},
+		done:    make(chan int, 4),
+	}
+	m, backend := groupManager(t)
+	backend.provider = fp
+	// The coder role does not declare mail: the tool must come from the session
+	// layer, because this session is in a group.
+	backend.role = "coder"
+	backend.seed("ops", "c1", [][2]string{{"c1", "coord"}, {"s1", "svc"}})
+	backend.mu.Lock()
+	g := backend.groups["ops"]
+	g.Goal = "watch the river while the dam is serviced"
+	backend.groups["ops"] = g
+	backend.mu.Unlock()
+
+	if err := m.Send("svc", "check now"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the grouped activation", func() bool { return fp.CallCount() == 1 })
+
+	head := fp.last.Messages[0]
+	for _, want := range []string{
+		"## Group: ops",
+		"Shared goal: watch the river while the dam is serviced",
+		"Members: coord (lead), svc.",
+		"## Tool: mail",
+	} {
+		if !strings.Contains(head.Content, want) {
+			t.Errorf("head is missing %q:\n%s", want, head.Content)
+		}
+	}
+}
+
+func TestGroupBriefRoster(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+	brief, ok := m.groupBrief("h1")
+	if !ok {
+		t.Fatal("a member got no brief")
+	}
+	if brief.Name != "hydro" || brief.Lead != "coord" || len(brief.Members) != 2 {
+		t.Fatalf("brief = %+v", brief)
+	}
+	if _, ok := m.groupBrief("l2"); ok {
+		t.Fatal("an ungrouped session got a brief")
+	}
+}
+
+// A group of one has nobody to tell, and a broadcast burst is rate limited per
+// sender rather than by a wake budget.
+func TestBroadcastLimits(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("solo", "s2", [][2]string{{"s2", "solo"}})
+	if _, err := m.deliverMail("solo", "group:solo", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "no other members") {
+		t.Fatalf("lonely group = %v", err)
+	}
+
+	backend.seed("pair", "c1", [][2]string{{"c1", "coord"}, {"l2", "lone"}})
+	m.mu.Lock()
+	m.stoppedServices["lone"] = true
+	m.mu.Unlock()
+	for i := 0; i < maxBroadcastsPerWindow; i++ {
+		if _, err := m.deliverMail("coord", "group:pair", "tick", core.MailMeta{}); err != nil {
+			t.Fatalf("broadcast %d: %v", i, err)
+		}
+	}
+	if _, err := m.deliverMail("coord", "group:pair", "one too many", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "too many group broadcasts") {
+		t.Fatalf("rate limit = %v", err)
 	}
 }

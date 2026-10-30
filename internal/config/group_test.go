@@ -32,9 +32,9 @@ name = "hydrology"
 	}
 }
 
-// The lead is the address for `group:<name>`, so a manifest that names one
-// outside the membership is a mistake worth catching before it is stored.
-func TestParseGroupManifestRejectsBadLeads(t *testing.T) {
+// The lead is an escalation hint, not an address, so it is optional; when it is
+// present it must be a member.
+func TestParseGroupManifestLead(t *testing.T) {
 	_, err := ParseGroupManifest([]byte(`
 name = "g"
 [group]
@@ -46,10 +46,13 @@ name = "a"
 		t.Fatalf("err = %v", err)
 	}
 
-	// A manifest without a lead defaults to the first member.
+	// Omitting the lead is valid, and no member is silently promoted.
 	m, err := ParseGroupManifest([]byte("name = \"g\"\n[[member]]\nname = \"a\"\n"))
-	if err != nil || m.Lead != "a" {
-		t.Fatalf("default lead = %q, %v", m.Lead, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Lead != "" {
+		t.Fatalf("lead = %q, want none", m.Lead)
 	}
 }
 

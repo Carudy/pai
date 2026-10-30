@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/provider"
@@ -80,6 +81,11 @@ type Manager struct {
 	// maxResident bounds prepared service runtimes; 0 leaves it unbounded. Chat
 	// workers are not counted: they retire after each instruction anyway.
 	maxResident int
+
+	// broadcastMu guards the per-sender broadcast rate. It is in memory on
+	// purpose: the limit exists to stop a burst, and a restart may reset it.
+	broadcastMu sync.Mutex
+	broadcasts  map[string][]time.Time
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {

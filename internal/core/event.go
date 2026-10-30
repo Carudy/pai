@@ -43,10 +43,14 @@ const (
 // band; a producer may raise or lower an individual event without changing its
 // policy class (a watcher may be urgent, a status event is still status-only).
 const (
-	PrioritySafety    = 100
-	PriorityAbort     = 90
-	PriorityUser      = 80
-	PriorityPeer      = 60
+	PrioritySafety = 100
+	PriorityAbort  = 90
+	PriorityUser   = 80
+	PriorityPeer   = 60
+	// PriorityBroadcast is a group-wide message: below a direct ask, above a
+	// probe. It is addressed to everyone and so is less likely to need an
+	// immediate answer than mail aimed at one session.
+	PriorityBroadcast = 55
 	PriorityWatcher   = 50
 	PriorityTimer     = 30
 	PriorityStatus    = 20

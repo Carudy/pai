@@ -62,10 +62,16 @@ are targets.
 When the backend exposes `GroupBackend`, membership also bounds delivery: two
 members of one group may mail each other, two ungrouped sessions keep the old
 behaviour, and nothing crosses a group edge in either direction. `group:<name>`
-resolves to the group's lead rather than broadcasting, so a group has one
-coordination edge instead of N². A group never schedules a member: it carries no
-budget and cannot pause work, so a session's autonomy stays its own manifest's
-business.
+broadcasts to every other member — one durable event each, sender excluded,
+slightly below a direct ask — so a group is one message and N copies, not N².
+Broadcasts are rate limited per sender, because each one costs a wake in every
+member. `group:<name>` requires membership; `lead` is only an escalation hint.
+
+A member's prompt head carries a `GroupBrief` (shared goal, roster, addressing
+rule), built once per worker, and the host adds `mail` as a session-layer tool so
+a role that lacks it can still talk to its group. A group never schedules a
+member: it carries no budget and cannot pause work, so a session's autonomy stays
+its own manifest's business.
 
 ## Integration contract
 

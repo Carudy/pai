@@ -53,6 +53,7 @@ name = "hydro"
 
 [group]
 lead = "coord"
+goal = "keep the river gates safe during maintenance"
 
 [[member]]
 name = "coord"
@@ -81,7 +82,7 @@ name = "hydro"
 	if code := runGroupCmd(context.Background(), []string{"show", "hydro"}, &out, log); code != 0 {
 		t.Fatalf("group show: %s", out.String())
 	}
-	for _, want := range []string{"lead:", "coord", "members:     2/8"} {
+	for _, want := range []string{"lead:", "coord", "members:     2/8", "goal:        keep the river gates safe"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("show output is missing %q:\n%s", want, out.String())
 		}

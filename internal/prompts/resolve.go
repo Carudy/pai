@@ -41,6 +41,10 @@ const (
 	LayerBuiltin ToolLayer = "builtin"
 	LayerUser    ToolLayer = "user"
 	LayerProject ToolLayer = "project"
+	// LayerSession is a tool the host adds for this session's placement rather
+	// than its role — today, `mail` for a member of a group. The provenance still
+	// says why it is present, so the effective set stays explainable.
+	LayerSession ToolLayer = "session"
 	LayerMCP     ToolLayer = "mcp" // reserved
 )
 
@@ -158,6 +162,11 @@ type ResolveOptions struct {
 	UserToolsDir    string // empty = UserToolsDir()
 	Workspace       string // absolute workspace; project tools are scoped to it
 	TrustedProjects []string
+	// SessionTools are names the host adds because of where the session runs,
+	// not what role it has. They resolve like built-ins but carry LayerSession
+	// and SessionSource, so a tool that a group enabled is still attributable.
+	SessionTools  []string
+	SessionSource string // e.g. "group:hydro"
 }
 
 var (
@@ -215,6 +224,26 @@ func ResolveTools(opts ResolveOptions) (EffectiveSet, error) {
 		t, err := resolveOne(name, defs)
 		if err != nil {
 			return EffectiveSet{}, fmt.Errorf("resolve tool %q: %w", name, err)
+		}
+		set.Tools = append(set.Tools, t)
+		set.ByName[name] = t
+	}
+
+	// Session tools come from the host, not the role. Appending them after the
+	// role's own list keeps the order deterministic and makes a role that already
+	// declares the tool win without a duplicate section.
+	for _, name := range opts.SessionTools {
+		name = strings.TrimSpace(name)
+		if name == "" || set.Has(name) {
+			continue
+		}
+		t, err := resolveOne(name, defs)
+		if err != nil {
+			return EffectiveSet{}, fmt.Errorf("resolve session tool %q: %w", name, err)
+		}
+		t.Layer = LayerSession
+		if source := strings.TrimSpace(opts.SessionSource); source != "" {
+			t.Source = source
 		}
 		set.Tools = append(set.Tools, t)
 		set.ByName[name] = t

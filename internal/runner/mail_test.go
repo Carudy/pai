@@ -40,7 +40,7 @@ func TestDeliverMailQueuesAndWakes(t *testing.T) {
 		done:    make(chan int, 4),
 	}
 	m, backend := mailManager(t, fp)
-	if err := m.deliverMail("alice", "svc", "check the gate", core.MailMeta{}); err != nil {
+	if _, err := m.deliverMail("alice", "svc", "check the gate", core.MailMeta{}); err != nil {
 		t.Fatalf("deliverMail: %v", err)
 	}
 	events := backend.eventsSnapshot()
@@ -67,7 +67,7 @@ func TestDeliverMailQueuesAndWakes(t *testing.T) {
 func TestDeliverMailCarriesTheChain(t *testing.T) {
 	fp := &serviceTestProvider{done: make(chan int, 4)}
 	m, backend := mailManager(t, fp)
-	if err := m.deliverMail("alice", "svc", "re", core.MailMeta{Trace: "tr1", Hops: 2}); err != nil {
+	if _, err := m.deliverMail("alice", "svc", "re", core.MailMeta{Trace: "tr1", Hops: 2}); err != nil {
 		t.Fatalf("deliverMail: %v", err)
 	}
 	ev := backend.eventsSnapshot()[0]
@@ -81,7 +81,7 @@ func TestDeliverMailCarriesTheChain(t *testing.T) {
 func TestDeliverMailStopsALongChain(t *testing.T) {
 	fp := &serviceTestProvider{done: make(chan int, 4)}
 	m, backend := mailManager(t, fp)
-	err := m.deliverMail("alice", "svc", "re", core.MailMeta{Trace: "tr1", Hops: core.MaxMailHops + 1})
+	_, err := m.deliverMail("alice", "svc", "re", core.MailMeta{Trace: "tr1", Hops: core.MaxMailHops + 1})
 	if err == nil || !strings.Contains(err.Error(), "limit is 6") {
 		t.Fatalf("deliverMail = %v, want a hop-limit refusal", err)
 	}
@@ -101,7 +101,7 @@ func TestDeliverMailRejects(t *testing.T) {
 		{"alice", "svc", "  ", "empty"},
 		{"alice", "svc", strings.Repeat("x", maxMailBytes+1), "longer"},
 	} {
-		if err := m.deliverMail(tc.from, tc.to, tc.text, core.MailMeta{}); err == nil || !strings.Contains(err.Error(), tc.want) {
+		if _, err := m.deliverMail(tc.from, tc.to, tc.text, core.MailMeta{}); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("deliverMail(%+v) = %v, want %q", tc, err, tc.want)
 		}
 	}
@@ -111,7 +111,7 @@ func TestDeliverMailRejects(t *testing.T) {
 	for i := 0; i < maxMailPending+1; i++ {
 		backend.due = append(backend.due, core.Event{ID: int64(i + 1), Class: core.EventPeer, Kind: "mail"})
 	}
-	if err := m.deliverMail("alice", "svc", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "full") {
+	if _, err := m.deliverMail("alice", "svc", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "full") {
 		t.Fatalf("full mailbox: %v", err)
 	}
 }
@@ -124,7 +124,7 @@ func TestDeliverMailKeepsStoppedTargetAsleep(t *testing.T) {
 	m.mu.Lock()
 	m.stoppedServices["svc"] = true
 	m.mu.Unlock()
-	if err := m.deliverMail("alice", "svc", "later", core.MailMeta{}); err != nil {
+	if _, err := m.deliverMail("alice", "svc", "later", core.MailMeta{}); err != nil {
 		t.Fatalf("deliverMail: %v", err)
 	}
 	if got := len(backend.eventsSnapshot()); got != 1 {

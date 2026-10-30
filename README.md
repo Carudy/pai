@@ -787,15 +787,18 @@ including ones waiting for a retry, and dead-lettered events are marked as such.
 
 A group is a boundary over existing service sessions, not a new kind of process:
 each member keeps its own role, model, workspace, and watchers. It decides who
-may mail whom and which session a group address reaches. It schedules nothing and
-budgets nothing — a member's autonomy stays its own manifest's business.
+may mail whom, and it gives every member the same three things: a shared goal,
+the roster (the exact names `mail.to` accepts), and `mail` itself when the
+member's role does not declare it. It schedules nothing and budgets nothing — a
+member's autonomy stays its own manifest's business.
 
 ```toml
 # hydro.toml
 name = "hydro"
 
 [group]
-lead = "coordinator"   # receives `group:hydro`
+goal = "keep the river gates safe during maintenance"
+lead = "coordinator"   # optional escalation hint; not an address
 
 [[member]]
 name = "coordinator"
@@ -811,14 +814,15 @@ pai group add hydro meteo-ops
 
 Mail never crosses a group edge, and a session outside every group may only mail
 another ungrouped one — so a group is a real boundary rather than a label.
-`group:<name>` reaches the **lead**, never every member: members share state, and
-fan-out is what turns N sessions into N² messages. `pai group start|stop` applies
-the service transition to every member, and `pai group rm` deletes only the
-directory — member sessions and their transcripts stay.
+`group:<name>` broadcasts to every other member: one message, N copies (the
+sender is not copied). Addressed mail stays the narrow path — `"to":
+"hydrology"` reaches one session. `pai group start|stop` applies the service
+transition to every member, and `pai group rm` deletes only the directory —
+member sessions and their transcripts stay.
 
 Groups are managed from the CLI while the store is unlocked (that is, while `pai
-serve` is stopped); a running server enforces the membership and budgets it finds
-at startup.
+serve` is stopped); a running server enforces the membership it read at startup,
+so a membership change takes effect on the next restart.
 
 ## 🌐 Browser / server mode
 

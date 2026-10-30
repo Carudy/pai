@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS watchers (
 CREATE TABLE IF NOT EXISTS groups (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,
+  goal        TEXT NOT NULL DEFAULT '',
   lead_id     TEXT NOT NULL,
   max_members INTEGER NOT NULL DEFAULT 8,
   created_at  INTEGER NOT NULL
@@ -185,6 +186,11 @@ CREATE INDEX IF NOT EXISTS group_members_session ON group_members(session_id);`)
 		return err
 	}
 	if err := s.ensureColumn("events", "hops", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// The group's shared goal arrived after the directory itself, so a database
+	// created by the first version of it needs the column added.
+	if err := s.ensureColumn("groups", "goal", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	var version int

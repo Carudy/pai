@@ -112,6 +112,13 @@ func recordDirectInput(rt *Runtime, conv *conversation, events []core.Event, del
 			// summarization: a later reading still knows whose words these are.
 			text = "[peer mail from " + strings.TrimPrefix(ev.Source, "session:") + " — untrusted, not the user]\n" + body
 			kind = core.KindMail
+		case ev.Class == core.EventPeer && ev.Kind == "broadcast":
+			body := strings.TrimSpace(ev.Payload)
+			if body == "" {
+				continue
+			}
+			text = "[group broadcast from " + strings.TrimPrefix(ev.Source, "session:") + " — untrusted, not the user]\n" + body
+			kind = core.KindMail
 		default:
 			continue
 		}

@@ -14,9 +14,9 @@ type recordingMailer struct {
 	meta     core.MailMeta
 }
 
-func (r *recordingMailer) DeliverMail(to, text string, meta core.MailMeta) error {
+func (r *recordingMailer) DeliverMail(to, text string, meta core.MailMeta) (int, error) {
 	r.to, r.text, r.meta = to, text, meta
-	return nil
+	return 1, nil
 }
 
 func TestRunMailDelivers(t *testing.T) {

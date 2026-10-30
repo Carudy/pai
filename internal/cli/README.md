@@ -16,10 +16,10 @@ See the [module map](../organization.md) for dependency rules.
   stops or starts them, and deletes one with its history (`svc` is an alias).
   Stop/start/edit/delete only work while the server is down, because they need
   the store lock; the web API exposes the same transitions.
-- `group.go` manages the group directory: create from a manifest, list, show with
-  today's wakes, add or remove a member, start or stop every member, and delete
-  the directory without touching the sessions. Like `service.go` it needs the
-  store lock. Membership is enforced by `runner` through the optional
+- `group.go` manages the group directory: create from a manifest, list, show the
+  shared goal and members, add or remove a member, start or stop every member,
+  and delete the directory without touching the sessions. Like `service.go` it
+  needs the store lock. Membership is enforced by `runner` through the optional
   `GroupBackend` port, which `servebackend.go` forwards to the store.
 - A service is run by `pai serve`, which registers every `mode=service` session
   with the scheduler at startup — except one persisted as `stopped`.
