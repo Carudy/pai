@@ -24,8 +24,8 @@ name = "hydrology"
 	if m.Name != "hydro" || m.Lead != "coordinator" {
 		t.Fatalf("manifest = %+v", m)
 	}
-	if m.MaxMembers != DefaultGroupMaxMembers || m.DailyWakes != DefaultGroupDailyWakes {
-		t.Fatalf("defaults = %d/%d", m.MaxMembers, m.DailyWakes)
+	if m.MaxMembers != DefaultGroupMaxMembers {
+		t.Fatalf("max_members = %d", m.MaxMembers)
 	}
 	if len(m.Members) != 2 || m.Members[0] != "coordinator" || m.Members[1] != "hydrology" {
 		t.Fatalf("members = %v", m.Members)
@@ -56,7 +56,6 @@ name = "a"
 func TestParseGroupManifestLimits(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{"name = \"g\"\n[group]\nmax_members = 99\n[[member]]\nname = \"a\"\n", "max_members"},
-		{"name = \"g\"\n[group]\ndaily_wakes = -1\n[[member]]\nname = \"a\"\n", "negative"},
 		{"name = \"g\"\n", "at least one"},
 		{"[group]\nlead = \"a\"\n", "needs a name"},
 		{"name = \"g\"\n[[member]]\nname = \"a\"\n[[member]]\nname = \"a\"\n", "twice"},
@@ -68,13 +67,12 @@ func TestParseGroupManifestLimits(t *testing.T) {
 	}
 }
 
-// An explicit zero means unlimited, which is different from omitting the key.
-func TestParseGroupManifestUnlimitedBudget(t *testing.T) {
-	m, err := ParseGroupManifest([]byte("name = \"g\"\n[group]\ndaily_wakes = 0\n[[member]]\nname = \"a\"\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m.DailyWakes != 0 {
-		t.Fatalf("daily_wakes = %d, want 0", m.DailyWakes)
+// An unknown key is a mistake worth catching: a group describes membership and a
+// shared goal, not a member's role, and silently ignoring `role` would read as if
+// it did.
+func TestParseGroupManifestRejectsUnknownKeys(t *testing.T) {
+	_, err := ParseGroupManifest([]byte("name = \"g\"\n[[member]]\nname = \"a\"\nrole = \"devops\"\n"))
+	if err == nil || !strings.Contains(err.Error(), "role") {
+		t.Fatalf("err = %v, want an unknown-key refusal", err)
 	}
 }

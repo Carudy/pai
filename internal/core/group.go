@@ -4,15 +4,14 @@
 package core
 
 // Group is one membership boundary. LeadID is a member session that receives
-// `group:<name>` mail; MaxMembers and DailyWakes are policy, not capability.
-// DailyWakes is per member and 0 means unlimited (discouraged).
+// `group:<name>` mail; MaxMembers bounds the roster, which is also what keeps the
+// injected group block small.
 type Group struct {
 	ID         string
 	Name       string
 	LeadID     string
 	LeadName   string // resolved for display; empty when the lead row is gone
 	MaxMembers int
-	DailyWakes int
 }
 
 // GroupMember is one session's membership. Name is the session's display name,

@@ -178,23 +178,6 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	due, backlog := m.dueEvents(w, now)
 	wake.Events = mergeEvents(wake.Events, due)
 
-	// A member whose group budget for today is spent stops taking timer and peer
-	// work. The check runs before the probes so an exhausted session neither
-	// calls the model nor manufactures new events; the queued work stays durable
-	// and a human instruction still gets through.
-	if !hasUserInstruction(wake.Events) && m.budgetSpent(w, now) {
-		next := now.Add(budgetRetryDelay)
-		if later := m.nextWatcherRun(w, now); later != nil && later.After(next) {
-			next = *later
-		}
-		used, limit := m.budgetUsage(w, now)
-		m.persistNextWake(w, name, &next)
-		m.diag(Diagnostic{Session: name, Kind: "activation", Outcome: "skipped",
-			Detail: fmt.Sprintf("daily wake budget spent (%d/%d); %d queued event(s) wait",
-				used, limit, len(wake.Events)), Next: next})
-		return &next, nil
-	}
-
 	var probeEvents []core.Event
 	var probeNext *time.Time
 	if hasDirectInput(wake.Events) {
@@ -226,11 +209,6 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 
 	if strings.TrimSpace(wake.Situation) == "" {
 		wake.Situation = renderSituation(wake, m.openWatchers(w, wake))
-	}
-	// Counted only when the model is actually about to run, so a probe pass that
-	// found nothing costs nothing.
-	if !hasUserInstruction(wake.Events) {
-		m.takeWakeBudget(w, now)
 	}
 	m.diag(Diagnostic{Session: name, Kind: "activation", Outcome: "start", Detail: wakeSummary(wake.Reason, len(wake.Events))})
 	_, err = w.activate(ctx, wake)
@@ -850,86 +828,6 @@ func (m *Manager) startService(name, reason string) error {
 // hasDirectInput reports whether the wake carries a message addressed to this
 // session: a person's instruction or a peer mail. Such a wake takes priority
 // over due probes, because someone is waiting for a reply.
-// budgetRetryDelay is how long a budget-exhausted session waits before trying
-// again. The reset is a day away, so a cheap periodic retry is what lets it pick
-// work back up without an operator or a restart; these attempts never call the
-// model.
-const budgetRetryDelay = 15 * time.Minute
-
-// hasUserInstruction reports whether the wake carries an instruction from the
-// human. A budget stops peer and probe work, never a person: unlike
-// hasDirectInput, peer mail does not qualify, and a safety or abort event always
-// does.
-func hasUserInstruction(events []core.Event) bool {
-	for _, ev := range events {
-		switch {
-		case ev.Class == core.EventUser && ev.Kind == "user_input":
-			return true
-		case ev.Class == core.EventSafety, ev.Class == core.EventAbort:
-			return true
-		}
-	}
-	return false
-}
-
-// budgetLimit is the session's daily wake limit: its group's policy, or 0 for an
-// ungrouped session, an unlimited group, or a host without a group directory.
-func (m *Manager) budgetLimit(w *worker) int {
-	gb, ok := m.backend.(GroupBackend)
-	if !ok {
-		return 0
-	}
-	m.mu.Lock()
-	id := w.sessionID
-	m.mu.Unlock()
-	if id == "" {
-		return 0
-	}
-	g, in, err := gb.GroupBySession(id)
-	if err != nil || !in {
-		return 0
-	}
-	return g.DailyWakes
-}
-
-// budgetUsage reports today's count and the limit, or zeros when no budget
-// applies.
-func (m *Manager) budgetUsage(w *worker, now time.Time) (int, int) {
-	limit := m.budgetLimit(w)
-	bb, ok := m.backend.(WakeBudgetBackend)
-	if limit <= 0 || !ok {
-		return 0, limit
-	}
-	m.mu.Lock()
-	id := w.sessionID
-	m.mu.Unlock()
-	used, err := bb.DailyWakeCount(id, now)
-	if err != nil {
-		return 0, limit
-	}
-	return used, limit
-}
-
-func (m *Manager) budgetSpent(w *worker, now time.Time) bool {
-	used, limit := m.budgetUsage(w, now)
-	return limit > 0 && used >= limit
-}
-
-// takeWakeBudget counts one activation. A counter failure is reported but does
-// not stop the work: losing accounting must not lose a task.
-func (m *Manager) takeWakeBudget(w *worker, now time.Time) {
-	bb, ok := m.backend.(WakeBudgetBackend)
-	if !ok || m.budgetLimit(w) <= 0 {
-		return
-	}
-	m.mu.Lock()
-	id := w.sessionID
-	m.mu.Unlock()
-	if _, err := bb.TakeDailyWake(id, now); err != nil {
-		m.diag(Diagnostic{Session: w.name, Kind: "budget", Outcome: "failed", Detail: err.Error()})
-	}
-}
-
 func hasDirectInput(events []core.Event) bool {
 	for _, ev := range events {
 		switch {

@@ -19,9 +19,8 @@ See the [module map](../organization.md) for dependency rules.
 - `group.go` manages the group directory: create from a manifest, list, show with
   today's wakes, add or remove a member, start or stop every member, and delete
   the directory without touching the sessions. Like `service.go` it needs the
-  store lock. Membership and budgets are enforced by `runner` through the
-  optional `GroupBackend`/`WakeBudgetBackend` ports, which `servebackend.go`
-  forwards to the store.
+  store lock. Membership is enforced by `runner` through the optional
+  `GroupBackend` port, which `servebackend.go` forwards to the store.
 - A service is run by `pai serve`, which registers every `mode=service` session
   with the scheduler at startup — except one persisted as `stopped`.
 - The `serve*.go` files compose the session backend, `runner.Manager`, and

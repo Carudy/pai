@@ -787,16 +787,15 @@ including ones waiting for a retry, and dead-lettered events are marked as such.
 
 A group is a boundary over existing service sessions, not a new kind of process:
 each member keeps its own role, model, workspace, and watchers. It decides who
-may mail whom, which session a group address reaches, and how much a member may
-wake per day.
+may mail whom and which session a group address reaches. It schedules nothing and
+budgets nothing — a member's autonomy stays its own manifest's business.
 
 ```toml
 # hydro.toml
 name = "hydro"
 
 [group]
-lead        = "coordinator"   # receives `group:hydro`
-daily_wakes = 500             # per member per day, 0 = unlimited
+lead = "coordinator"   # receives `group:hydro`
 
 [[member]]
 name = "coordinator"
@@ -813,11 +812,9 @@ pai group add hydro meteo-ops
 Mail never crosses a group edge, and a session outside every group may only mail
 another ungrouped one — so a group is a real boundary rather than a label.
 `group:<name>` reaches the **lead**, never every member: members share state, and
-fan-out is what turns N sessions into N² messages. A spent `daily_wakes` budget
-stops peer, probe, and timer activations for that member until the next UTC day;
-the queued work stays durable and a human instruction always runs. `pai group
-start|stop` applies the service transition to every member, and `pai group rm`
-deletes only the directory — member sessions and their transcripts stay.
+fan-out is what turns N sessions into N² messages. `pai group start|stop` applies
+the service transition to every member, and `pai group rm` deletes only the
+directory — member sessions and their transcripts stay.
 
 Groups are managed from the CLI while the store is unlocked (that is, while `pai
 serve` is stopped); a running server enforces the membership and budgets it finds

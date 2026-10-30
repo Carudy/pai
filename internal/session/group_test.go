@@ -3,7 +3,6 @@ package session
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Carudy/pai/internal/core"
 )
@@ -26,7 +25,7 @@ func TestGroupDirectoryRoundTrip(t *testing.T) {
 	a := makeService(t, s, "hydro")
 	b := makeService(t, s, "met")
 
-	g := core.Group{Name: "hydro", LeadID: lead, MaxMembers: 3, DailyWakes: 10}
+	g := core.Group{Name: "hydro", LeadID: lead, MaxMembers: 3}
 	if err := s.CreateGroup(g, []string{lead, a}); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +33,7 @@ func TestGroupDirectoryRoundTrip(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("GroupByName = %v %v", ok, err)
 	}
-	if got.LeadName != "coord" || got.MaxMembers != 3 || got.DailyWakes != 10 {
+	if got.LeadName != "coord" || got.MaxMembers != 3 {
 		t.Fatalf("group = %+v", got)
 	}
 	if _, ok, err := s.GroupBySession(a); err != nil || !ok {
@@ -94,25 +93,5 @@ func TestGroupRejectsAStrangerLead(t *testing.T) {
 	err := s.CreateGroup(core.Group{Name: "g", LeadID: lead}, []string{member})
 	if err == nil || !strings.Contains(err.Error(), "lead must be one of its members") {
 		t.Fatalf("CreateGroup = %v, want a lead refusal", err)
-	}
-}
-
-// The budget is a per-day counter, not a decision: resetting at the UTC day
-// boundary is what lets a member resume after an overrun.
-func TestWakeBudgetCountsPerDay(t *testing.T) {
-	s := openSQLiteStore(t)
-	id := makeService(t, s, "svc")
-	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	for want := 1; want <= 3; want++ {
-		used, err := s.TakeDailyWake(id, now)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if used != want {
-			t.Fatalf("used = %d, want %d", used, want)
-		}
-	}
-	if got, err := s.DailyWakeCount(id, now.Add(24*time.Hour)); err != nil || got != 0 {
-		t.Fatalf("next day = %d, %v; want a fresh counter", got, err)
 	}
 }

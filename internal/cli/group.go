@@ -28,13 +28,12 @@ func groupHelp() string {
 
 A group is a membership boundary over existing service sessions, not a new kind
 of process: each member keeps its own role, model, workspace, and watchers. It
-decides three things — who may mail whom, which session receives ` + "`group:<name>`" + `
-(a message to the group goes to its lead, never to every member), and how many
-non-user wakes a member may have per day.
+decides who may mail whom and which session receives ` + "`group:<name>`" + ` (a
+message to the group goes to its lead, never to every member).
 
 Mail never crosses a group edge, and a session outside every group may only
-mail another ungrouped session. A human instruction is never counted against the
-budget and never refused.
+mail another ungrouped session. A human instruction is never affected by a
+group.
 
 The store is exclusive, so stop ` + "`pai serve`" + ` before creating, editing, or removing a
 group; a running server still enforces membership and budgets for the groups it
@@ -136,18 +135,14 @@ func groupList(stdout io.Writer, log *tui.Logger) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tLEAD\tMEMBERS\tDAILY WAKES")
+	fmt.Fprintln(tw, "NAME\tLEAD\tMEMBERS")
 	for _, g := range groups {
 		members, err := gs.GroupMembers(g.ID)
 		if err != nil {
 			log.Errorf("Error reading members of %s: %v\n", g.Name, err)
 			return 1
 		}
-		budget := "unlimited"
-		if g.DailyWakes > 0 {
-			budget = fmt.Sprintf("%d", g.DailyWakes)
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", g.Name, emptyOr(g.LeadName, "-"), len(members), budget)
+		fmt.Fprintf(tw, "%s\t%s\t%d\n", g.Name, emptyOr(g.LeadName, "-"), len(members))
 	}
 	if err := tw.Flush(); err != nil {
 		log.Errorf("Error writing list: %v\n", err)
@@ -185,24 +180,13 @@ func groupShow(name string, stdout io.Writer, log *tui.Logger) int {
 	for _, m := range metas {
 		state[m.ID] = m.State
 	}
-	budget := "unlimited"
-	if g.DailyWakes > 0 {
-		budget = fmt.Sprintf("%d", g.DailyWakes)
-	}
 	fmt.Fprintf(stdout, "name:        %s\n", g.Name)
 	fmt.Fprintf(stdout, "id:          %s\n", g.ID)
 	fmt.Fprintf(stdout, "lead:        %s\n", emptyOr(g.LeadName, "-"))
 	fmt.Fprintf(stdout, "members:     %d/%d\n", len(members), g.MaxMembers)
-	fmt.Fprintf(stdout, "daily wakes: %s per member\n", budget)
-	fmt.Fprintln(stdout, "member               state        woke today")
-	now := time.Now()
+	fmt.Fprintln(stdout, "member               state")
 	for _, m := range members {
-		used, err := gs.DailyWakeCount(m.SessionID, now)
-		if err != nil {
-			log.Errorf("Error reading the budget for %s: %v\n", m.Name, err)
-			return 1
-		}
-		fmt.Fprintf(stdout, "%-20s %-12s %d\n", m.Name, emptyOr(state[m.SessionID], "-"), used)
+		fmt.Fprintf(stdout, "%-20s %s\n", m.Name, emptyOr(state[m.SessionID], "-"))
 	}
 	return 0
 }
@@ -279,7 +263,6 @@ func groupCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 		Name:       manifest.Name,
 		LeadID:     lead.ID,
 		MaxMembers: manifest.MaxMembers,
-		DailyWakes: manifest.DailyWakes,
 	}
 	if err := gs.CreateGroup(group, ids); err != nil {
 		log.Errorf("Error creating group: %v\n", err)

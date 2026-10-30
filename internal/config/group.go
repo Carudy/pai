@@ -18,9 +18,6 @@ const (
 	// MaxGroupMembers is a structural cap. Fan-out and listing cost grow with the
 	// member count, and a group is a working set, not an org chart.
 	MaxGroupMembers = 32
-	// DefaultGroupDailyWakes bounds non-user activations per member per day. A
-	// human instruction is never counted or refused.
-	DefaultGroupDailyWakes = 500
 )
 
 // GroupManifest is one parsed, normalized group definition.
@@ -28,7 +25,6 @@ type GroupManifest struct {
 	Name       string
 	Lead       string
 	MaxMembers int
-	DailyWakes int // 0 = unlimited
 	Members    []string
 }
 
@@ -41,7 +37,6 @@ type groupFile struct {
 type groupSection struct {
 	Lead       string `toml:"lead"`
 	MaxMembers int    `toml:"max_members"`
-	DailyWakes *int   `toml:"daily_wakes"`
 }
 
 type memberSection struct {
@@ -53,8 +48,14 @@ type memberSection struct {
 // session store.
 func ParseGroupManifest(data []byte) (*GroupManifest, error) {
 	var raw groupFile
-	if _, err := toml.Decode(string(data), &raw); err != nil {
+	meta, err := toml.Decode(string(data), &raw)
+	if err != nil {
 		return nil, fmt.Errorf("parse group manifest: %w", err)
+	}
+	// A member is a reference to an existing session, so a key like `role` here
+	// would read as if the group configured that session. It does not.
+	if keys := meta.Undecoded(); len(keys) > 0 {
+		return nil, fmt.Errorf("unknown key %q in group manifest (a member only names an existing session)", keys[0].String())
 	}
 	m := &GroupManifest{
 		Name:       strings.TrimSpace(raw.Name),
@@ -69,14 +70,6 @@ func ParseGroupManifest(data []byte) (*GroupManifest, error) {
 	}
 	if m.MaxMembers < 1 || m.MaxMembers > MaxGroupMembers {
 		return nil, fmt.Errorf("max_members must be between 1 and %d", MaxGroupMembers)
-	}
-	if raw.Group.DailyWakes == nil {
-		m.DailyWakes = DefaultGroupDailyWakes
-	} else {
-		m.DailyWakes = *raw.Group.DailyWakes
-		if m.DailyWakes < 0 {
-			return nil, fmt.Errorf("daily_wakes must not be negative")
-		}
 	}
 	seen := make(map[string]bool, len(raw.Member))
 	for _, entry := range raw.Member {
@@ -114,7 +107,6 @@ func RenderGroupManifestTOML(m *GroupManifest) string {
 	fmt.Fprintf(&b, "name = %q\n\n[group]\n", m.Name)
 	fmt.Fprintf(&b, "lead        = %q\n", m.Lead)
 	fmt.Fprintf(&b, "max_members = %d\n", m.MaxMembers)
-	fmt.Fprintf(&b, "daily_wakes = %d\n", m.DailyWakes)
 	for _, name := range m.Members {
 		fmt.Fprintf(&b, "\n[[member]]\nname = %q\n", name)
 	}

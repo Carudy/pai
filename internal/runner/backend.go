@@ -219,20 +219,12 @@ type ServiceCreator interface {
 }
 
 // GroupBackend is the optional group directory. A backend without it runs as if
-// no session belonged to a group: membership is unrestricted and no budget
-// applies, which is exactly the behaviour before groups existed.
+// no session belonged to a group: membership is unrestricted, which is exactly
+// the behaviour before groups existed.
 type GroupBackend interface {
 	GroupByName(name string) (core.Group, bool, error)
 	GroupBySession(sessionID string) (core.Group, bool, error)
 	GroupMembers(groupID string) ([]core.GroupMember, error)
-}
-
-// WakeBudgetBackend counts non-user activations per session and day. It is
-// separate from GroupBackend so a backend can keep the directory without
-// accepting counter writes.
-type WakeBudgetBackend interface {
-	TakeDailyWake(sessionID string, now time.Time) (int, error)
-	DailyWakeCount(sessionID string, now time.Time) (int, error)
 }
 
 // ServiceEditor replaces a stopped service's manifest. It is deliberately not a

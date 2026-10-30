@@ -63,11 +63,9 @@ When the backend exposes `GroupBackend`, membership also bounds delivery: two
 members of one group may mail each other, two ungrouped sessions keep the old
 behaviour, and nothing crosses a group edge in either direction. `group:<name>`
 resolves to the group's lead rather than broadcasting, so a group has one
-coordination edge instead of N². `Activate` reads the group's `daily_wakes`
-through the same port and counts non-user activations via
-`WakeBudgetBackend`; a spent budget skips the model call and leaves queued events
-durable, while a user instruction, a safety event, or an abort always runs. A
-budget-exhausted session retries every 15 minutes instead of busy-looping.
+coordination edge instead of N². A group never schedules a member: it carries no
+budget and cannot pause work, so a session's autonomy stays its own manifest's
+business.
 
 ## Integration contract
 

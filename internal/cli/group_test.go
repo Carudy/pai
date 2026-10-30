@@ -52,8 +52,7 @@ interval = "45s"
 name = "hydro"
 
 [group]
-lead        = "coord"
-daily_wakes = 20
+lead = "coord"
 
 [[member]]
 name = "coord"
@@ -82,7 +81,7 @@ name = "hydro"
 	if code := runGroupCmd(context.Background(), []string{"show", "hydro"}, &out, log); code != 0 {
 		t.Fatalf("group show: %s", out.String())
 	}
-	for _, want := range []string{"lead:", "coord", "members:     2/8", "daily wakes: 20"} {
+	for _, want := range []string{"lead:", "coord", "members:     2/8"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("show output is missing %q:\n%s", want, out.String())
 		}
