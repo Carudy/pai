@@ -60,4 +60,9 @@ jobs:
         run: |
           flags=(--title "${{ github.ref_name }}" --generate-notes)
           case "${{ github.ref_name }}" in *-*) flags+=(--prerelease);; esac
+          # A tag can be moved while the version is still unreleased (a fix landed
+          # after the tag was cut). `gh release create` fails in that case and the
+          # old assets stay attached to the new tag, so replace the release. The
+          # tag itself is never deleted.
+          gh release delete "${{ github.ref_name }}" --yes >/dev/null 2>&1 || true
           gh release create "${{ github.ref_name }}" dist/* "${flags[@]}"
