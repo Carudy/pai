@@ -77,6 +77,7 @@ Each command has a short alias, and every command has its own `--help`:
 | `pai role` | `roles` | List and inspect available roles |
 | `pai tool` | `tools` | List, inspect, and dry-run custom tools |
 | `pai service` | `services`, `svc` | Create and inspect resident service sessions |
+| `pai group` | `groups` | Manage groups of service sessions |
 | `pai serve` | — | Serve the browser UI and HTTP API (see [Browser / server mode](#-browser--server-mode)) |
 | `pai conn` | — | Attach a terminal to a running `pai serve` session |
 | `pai help [cmd]` | — | Show help |
@@ -769,15 +770,58 @@ A session whose role lists the `mail` tool can send a short message to another
 The message is appended to the target's durable queue as an `EventPeer` before
 the scheduler is woken, so a busy target gets it at its next activation, a
 stopped target keeps it until it starts, and a crash does not lose it. The
-receiver records it as a user turn prefixed with the sender (`Mail from
-<name>:`), and it does not also appear in the situation block. Mail is text,
+receiver records it as a `mail` turn: the model reads the sender's words, but
+they are not a user instruction, so a peer cannot answer a pending question,
+approve a tool, or consume the `keep_turns` window. The situation names the
+sender and marks the content untrusted without repeating the body. Mail is text,
 not a capability: it never extends trust, and the receiver's own tool
-confirmations still apply. Delivery rejects self-mail, unknown targets, and
-oversized messages, and bounds a mailbox's due peer events as cheap
-backpressure. Only roles that list `mail` can send; any resident session can
-receive. `pai service show` and the web panel's **Queue** section list pending
-mail and probe events, including ones waiting for a retry, and dead-lettered
-events are marked as such.
+confirmations still apply. Each message carries a trace and is refused past six
+hops, so a two-session acknowledgement loop stops structurally rather than by
+politeness. Delivery rejects self-mail, unknown targets, and oversized messages,
+and a mailbox's due peer events are bounded as cheap backpressure. Only roles
+that list `mail` can send; any resident session can receive. `pai service show`
+and the web panel's **Queue** section list pending mail and probe events,
+including ones waiting for a retry, and dead-lettered events are marked as such.
+
+### Groups
+
+A group is a boundary over existing service sessions, not a new kind of process:
+each member keeps its own role, model, workspace, and watchers. It decides who
+may mail whom, which session a group address reaches, and how much a member may
+wake per day.
+
+```toml
+# hydro.toml
+name = "hydro"
+
+[group]
+lead        = "coordinator"   # receives `group:hydro`
+daily_wakes = 500             # per member per day, 0 = unlimited
+
+[[member]]
+name = "coordinator"
+[[member]]
+name = "hydrology"
+```
+
+```bash
+pai group create --file hydro.toml
+pai group show hydro
+pai group add hydro meteo-ops
+```
+
+Mail never crosses a group edge, and a session outside every group may only mail
+another ungrouped one — so a group is a real boundary rather than a label.
+`group:<name>` reaches the **lead**, never every member: members share state, and
+fan-out is what turns N sessions into N² messages. A spent `daily_wakes` budget
+stops peer, probe, and timer activations for that member until the next UTC day;
+the queued work stays durable and a human instruction always runs. `pai group
+start|stop` applies the service transition to every member, and `pai group rm`
+deletes only the directory — member sessions and their transcripts stay.
+
+Groups are managed from the CLI while the store is unlocked (that is, while `pai
+serve` is stopped); a running server enforces the membership and budgets it finds
+at startup.
 
 ## 🌐 Browser / server mode
 

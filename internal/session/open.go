@@ -36,7 +36,8 @@ func Open() (Store, error) {
 		return nil, errors.Join(fmt.Errorf("open session store: %w", err), lock.Close())
 	}
 	service, _ := store.(ServiceStore)
-	return &ownedStore{Store: store, ServiceStore: service, lock: lock}, nil
+	groups, _ := store.(GroupStore)
+	return &ownedStore{Store: store, ServiceStore: service, GroupStore: groups, lock: lock}, nil
 }
 
 type ownedStore struct {
@@ -45,12 +46,16 @@ type ownedStore struct {
 	// interface keeps a type assertion on the returned Store working through the
 	// ownership wrapper.
 	ServiceStore
+	// GroupStore is the group directory behind the same wrapper, for the same
+	// reason: `pai group` type-asserts the opened Store.
+	GroupStore
 	lock *os.File
 	once sync.Once
 	err  error
 }
 
 var _ ServiceStore = (*ownedStore)(nil)
+var _ GroupStore = (*ownedStore)(nil)
 
 func (s *ownedStore) Close() error {
 	s.once.Do(func() {

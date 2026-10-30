@@ -59,6 +59,16 @@ sender's trace and is refused past `core.MaxMailHops` deliveries. It is data,
 never a trust grant; the sender needs the `mail` tool, and only resident sessions
 are targets.
 
+When the backend exposes `GroupBackend`, membership also bounds delivery: two
+members of one group may mail each other, two ungrouped sessions keep the old
+behaviour, and nothing crosses a group edge in either direction. `group:<name>`
+resolves to the group's lead rather than broadcasting, so a group has one
+coordination edge instead of N². `Activate` reads the group's `daily_wakes`
+through the same port and counts non-user activations via
+`WakeBudgetBackend`; a spent budget skips the model call and leaves queued events
+durable, while a user instruction, a safety event, or an abort always runs. A
+budget-exhausted session retries every 15 minutes instead of busy-looping.
+
 ## Integration contract
 
 Only the composition root supplies a `Backend`; runner imports no storage or transport adapters. Backend methods may run concurrently. `Prepare` returns a per-worker configuration/provider/recorder, resumed messages, and a cleanup function. It must return promptly (the requested interface has no context). Cleanup runs once before the worker's slot is released. Runner copies the configuration struct; treat its nested maps/slices as immutable or return independently owned values.

@@ -43,6 +43,8 @@ var _ runner.ServiceWatcherBackend = (*serveBackend)(nil)
 var _ runner.ServiceStateBackend = (*serveBackend)(nil)
 var _ runner.ServiceBackend = (*serveBackend)(nil)
 var _ runner.ServiceCreator = (*serveBackend)(nil)
+var _ runner.GroupBackend = (*serveBackend)(nil)
+var _ runner.WakeBudgetBackend = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 	store, ok := b.store.(session.ServiceStore)
@@ -50,6 +52,64 @@ func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 		return nil, errors.New("session store does not expose service state")
 	}
 	return store, nil
+}
+
+func (b *serveBackend) groupStore() (session.GroupStore, error) {
+	store, ok := b.store.(session.GroupStore)
+	if !ok {
+		return nil, errors.New("session store does not expose groups")
+	}
+	return store, nil
+}
+
+func (b *serveBackend) GroupByName(name string) (core.Group, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return core.Group{}, false, err
+	}
+	return store.GroupByName(name)
+}
+
+func (b *serveBackend) GroupBySession(sessionID string) (core.Group, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return core.Group{}, false, err
+	}
+	return store.GroupBySession(sessionID)
+}
+
+func (b *serveBackend) GroupMembers(groupID string) ([]core.GroupMember, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.GroupMembers(groupID)
+}
+
+func (b *serveBackend) TakeDailyWake(sessionID string, now time.Time) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return 0, err
+	}
+	return store.TakeDailyWake(sessionID, now)
+}
+
+func (b *serveBackend) DailyWakeCount(sessionID string, now time.Time) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return 0, err
+	}
+	return store.DailyWakeCount(sessionID, now)
 }
 
 func (b *serveBackend) AppendEvent(sessionID string, e core.Event) (int64, error) {

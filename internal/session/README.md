@@ -59,10 +59,25 @@ See the [module map](../organization.md) for the storage adapter boundary.
   `updated_at` alone: a timer probe must not reorder the session list every cycle.
 - `ServiceInfo` adds the status document and manifest spec to `Meta`, so listing
   chat sessions does not load either.
+
+## Groups and budgets
+
+- `GroupStore` (also type-asserted on a `Store`) is the group directory:
+  `groups` (name, lead, member cap, per-member daily wakes) and `group_members`,
+  which references the immutable session id so a rename cannot move a session
+  and deleting one drops its membership through the foreign key. A session is in
+  at most one group, and the lead must be a member.
+- Membership reads are single indexed lookups, so nothing is scanned or
+  backfilled at startup.
+- `wake_budget` is a `(session_id, day)` counter keyed by the UTC date.
+  `TakeDailyWake` increments and returns the new total; the limit lives in the
+  group and is applied by `runner`, so the store holds no policy. Rows older than
+  a week are pruned on open.
 - Migrations are additive: existing databases gain `id`, `mode`, `state`,
   `status`, `spec`, and `next_wake`, rows are backfilled with an immutable id,
   and `PRAGMA user_version` is set. v2 adds `events.priority` and backfills it
-  from the class bands. Budget columns are deferred for 0.9.x.
+  from the class bands; `events.trace`/`events.hops` and the group tables are
+  created if missing. Budget columns are deferred for 0.9.x.
 
 ## Ownership and boundaries
 

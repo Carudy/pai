@@ -9,15 +9,21 @@ See the [module map](../organization.md) for dependency rules.
   terminal adapters, persistence, and cancellation.
 - `CliFlags` / `GetFlags` describe and parse agent-run flags.
 - `command.go` owns subcommand dispatch; `config.go`, `role.go`, `tool.go`,
-  `service.go`, and `session.go` implement the corresponding command families.
+  `service.go`, `group.go`, and `session.go` implement the corresponding command
+  families.
 - `service.go` creates resident sessions from a validated manifest, lists their
   state, status, watchers, and next wake, edits a stopped service's manifest,
   stops or starts them, and deletes one with its history (`svc` is an alias).
   Stop/start/edit/delete only work while the server is down, because they need
   the store lock; the web API exposes the same transitions.
-transitions. A service is run by `pai serve`, which registers every
-  `mode=service` session with the scheduler at startup — except one persisted as
-  `stopped`.
+- `group.go` manages the group directory: create from a manifest, list, show with
+  today's wakes, add or remove a member, start or stop every member, and delete
+  the directory without touching the sessions. Like `service.go` it needs the
+  store lock. Membership and budgets are enforced by `runner` through the
+  optional `GroupBackend`/`WakeBudgetBackend` ports, which `servebackend.go`
+  forwards to the store.
+- A service is run by `pai serve`, which registers every `mode=service` session
+  with the scheduler at startup — except one persisted as `stopped`.
 - The `serve*.go` files compose the session backend, `runner.Manager`, and
   `web.New`: `serve.go` owns flags, the entry point, and shutdown; `servebackend.go`
   implements the runner backend; `serveauth.go` handles origins and tokens;

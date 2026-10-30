@@ -84,6 +84,14 @@ func commands() []command {
 			help:    serviceHelp,
 			run:     runServiceCmd,
 		},
+		{
+			name:    "group",
+			aliases: []string{"groups"},
+			summary: "Manage groups of service sessions",
+			usage:   "pai group <list|show|create|add|rm-member|start|stop|rm> [args]",
+			help:    groupHelp,
+			run:     runGroupCmd,
+		},
 	}
 }
 

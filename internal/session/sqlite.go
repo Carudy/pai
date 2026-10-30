@@ -147,6 +147,27 @@ CREATE TABLE IF NOT EXISTS watchers (
   last_error  TEXT NOT NULL DEFAULT '',
   version     INTEGER NOT NULL DEFAULT 1,
   UNIQUE (session_id, name)
+);
+CREATE TABLE IF NOT EXISTS groups (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL UNIQUE,
+  lead_id     TEXT NOT NULL,
+  max_members INTEGER NOT NULL DEFAULT 8,
+  daily_wakes INTEGER NOT NULL DEFAULT 500,
+  created_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS group_members (
+  group_id   TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  joined_at  INTEGER NOT NULL,
+  PRIMARY KEY (group_id, session_id)
+);
+CREATE INDEX IF NOT EXISTS group_members_session ON group_members(session_id);
+CREATE TABLE IF NOT EXISTS wake_budget (
+  session_id TEXT NOT NULL,
+  day        TEXT NOT NULL,
+  used       INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (session_id, day)
 );`); err != nil {
 		return err
 	}
@@ -157,6 +178,12 @@ CREATE TABLE IF NOT EXISTS watchers (
 	// Old delivered events are audit history, not work. Prune them at startup so
 	// a long-running service's queue does not grow without bound.
 	if err := s.pruneDoneEvents(); err != nil {
+		return err
+	}
+	// A budget is only meaningful for today; keeping a week lets an operator see
+	// a recent overrun without letting the table grow forever.
+	if _, err := s.db.Exec(`DELETE FROM wake_budget WHERE day < ?`,
+		time.Now().UTC().AddDate(0, 0, -7).Format("2006-01-02")); err != nil {
 		return err
 	}
 	// v2: events gained a numeric priority. Older rows carry 0, so backfill from
