@@ -31,6 +31,11 @@ const (
 	KindNote       = "note"
 	// KindSummary marks a model-written summary that stands in for older turns.
 	KindSummary = "summary"
+	// KindMail is a message from another session. It rides the user role so the
+	// model reads it as speech, but it is deliberately not a turn start: a peer
+	// cannot answer the human's question, approve a tool, or consume the
+	// keep_turns window.
+	KindMail = "mail"
 )
 
 // Context override actions: a user's surgery on one turn. Shared vocabulary for
@@ -97,7 +102,16 @@ type Sessions interface {
 // the tool reports that rather than failing the run. Delivery never grants trust
 // or widens the sender's or receiver's tool set.
 type Mailer interface {
-	DeliverMail(to, text string) error
+	DeliverMail(to, text string, meta MailMeta) error
+}
+
+// MailMeta is the provenance of one message: the chain of work it belongs to and
+// how many cross-session deliveries led to it. The host assigns both from the
+// current activation; the model never supplies them, so a sender cannot reset a
+// chain it is being asked to stop lengthening.
+type MailMeta struct {
+	Trace string
+	Hops  int
 }
 
 // Usage is token accounting for a single model call. Cached is the part of Prompt

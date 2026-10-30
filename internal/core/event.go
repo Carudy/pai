@@ -2,7 +2,10 @@ package core
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -115,10 +118,30 @@ type Event struct {
 	DedupKey string
 	At       time.Time
 	Deadline time.Time // zero means no deadline
+	// Trace groups the work one instruction caused as it crosses sessions, and
+	// Hops counts the deliveries that led here. Both are host-assigned: they are
+	// audit and runaway control, not something a sender may claim.
+	Trace    string
+	Hops     int
 	Attempts int
 	// State is inspection-only (pending/leased/dead). Wake events leave it empty;
 	// QueuedEvents fills it so the service view can show a dead-lettered item.
 	State string
+}
+
+// MaxMailHops bounds a reply chain. Past this many cross-session deliveries the
+// message is refused, because a chain that long is a conversation loop rather
+// than a handoff. The limit is structural: the model cannot raise it by asking.
+const MaxMailHops = 6
+
+// NewTrace mints an identifier for one chain of work. It is short on purpose: it
+// appears in logs and the situation block, not in any protocol.
+func NewTrace() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // EffectivePriority resolves Priority, falling back to the class band.

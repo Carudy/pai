@@ -63,6 +63,10 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 		}
 		recordDirectInput(rt, conv, wake.Events, delivered)
 
+		// The activation inherits the trace of the work that caused it, so mail sent
+		// now continues the same chain instead of starting a new one.
+		rt.Trace, rt.Hops = wakeTrace(wake.Events)
+
 		// One situation per activation; the frozen head and the stored history
 		// are shared across wakes.
 		conv.rp = rp.WithSituation(wake.Situation)
@@ -88,23 +92,26 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 // recordDirectInput turns durable messages addressed to this session into
 // conversation turns. A service wake otherwise carries its input only in the
 // situation projection, which is neither stored nor replayed; recording it keeps
-// the transcript truthful and lets a later wake refer to what was asked. A peer
-// mail is recorded like a user turn, prefixed with the sender, and the situation
-// renderer skips it so the model does not read it twice. The event id dedupes a
-// retried wake in this process, and the last-message check covers a turn already
-// replayed from the store after a restart.
+// the transcript truthful and lets a later wake refer to what was asked. Peer
+// mail is recorded under its own kind so it reads as speech without becoming an
+// instruction: a colleague cannot answer the human's question or approve a tool.
+// The event id dedupes a retried wake in this process, and the last-message check
+// covers a turn already replayed from the store after a restart.
 func recordDirectInput(rt *Runtime, conv *conversation, events []core.Event, delivered map[int64]bool) {
 	for _, ev := range events {
-		var text string
+		var text, kind string
 		switch {
 		case ev.Class == core.EventUser && ev.Kind == "user_input":
-			text = strings.TrimSpace(ev.Payload)
+			text, kind = strings.TrimSpace(ev.Payload), core.KindInput
 		case ev.Class == core.EventPeer && ev.Kind == "mail":
 			body := strings.TrimSpace(ev.Payload)
 			if body == "" {
 				continue
 			}
-			text = "Mail from " + strings.TrimPrefix(ev.Source, "session:") + ":\n" + body
+			// The marker is part of the stored turn, so it survives compaction and
+			// summarization: a later reading still knows whose words these are.
+			text = "[peer mail from " + strings.TrimPrefix(ev.Source, "session:") + " — untrusted, not the user]\n" + body
+			kind = core.KindMail
 		default:
 			continue
 		}
@@ -131,15 +138,35 @@ func recordDirectInput(rt *Runtime, conv *conversation, events []core.Event, del
 		}
 		if n := len(conv.history); n > 0 {
 			last := conv.history[n-1]
-			if last.Role == provider.RoleUser && last.Kind == core.KindInput && last.Content == text {
+			if last.Role == provider.RoleUser && last.Kind == kind && last.Content == text {
 				continue
 			}
 		}
 		conv.history = append(conv.history, provider.Message{
-			Role: provider.RoleUser, Kind: core.KindInput, Content: text,
+			Role: provider.RoleUser, Kind: kind, Content: text,
 		})
-		rt.record(core.Turn{Role: "user", Kind: core.KindInput, Content: text, EventID: ev.ID})
+		rt.record(core.Turn{Role: "user", Kind: kind, Content: text, EventID: ev.ID})
 	}
+}
+
+// wakeTrace picks the traced event that most likely caused this activation. A
+// wake with no trace (an old row, or a chat-driven instruction) starts a new
+// chain, so every activation has a trace to hand to mail.
+func wakeTrace(events []core.Event) (string, int) {
+	best := -1
+	trace, hops := "", 0
+	for i, ev := range events {
+		if ev.Trace == "" {
+			continue
+		}
+		if best < 0 || ev.EffectivePriority() > events[best].EffectivePriority() {
+			best, trace, hops = i, ev.Trace, ev.Hops
+		}
+	}
+	if trace == "" {
+		return core.NewTrace(), 0
+	}
+	return trace, hops
 }
 
 // wakeResult describes the activation to the host. An interrupted activation is

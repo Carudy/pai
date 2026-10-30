@@ -123,6 +123,36 @@ func TestCompactHistoryElidesOnlyOldTurns(t *testing.T) {
 	}
 }
 
+// Peer mail shares the user role but is not a turn: it must not push a real
+// instruction out of the keep_turns window, and elision must leave it alone
+// because it is not a tool observation.
+func TestMailIsNotAUserTurn(t *testing.T) {
+	big := "[exec result]: exit code 0\n" + strings.Repeat("row\n", 100)
+	history := []provider.Message{
+		{Role: provider.RoleUser, Kind: core.KindMail, Content: "[peer mail from alice] gate is closed"},
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "check disk"},
+		toolResult(big),
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "old answer"},
+		{Role: provider.RoleUser, Kind: core.KindInput, Content: "now fix it"},
+		{Role: provider.RoleAssistant, Kind: core.KindOutput, Content: "done"},
+	}
+	if got := UserTurns(history); got != 2 {
+		t.Fatalf("user turns = %d, want 2: mail is not an instruction", got)
+	}
+	out := CompactHistory(history, config.ContextConfig{
+		KeepTurns: 1, ElideAfterTokens: 1, ElideMinBytes: 10, ElideHeadLines: 2, ElideTailLines: 1,
+	})
+	if out[0].Content != history[0].Content {
+		t.Fatalf("the mail turn was rewritten: %q", out[0].Content)
+	}
+	if out[2].Content == big {
+		t.Fatal("an old turn's observation should still be elided")
+	}
+	if out[4].Content != "now fix it" {
+		t.Fatalf("current turn changed: %q", out[4].Content)
+	}
+}
+
 // Nothing happens until the history reaches the size trigger.
 func TestCompactHistoryRespectsTrigger(t *testing.T) {
 	big := strings.Repeat("x\n", 4000) // 8000 bytes, about 2000 tokens

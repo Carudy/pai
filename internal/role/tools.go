@@ -420,12 +420,12 @@ func runMail(_ context.Context, _ *config.UserConfig, rt *Runtime, reason string
 		rt.Observer.ToolResult(core.ToolResult{Message: "Session mail is unavailable here"})
 		return "[tool error]\nTOOL: mail\nERROR: this run cannot deliver session mail", nil
 	}
-	if err := rt.Mailer.DeliverMail(to, text); err != nil {
+	if err := rt.Mailer.DeliverMail(to, text, core.MailMeta{Trace: rt.Trace, Hops: rt.Hops + 1}); err != nil {
 		rt.Observer.ToolResult(core.ToolResult{Message: "Mail failed: " + err.Error()})
 		return fmt.Sprintf("[tool error]\nTOOL: mail\nTO: %s\nERROR: %v", to, err), nil
 	}
 	rt.Observer.ToolResult(core.ToolResult{OK: true, Message: "queued mail to " + to})
-	return fmt.Sprintf("[mail queued]\nTO: %s\nTEXT:\n%s", to, text), nil
+	return fmt.Sprintf("[mail queued]\nTO: %s\nHOP: %d/%d\nTEXT:\n%s", to, rt.Hops+1, core.MaxMailHops, text), nil
 }
 
 // runWebsearch searches the web for current information. A search failure is

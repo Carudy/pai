@@ -618,8 +618,10 @@ func TestStartServicesSkipsStopped(t *testing.T) {
 	waitFor(t, "the user message to resume the service", func() bool { return fp.CallCount() == 1 })
 }
 
-// Mail is recorded as a conversation turn, so the situation projection must not
-// repeat it: the model would read the same message twice.
+// Mail is recorded as a conversation turn, so the situation must not repeat the
+// body: the model would read the same message twice. It does name the sender and
+// mark the content untrusted, so a wake caused by mail cannot be read as an
+// instruction from the human.
 func TestRenderSituationOmitsRecordedMail(t *testing.T) {
 	s := renderSituation(core.Wake{
 		Reason: "mail from alice",
@@ -632,6 +634,9 @@ func TestRenderSituationOmitsRecordedMail(t *testing.T) {
 	}
 	if !strings.Contains(s, "mail from alice") {
 		t.Fatalf("wake reason missing:\n%s", s)
+	}
+	if !strings.Contains(s, "peer mail from \"alice\"") || !strings.Contains(s, "untrusted") {
+		t.Fatalf("a mail wake must name the sender and mark it untrusted:\n%s", s)
 	}
 }
 

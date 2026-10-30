@@ -51,6 +51,12 @@ type Runtime struct {
 	// Mailer sends a message to another session. nil when the host cannot deliver
 	// session mail (for example a one-shot CLI run with no daemon).
 	Mailer core.Mailer
+	// Trace and Hops describe the activation in flight: the chain of work it
+	// belongs to and how many cross-session deliveries led to it. The service
+	// driver sets them per wake; mail copies them forward so a reply chain stays
+	// one trace and can be cut at core.MaxMailHops.
+	Trace string
+	Hops  int
 	// SessionName is the conversation's initial storage name ("" = ephemeral).
 	SessionName string
 

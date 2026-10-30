@@ -122,6 +122,10 @@ func (a *attach) replay(ctx context.Context, total int) {
 				text = "★ " + text
 			}
 			a.obs.User(text)
+		case t.Kind == core.KindMail:
+			// A peer's message is speech in the transcript but not an instruction
+			// from the reader, so it is replayed as a notice rather than a prompt.
+			a.obs.Notice("[mail] " + clip(t.Content, 1200))
 		case t.Kind == core.KindSummary:
 			a.obs.Notice("[summary] " + clip(t.Content, 1200))
 		case t.Role == "assistant" && t.Kind == core.KindOutput:

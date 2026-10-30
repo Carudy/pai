@@ -79,7 +79,9 @@ func isTurnStart(m provider.Message) bool {
 
 // isTurnStartKind reports whether a stored turn begins a user turn. The message
 // and turn domains share one definition, so the replay window compaction kept and
-// the window a later replay reconstructs cannot drift apart.
+// the window a later replay reconstructs cannot drift apart. Peer mail shares the
+// user role but not this: a colleague's message is not an instruction to keep
+// verbatim, and counting it would push a real user turn out of the window.
 func isTurnStartKind(kind string) bool {
 	return kind == core.KindInput || kind == core.KindUserAnswer
 }

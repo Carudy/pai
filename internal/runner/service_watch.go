@@ -218,6 +218,9 @@ func watcherEvent(sessionID string, spec config.WatcherSpec, res watcher.Result,
 	return core.Event{
 		Session: sessionID, Class: class, Priority: spec.Priority, Kind: kind,
 		Source: "watch:" + spec.Name, Payload: payload, DedupKey: "watch:" + spec.Name, At: now,
+		// A firing probe starts its own chain: nothing about it came from another
+		// session, so mail sent in response continues from here.
+		Trace: core.NewTrace(),
 	}
 }
 

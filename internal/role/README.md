@@ -97,7 +97,7 @@ Autonomous reason→act→observe loop for multi-step sysadmin tasks. Tools:
 - **edit** — Replace exact text in a file, with a diff to approve
 - **write** — Create a new file (never overwrites) without a shell here-doc
 - **websearch** — Search the web for current information (config `tavily_api_key` or `TAVILY_API_KEY` env)
-- **mail** — Send a short message to another resident session (queued durably; it never grants trust)
+- **mail** — Send a short message to another resident session (queued durably; it never grants trust, and a reply chain stops after 6 hops)
 
 
 ```bash

@@ -32,15 +32,15 @@ func mailManager(t *testing.T, fp *serviceTestProvider) (*Manager, *watchTestBac
 	return m, backend
 }
 
-// Mail is durable before the wake, and the event carries the sender so the
-// receiver can record it as a user turn.
+// Mail is durable before the wake, and the event carries the sender plus the
+// chain it belongs to, so the receiver can record it as peer mail.
 func TestDeliverMailQueuesAndWakes(t *testing.T) {
 	fp := &serviceTestProvider{
 		replies: []string{`{"action":"yield","payload":{},"reason":"read"}`},
 		done:    make(chan int, 4),
 	}
 	m, backend := mailManager(t, fp)
-	if err := m.deliverMail("alice", "svc", "check the gate"); err != nil {
+	if err := m.deliverMail("alice", "svc", "check the gate", core.MailMeta{}); err != nil {
 		t.Fatalf("deliverMail: %v", err)
 	}
 	events := backend.eventsSnapshot()
@@ -51,10 +51,42 @@ func TestDeliverMailQueuesAndWakes(t *testing.T) {
 	if ev.Class != core.EventPeer || ev.Kind != "mail" || ev.Source != "session:alice" || ev.Payload != "check the gate" || ev.Session != "sid" {
 		t.Fatalf("event = %+v", ev)
 	}
+	// A message with no trace of its own starts one, and its first delivery is
+	// hop 1.
+	if ev.Trace == "" || ev.Hops != 1 {
+		t.Fatalf("event trace/hops = %q/%d, want a new trace at hop 1", ev.Trace, ev.Hops)
+	}
 	select {
 	case <-fp.done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("mail did not wake the target")
+	}
+}
+
+// A reply continues the sender's chain instead of starting a new one.
+func TestDeliverMailCarriesTheChain(t *testing.T) {
+	fp := &serviceTestProvider{done: make(chan int, 4)}
+	m, backend := mailManager(t, fp)
+	if err := m.deliverMail("alice", "svc", "re", core.MailMeta{Trace: "tr1", Hops: 2}); err != nil {
+		t.Fatalf("deliverMail: %v", err)
+	}
+	ev := backend.eventsSnapshot()[0]
+	if ev.Trace != "tr1" || ev.Hops != 2 {
+		t.Fatalf("event = %+v, want trace tr1 at hop 2", ev)
+	}
+}
+
+// Past the hop limit the message is refused before it is queued: a chain that
+// long is a loop, and a polite sentence in the prompt is not a bound.
+func TestDeliverMailStopsALongChain(t *testing.T) {
+	fp := &serviceTestProvider{done: make(chan int, 4)}
+	m, backend := mailManager(t, fp)
+	err := m.deliverMail("alice", "svc", "re", core.MailMeta{Trace: "tr1", Hops: core.MaxMailHops + 1})
+	if err == nil || !strings.Contains(err.Error(), "limit is 6") {
+		t.Fatalf("deliverMail = %v, want a hop-limit refusal", err)
+	}
+	if got := len(backend.eventsSnapshot()); got != 0 {
+		t.Fatalf("queued %d events, want none", got)
 	}
 }
 
@@ -69,7 +101,7 @@ func TestDeliverMailRejects(t *testing.T) {
 		{"alice", "svc", "  ", "empty"},
 		{"alice", "svc", strings.Repeat("x", maxMailBytes+1), "longer"},
 	} {
-		if err := m.deliverMail(tc.from, tc.to, tc.text); err == nil || !strings.Contains(err.Error(), tc.want) {
+		if err := m.deliverMail(tc.from, tc.to, tc.text, core.MailMeta{}); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("deliverMail(%+v) = %v, want %q", tc, err, tc.want)
 		}
 	}
@@ -79,7 +111,7 @@ func TestDeliverMailRejects(t *testing.T) {
 	for i := 0; i < maxMailPending+1; i++ {
 		backend.due = append(backend.due, core.Event{ID: int64(i + 1), Class: core.EventPeer, Kind: "mail"})
 	}
-	if err := m.deliverMail("alice", "svc", "hi"); err == nil || !strings.Contains(err.Error(), "full") {
+	if err := m.deliverMail("alice", "svc", "hi", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "full") {
 		t.Fatalf("full mailbox: %v", err)
 	}
 }
@@ -92,7 +124,7 @@ func TestDeliverMailKeepsStoppedTargetAsleep(t *testing.T) {
 	m.mu.Lock()
 	m.stoppedServices["svc"] = true
 	m.mu.Unlock()
-	if err := m.deliverMail("alice", "svc", "later"); err != nil {
+	if err := m.deliverMail("alice", "svc", "later", core.MailMeta{}); err != nil {
 		t.Fatalf("deliverMail: %v", err)
 	}
 	if got := len(backend.eventsSnapshot()); got != 1 {

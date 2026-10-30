@@ -875,6 +875,18 @@ header p {
     box-shadow: none;
 }
 
+/* Peer mail is speech in the transcript, not the reader's instruction: a dashed
+   left rail and a quieter surface keep it from reading as "You". */
+.turn.mail {
+    background: var(--soft);
+    box-shadow: none;
+    border-left: 2px dashed var(--muted);
+}
+
+.turn.mail .turn-heading {
+    color: var(--muted);
+}
+
 /* A service's inform report is the durable artifact of an activation: mark it
    with a quiet green rail and a report glyph, not a full attention card. A
    yield says "nothing to do", so it reads as a paused, dashed card. */

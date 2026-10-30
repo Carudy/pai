@@ -26,8 +26,8 @@ type sessionMailer struct {
 	from string
 }
 
-func (s sessionMailer) DeliverMail(to, text string) error {
-	return s.m.deliverMail(s.from, to, text)
+func (s sessionMailer) DeliverMail(to, text string, meta core.MailMeta) error {
+	return s.m.deliverMail(s.from, to, text, meta)
 }
 
 var _ core.Mailer = sessionMailer{}
@@ -36,8 +36,10 @@ var _ core.Mailer = sessionMailer{}
 // event is durable before the wake, so a stopped target, a busy target, or a
 // crash between the two deliveries still receives it on the next activation.
 // Mail is data, never a capability grant: the receiver's tools and
-// confirmations are unchanged.
-func (m *Manager) deliverMail(from, to, text string) error {
+// confirmations are unchanged. The message carries the sender's trace forward
+// and is refused once the chain is longer than core.MaxMailHops, which stops a
+// two-session acknowledgement loop without asking the model to be polite.
+func (m *Manager) deliverMail(from, to, text string, meta core.MailMeta) error {
 	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
 	text = strings.TrimSpace(text)
 	switch {
@@ -49,6 +51,21 @@ func (m *Manager) deliverMail(from, to, text string) error {
 		return errors.New("mail text is empty")
 	case len(text) > maxMailBytes:
 		return fmt.Errorf("mail is longer than %d bytes", maxMailBytes)
+	}
+
+	trace := strings.TrimSpace(meta.Trace)
+	if trace == "" {
+		trace = core.NewTrace()
+	}
+	hops := meta.Hops
+	if hops <= 0 {
+		hops = 1
+	}
+	if hops > core.MaxMailHops {
+		m.diag(Diagnostic{Session: from, Kind: "mail", Subject: to, Outcome: "refused",
+			Detail: fmt.Sprintf("hop %d exceeds %d (trace %s)", hops, core.MaxMailHops, trace)})
+		return fmt.Errorf("this message would be hop %d of trace %s, and the limit is %d; answer instead of forwarding",
+			hops, trace, core.MaxMailHops)
 	}
 
 	m.mu.Lock()
@@ -80,13 +97,15 @@ func (m *Manager) deliverMail(from, to, text string) error {
 	ev := core.Event{
 		Session: id, Class: core.EventPeer, Kind: "mail",
 		Source: "session:" + from, Payload: text, At: now,
+		Trace: trace, Hops: hops,
 	}
 	eid, err := events.AppendEvent(id, ev)
 	if err != nil {
 		return fmt.Errorf("queue mail for %q: %w", to, err)
 	}
 	ev.ID = eid
-	m.diag(Diagnostic{Session: to, Kind: "event", Outcome: "queued", Detail: "mail from " + from})
+	m.diag(Diagnostic{Session: to, Kind: "event", Outcome: "queued",
+		Detail: fmt.Sprintf("mail from %s hop %d trace %s", from, hops, trace)})
 
 	// A stopped session keeps the mail until it starts; StartService registers it
 	// due now, and the startup drain sees the event.

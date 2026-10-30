@@ -96,9 +96,10 @@ func (s *sqliteStore) AppendEvent(ev core.Event) (int64, error) {
 		case err == nil:
 			if _, err := tx.Exec(`UPDATE events
 SET class = ?, priority = ?, kind = ?, source = ?, payload = ?, created_at = ?, available_at = ?,
-    deadline = ?, attempts = 0, last_error = NULL
+    deadline = ?, trace = ?, hops = ?, attempts = 0, last_error = NULL
 WHERE id = ?`,
-				int(ev.Class), priority, ev.Kind, ev.Source, ev.Payload, at.Unix(), at.Unix(), deadline, id); err != nil {
+				int(ev.Class), priority, ev.Kind, ev.Source, ev.Payload, at.Unix(), at.Unix(),
+				deadline, nullString(ev.Trace), ev.Hops, id); err != nil {
 				return 0, err
 			}
 			return id, tx.Commit()
@@ -108,10 +109,10 @@ WHERE id = ?`,
 	}
 
 	res, err := tx.Exec(`INSERT INTO events
-(session_id, class, priority, kind, source, payload, dedup_key, created_at, available_at, deadline, attempts, state)
-VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+(session_id, class, priority, kind, source, payload, dedup_key, created_at, available_at, deadline, trace, hops, attempts, state)
+VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
 		ev.Session, int(ev.Class), priority, ev.Kind, ev.Source, ev.Payload, nullString(ev.DedupKey),
-		at.Unix(), at.Unix(), deadline, ev.Attempts)
+		at.Unix(), at.Unix(), deadline, nullString(ev.Trace), ev.Hops, ev.Attempts)
 	if err != nil {
 		return 0, err
 	}
@@ -128,7 +129,7 @@ func (s *sqliteStore) DueEvents(sessionID string, now time.Time, limit int) ([]c
 	}
 	rows, err := s.db.Query(`
 SELECT id, session_id, class, priority, kind, source, payload, COALESCE(dedup_key, ''),
-       created_at, deadline, attempts, state
+       created_at, deadline, COALESCE(trace, ''), hops, attempts, state
 FROM events
 WHERE session_id = ? AND state = 'pending' AND available_at <= ?
 ORDER BY priority DESC, (deadline IS NULL), deadline, created_at, id
@@ -149,7 +150,7 @@ func (s *sqliteStore) QueuedEvents(sessionID string, limit int) ([]core.Event, e
 	}
 	rows, err := s.db.Query(`
 SELECT id, session_id, class, priority, kind, source, payload, COALESCE(dedup_key, ''),
-       created_at, deadline, attempts, state
+       created_at, deadline, COALESCE(trace, ''), hops, attempts, state
 FROM events
 WHERE session_id = ? AND state IN ('pending', 'leased', 'dead')
 ORDER BY (state = 'dead'), priority DESC, (deadline IS NULL), deadline, created_at, id
@@ -171,7 +172,7 @@ func scanEvents(rows *sql.Rows) ([]core.Event, error) {
 			deadline sql.NullInt64
 		)
 		if err := rows.Scan(&ev.ID, &ev.Session, &class, &ev.Priority, &ev.Kind, &ev.Source, &ev.Payload,
-			&ev.DedupKey, &created, &deadline, &ev.Attempts, &ev.State); err != nil {
+			&ev.DedupKey, &created, &deadline, &ev.Trace, &ev.Hops, &ev.Attempts, &ev.State); err != nil {
 			return nil, err
 		}
 		ev.Class = core.EventClass(class)

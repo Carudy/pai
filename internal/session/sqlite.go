@@ -123,6 +123,8 @@ CREATE TABLE IF NOT EXISTS events (
   created_at   INTEGER NOT NULL,
   available_at INTEGER NOT NULL,
   deadline     INTEGER,
+  trace        TEXT,
+  hops         INTEGER NOT NULL DEFAULT 0,
   attempts     INTEGER NOT NULL DEFAULT 0,
   state        TEXT    NOT NULL DEFAULT 'pending',
   lease_until  INTEGER,
@@ -161,6 +163,14 @@ CREATE TABLE IF NOT EXISTS watchers (
 	// the class bands before anything sorts by it. A fresh database has no rows
 	// and records 2 without an update.
 	if err := s.ensureColumn("events", "priority", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// Probes and user instructions start a trace when the event is created, and
+	// mail inherits it; an older row simply has none.
+	if err := s.ensureColumn("events", "trace", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("events", "hops", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
 	var version int

@@ -1487,9 +1487,15 @@ function renderTurns(turns) {
       cards.push(toolCard); logDetails(toolCard, 'Result', turn.Content); toolCard = null; return;
     }
     const parsed = turn.Role === 'assistant' ? parsedResponse(turn.Content) : null;
-    const article = text('article', '', 'turn ' + (turn.Role === 'user' ? 'user' : 'assistant'));
+    // Peer mail shares the user role but is not the reader's own voice, so it
+    // gets its own card and is excluded from the user-input navigation above.
+    const mail = turn.Kind === 'mail';
+    const article = text('article', '', 'turn ' + (mail ? 'mail' : turn.Role === 'user' ? 'user' : 'assistant'));
     if (parsed && (parsed.action === 'inform' || parsed.action === 'yield')) article.classList.toggle('action-' + parsed.action, true);
-    if (!parsed || parsed.action !== 'tool') article.append(text('div', turn.Role === 'user' ? 'You' : actionHeading(parsed && parsed.action), 'turn-heading'));
+    if (!parsed || parsed.action !== 'tool') {
+      const heading = mail ? '✉️ Mail' : turn.Role === 'user' ? 'You' : actionHeading(parsed && parsed.action);
+      article.append(text('div', heading, 'turn-heading'));
+    }
     // Only a plain user instruction is a rewind point; ask-answers and tool
     // results share the user role but are not instructions.
     if (turn.Role === 'user' && turn.Kind === 'input') {

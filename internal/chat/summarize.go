@@ -186,6 +186,8 @@ func messageLabel(m provider.Message) string {
 		return "PRIOR SUMMARY"
 	case core.KindInput:
 		return "USER"
+	case core.KindMail:
+		return "PEER MAIL"
 	}
 	if m.Role == provider.RoleAssistant {
 		return "ASSISTANT"
