@@ -126,6 +126,14 @@ func serviceDelete(name string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error: %q is not a service; use `pai session rm %s`\n", name, name)
 		return 1
 	}
+	// Work it was holding goes back to the board as orphaned instead of vanishing
+	// with the row, so another member can pick it up.
+	if ts, ok := store.(session.TaskStore); ok && info.ID != "" {
+		if _, err := ts.OrphanTasksOwnedBy(info.ID, time.Now()); err != nil {
+			log.Errorf("Error releasing its tasks: %v\n", err)
+			return 1
+		}
+	}
 	if err := store.Delete(name); err != nil {
 		log.Errorf("Error: %v\n", err)
 		return 1

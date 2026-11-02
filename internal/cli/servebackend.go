@@ -44,6 +44,7 @@ var _ runner.ServiceStateBackend = (*serveBackend)(nil)
 var _ runner.ServiceBackend = (*serveBackend)(nil)
 var _ runner.ServiceCreator = (*serveBackend)(nil)
 var _ runner.GroupBackend = (*serveBackend)(nil)
+var _ runner.TaskBackend = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
 	store, ok := b.store.(session.ServiceStore)
@@ -89,6 +90,104 @@ func (b *serveBackend) GroupMembers(groupID string) ([]core.GroupMember, error) 
 		return nil, err
 	}
 	return store.GroupMembers(groupID)
+}
+
+func (b *serveBackend) taskStore() (session.TaskStore, error) {
+	store, ok := b.store.(session.TaskStore)
+	if !ok {
+		return nil, errors.New("session store does not expose a group board")
+	}
+	return store, nil
+}
+
+func (b *serveBackend) CreateTask(t core.Task) (core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return core.Task{}, err
+	}
+	return store.CreateTask(t)
+}
+
+func (b *serveBackend) Task(id string) (core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return core.Task{}, err
+	}
+	return store.Task(id)
+}
+
+func (b *serveBackend) Tasks(groupID string, statuses []core.TaskStatus, limit int) ([]core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Tasks(groupID, statuses, limit)
+}
+
+func (b *serveBackend) ClaimTask(id, ownerID string, now time.Time, lease time.Duration) (core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return core.Task{}, err
+	}
+	return store.ClaimTask(id, ownerID, now, lease)
+}
+
+func (b *serveBackend) UpdateTask(id, actorID string, expectVersion int, status core.TaskStatus, note string, allowForeign bool, now time.Time) (core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return core.Task{}, err
+	}
+	return store.UpdateTask(id, actorID, expectVersion, status, note, allowForeign, now)
+}
+
+func (b *serveBackend) ExpireTasks(now time.Time) ([]core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.ExpireTasks(now)
+}
+
+func (b *serveBackend) OrphanTasksOwnedBy(sessionID string, now time.Time) ([]core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.OrphanTasksOwnedBy(sessionID, now)
+}
+
+func (b *serveBackend) DueEscalations(groupID string, now time.Time) ([]core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.DueEscalations(groupID, now)
+}
+
+func (b *serveBackend) MarkTaskEscalated(id string, kind core.TaskStatus, now time.Time) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.taskStore()
+	if err != nil {
+		return false, err
+	}
+	return store.MarkTaskEscalated(id, kind, now)
 }
 
 func (b *serveBackend) AppendEvent(sessionID string, e core.Event) (int64, error) {

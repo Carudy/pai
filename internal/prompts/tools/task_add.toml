@@ -1,0 +1,32 @@
+# Tool: task_add
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "task_add"
+brief       = "add a task to the group board"
+description = '''
+Put one unit of work on your group's board so a colleague can pick it up, or so
+the team can see it is planned. A task has a short title and optional detail;
+keep them self-contained, because the reader has none of your conversation.
+
+Use it for work that should survive this activation: something another member
+may do, something that may be blocked for a while, or something worth tracking.
+Do not add a task for the step you are about to take yourself — do it, and
+record the outcome instead.
+
+Create it, then claim it if you are starting now, so two members cannot work the
+same item. To change a task later, use `task_update` with the version you read;
+the board rejects a stale write rather than merging it.
+'''
+schema = '''
+{
+  "title":    "short, specific title (required)",
+  "detail":   "optional context, acceptance criteria, links",
+  "priority": "1-100, default 50; higher is more urgent"
+}
+'''

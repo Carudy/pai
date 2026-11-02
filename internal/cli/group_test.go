@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/session"
 	"github.com/Carudy/pai/internal/tui"
 )
@@ -88,10 +89,44 @@ name = "hydro"
 		}
 	}
 
-	// The lead is the address for `group:<name>`, so it cannot simply leave.
+	// The lead is the address for `group:name` mail, so it cannot simply leave.
 	out.Reset()
 	if code := runGroupCmd(context.Background(), []string{"rm-member", "hydro", "coord"}, &out, log); code == 0 {
 		t.Fatalf("the lead was removed: %s", out.String())
+	}
+
+	// The board is rendered with the group, so an operator sees stuck work.
+	boardStore, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gs, ok := boardStore.(session.GroupStore)
+	if !ok {
+		boardStore.Close()
+		t.Fatal("store does not expose groups")
+	}
+	group, found, err := gs.GroupByName("hydro")
+	if err != nil || !found {
+		boardStore.Close()
+		t.Fatalf("group = %v %v", found, err)
+	}
+	ts, ok := boardStore.(session.TaskStore)
+	if !ok {
+		boardStore.Close()
+		t.Fatal("store does not expose the board")
+	}
+	if _, err := ts.CreateTask(core.Task{GroupID: group.ID, Title: "check the gate"}); err != nil {
+		boardStore.Close()
+		t.Fatal(err)
+	}
+	boardStore.Close()
+
+	out.Reset()
+	if code := runGroupCmd(context.Background(), []string{"show", "hydro"}, &out, log); code != 0 {
+		t.Fatalf("group show with a board: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "board:") || !strings.Contains(out.String(), "check the gate") {
+		t.Fatalf("board missing from show:\n%s", out.String())
 	}
 
 	// A chat session cannot join: a group is made of resident services.

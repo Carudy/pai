@@ -162,7 +162,24 @@ CREATE TABLE IF NOT EXISTS group_members (
   joined_at  INTEGER NOT NULL,
   PRIMARY KEY (group_id, session_id)
 );
-CREATE INDEX IF NOT EXISTS group_members_session ON group_members(session_id);`); err != nil {
+CREATE INDEX IF NOT EXISTS group_members_session ON group_members(session_id);
+CREATE TABLE IF NOT EXISTS tasks (
+  id                    TEXT PRIMARY KEY,
+  group_id              TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  title                 TEXT NOT NULL,
+  detail                TEXT NOT NULL DEFAULT '',
+  status                TEXT NOT NULL,
+  owner_id              TEXT,
+  version               INTEGER NOT NULL DEFAULT 1,
+  lease_until           INTEGER,
+  priority              INTEGER NOT NULL DEFAULT 50,
+  created_at            INTEGER NOT NULL,
+  updated_at            INTEGER NOT NULL,
+  closed_at             INTEGER,
+  escalated_blocked_at  INTEGER,
+  escalated_orphaned_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS tasks_group ON tasks(group_id, status, priority);`); err != nil {
 		return err
 	}
 	// No worker survives the process, so a lease left by a crash is pending work.

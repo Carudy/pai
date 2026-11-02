@@ -258,8 +258,10 @@ Then run it with `pai -r writer`. A user role with the same name as a built-in
 one **overrides** it — handy for retuning `devops` without editing the source.
 
 `tools` may only reference built-in tools (`execute`, `remote`, `websearch`,
-`papersearch`, `mail`, `read`, `edit`, `write`): tool *implementations* live in Go, so new tools require
-code — new roles do not.
+`papersearch`, `mail`, `task_add`, `task_claim`, `task_update`, `task_list`,
+`read`, `edit`, `write`): tool *implementations* live in Go, so new tools require
+code — new roles do not. The `task_*` tools and `mail` are added automatically to
+a session that joined a group, so a role does not need to list them.
 
 `context_files` folds project instruction files into the system prompt, searched
 upwards from the working directory (nearest match wins) and capped at 8 KiB:

@@ -72,6 +72,13 @@ See the [module map](../organization.md) for the storage adapter boundary.
 - A group carries no scheduler state: it owns no wake counter and cannot pause a
   member. The only durable facts are the roster, the shared goal, and an optional
   lead.
+- `TaskStore` is the group board: `tasks` rows with a status, an owner, a lease,
+  and a version. A claim is a lease, so a lapsed one is recoverable without an
+  operator; every write is optimistic, so a stale edit is rejected with the
+  current version instead of merged. `DueEscalations` and `MarkTaskEscalated`
+  implement the host's exactly-once notification for stuck work. Deleting the
+  group cascades to its board; deleting a session leaves its tasks ownerless so
+  the work is not lost.
 - Migrations are additive: existing databases gain `id`, `mode`, `state`,
   `status`, `spec`, and `next_wake`, rows are backfilled with an immutable id,
   and `PRAGMA user_version` is set. v2 adds `events.priority` and backfills it

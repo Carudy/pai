@@ -86,6 +86,12 @@ type Manager struct {
 	// purpose: the limit exists to stop a burst, and a restart may reset it.
 	broadcastMu sync.Mutex
 	broadcasts  map[string][]time.Time
+
+	// boardMu guards the per-group board sweep throttle. The sweep expires leases
+	// and escalates stuck work; running it on every activation would be a query
+	// per wake for no benefit.
+	boardMu     sync.Mutex
+	boardChecks map[string]time.Time
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {
@@ -744,11 +750,22 @@ func (m *Manager) Delete(name string) error {
 	if !ok {
 		return errors.New("backend does not support deleting")
 	}
+	m.mu.Lock()
+	sessionID := m.sessionIDs[name]
+	m.mu.Unlock()
 	finish, err := m.reserveIdle(name)
 	if err != nil {
 		return err
 	}
 	defer finish()
+	// Work the session held returns to the board instead of vanishing with the
+	// row, so another member can pick it up.
+	if ts, ok := m.backend.(TaskBackend); ok && sessionID != "" {
+		if _, err := ts.OrphanTasksOwnedBy(sessionID, time.Now()); err != nil {
+			m.diag(Diagnostic{Session: name, Kind: "board", Outcome: "failed",
+				Detail: "release tasks: " + err.Error()})
+		}
+	}
 	if err := b.Delete(name); err != nil {
 		return err
 	}

@@ -1,0 +1,29 @@
+# Tool: task_claim
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "task_claim"
+brief       = "claim a board task, or renew your claim"
+description = '''
+Take ownership of a task before working on it. A claim is a lease: it lasts about
+fifteen minutes, and claiming the same task again renews it. If you stop without
+finishing, the lease lapses and the task becomes orphaned, so a colleague can
+pick it up instead of waiting forever.
+
+You can claim open or orphaned work, and renew or resume a task you already own.
+You cannot take a task another member holds with a live lease; the tool tells you
+who owns it. If the owner is gone, wait for the lease to lapse or ask the user.
+
+Check `task_list` first so you claim what is actually there, and claim before
+doing the work, not after.
+'''
+schema = '''
+{
+  "id": "task id from task_list or task_add (required)"
+}
+'''

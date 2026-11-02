@@ -37,7 +37,8 @@ func Open() (Store, error) {
 	}
 	service, _ := store.(ServiceStore)
 	groups, _ := store.(GroupStore)
-	return &ownedStore{Store: store, ServiceStore: service, GroupStore: groups, lock: lock}, nil
+	tasks, _ := store.(TaskStore)
+	return &ownedStore{Store: store, ServiceStore: service, GroupStore: groups, TaskStore: tasks, lock: lock}, nil
 }
 
 type ownedStore struct {
@@ -49,6 +50,8 @@ type ownedStore struct {
 	// GroupStore is the group directory behind the same wrapper, for the same
 	// reason: `pai group` type-asserts the opened Store.
 	GroupStore
+	// TaskStore is the group board, same reason again.
+	TaskStore
 	lock *os.File
 	once sync.Once
 	err  error
@@ -56,6 +59,7 @@ type ownedStore struct {
 
 var _ ServiceStore = (*ownedStore)(nil)
 var _ GroupStore = (*ownedStore)(nil)
+var _ TaskStore = (*ownedStore)(nil)
 
 func (s *ownedStore) Close() error {
 	s.once.Do(func() {

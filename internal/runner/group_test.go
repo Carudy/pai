@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/Carudy/pai/internal/core"
 )
+
+var errTaskMissing = errors.New("task not found")
 
 // groupTestBackend is the service backend plus an in-memory group directory and
 // wake counters, so the manager's optional ports are exercised the way the
@@ -19,6 +22,12 @@ type groupTestBackend struct {
 	groups    map[string]core.Group
 	bySession map[string]string
 	members   map[string][]core.GroupMember
+
+	// board is the in-memory task store; due/escalated model the sweep.
+	tasks     map[string]core.Task
+	due       []core.Task
+	escalated map[string]bool
+	taskSeq   int
 }
 
 func (b *groupTestBackend) GroupByName(name string) (core.Group, bool, error) {
@@ -43,6 +52,101 @@ func (b *groupTestBackend) GroupMembers(groupID string) ([]core.GroupMember, err
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]core.GroupMember(nil), b.members[groupID]...), nil
+}
+
+// The board half of the backend. Semantics only need to be faithful enough to
+// exercise the manager's group scoping and the escalation sweep.
+
+func (b *groupTestBackend) CreateTask(t core.Task) (core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.taskSeq++
+	t.ID = "t" + string(rune('0'+b.taskSeq))
+	t.Status = core.TaskOpen
+	t.Version = 1
+	b.tasks[t.ID] = t
+	return t, nil
+}
+
+func (b *groupTestBackend) Task(id string) (core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	t, ok := b.tasks[id]
+	if !ok {
+		return core.Task{}, errTaskMissing
+	}
+	return t, nil
+}
+
+func (b *groupTestBackend) Tasks(groupID string, statuses []core.TaskStatus, limit int) ([]core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []core.Task
+	for _, t := range b.tasks {
+		if t.GroupID != groupID {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+func (b *groupTestBackend) ClaimTask(id, ownerID string, now time.Time, lease time.Duration) (core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	t, ok := b.tasks[id]
+	if !ok {
+		return core.Task{}, errTaskMissing
+	}
+	t.Status, t.OwnerID, t.Version = core.TaskClaimed, ownerID, t.Version+1
+	t.LeaseUntil = now.Add(lease)
+	b.tasks[id] = t
+	return t, nil
+}
+
+func (b *groupTestBackend) UpdateTask(id, actorID string, expectVersion int, status core.TaskStatus, note string, allowForeign bool, now time.Time) (core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	t, ok := b.tasks[id]
+	if !ok {
+		return core.Task{}, errTaskMissing
+	}
+	if t.Version != expectVersion {
+		return core.Task{}, errTaskMissing
+	}
+	t.Status, t.Version = status, t.Version+1
+	b.tasks[id] = t
+	return t, nil
+}
+
+func (b *groupTestBackend) ExpireTasks(now time.Time) ([]core.Task, error) { return nil, nil }
+func (b *groupTestBackend) OrphanTasksOwnedBy(sessionID string, now time.Time) ([]core.Task, error) {
+	return nil, nil
+}
+
+func (b *groupTestBackend) DueEscalations(groupID string, now time.Time) ([]core.Task, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	var out []core.Task
+	for _, t := range b.due {
+		if t.GroupID == groupID {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (b *groupTestBackend) MarkTaskEscalated(id string, kind core.TaskStatus, now time.Time) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.escalated == nil {
+		b.escalated = make(map[string]bool)
+	}
+	if b.escalated[id] {
+		return false, nil
+	}
+	b.escalated[id] = true
+	return true, nil
 }
 
 // seed registers a group and its members by immutable id.
@@ -71,6 +175,8 @@ func groupManager(t *testing.T) (*Manager, *groupTestBackend) {
 		groups:    map[string]core.Group{},
 		bySession: map[string]string{},
 		members:   map[string][]core.GroupMember{},
+		tasks:     map[string]core.Task{},
+		escalated: map[string]bool{},
 	}
 	m := New(context.Background(), backend, 4)
 	t.Cleanup(m.Close)
@@ -195,6 +301,75 @@ func TestGroupedServicePromptCarriesTheGroup(t *testing.T) {
 		if !strings.Contains(head.Content, want) {
 			t.Errorf("head is missing %q:\n%s", want, head.Content)
 		}
+	}
+}
+
+// A task id from another group is refused before any store write: membership is
+// the board's boundary too, not just mail's.
+func TestSessionTasksStayInTheGroup(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+	backend.seed("meteo", "m1", [][2]string{{"m1", "met"}})
+
+	tasks := sessionTasks{m: m, from: "hydro"}
+	task, err := tasks.Add("check the gate", "after the dive", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.GroupID != "g-hydro" || task.Title != "check the gate" {
+		t.Fatalf("task = %+v", task)
+	}
+
+	foreign := core.Task{ID: "x1", GroupID: "g-meteo", Title: "theirs", Status: core.TaskOpen, Version: 1}
+	backend.mu.Lock()
+	backend.tasks["x1"] = foreign
+	backend.mu.Unlock()
+	if _, err := tasks.Claim("x1"); err == nil || !strings.Contains(err.Error(), "not on your board") {
+		t.Fatalf("foreign claim = %v", err)
+	}
+	if _, err := tasks.Update("x1", 1, core.TaskDone, ""); err == nil || !strings.Contains(err.Error(), "not on your board") {
+		t.Fatalf("foreign update = %v", err)
+	}
+
+	listed, err := tasks.List("", 10)
+	if err != nil || len(listed) != 1 || listed[0].ID != task.ID {
+		t.Fatalf("list = %+v %v", listed, err)
+	}
+
+	// A session outside any group has no board at all.
+	if _, err := (sessionTasks{m: m, from: "solo"}).Add("x", "", 0); err == nil || !strings.Contains(err.Error(), "does not belong") {
+		t.Fatalf("ungrouped add = %v", err)
+	}
+}
+
+// The board sweep tells the lead once about stuck work and then stays quiet,
+// even though the task is still stuck.
+func TestCheckBoardEscalatesOnce(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+	m.mu.Lock()
+	m.stoppedServices["coord"] = true
+	m.mu.Unlock()
+	backend.mu.Lock()
+	backend.due = []core.Task{{
+		ID: "t9", GroupID: "g-hydro", Title: "stuck", Status: core.TaskOrphaned,
+	}}
+	backend.mu.Unlock()
+
+	w := &worker{m: m, name: "hydro", sessionID: "h1"}
+	now := time.Now()
+	m.checkBoard(w, now)
+	events := backend.eventsSnapshot()
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want one escalation", events)
+	}
+	if ev := events[0]; ev.Kind != "escalation" || ev.Session != "c1" || !strings.Contains(ev.Payload, "stuck") {
+		t.Fatalf("escalation = %+v", ev)
+	}
+
+	m.checkBoard(w, now.Add(2*boardSweepInterval))
+	if got := len(backend.eventsSnapshot()); got != 1 {
+		t.Fatalf("escalated %d times, want once", got)
 	}
 }
 

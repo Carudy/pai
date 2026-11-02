@@ -193,6 +193,22 @@ func groupShow(name string, stdout io.Writer, log *tui.Logger) int {
 	for _, m := range members {
 		fmt.Fprintf(stdout, "%-20s %s\n", m.Name, emptyOr(state[m.SessionID], "-"))
 	}
+	if ts, ok := store.(session.TaskStore); ok {
+		tasks, err := ts.Tasks(g.ID, nil, 20)
+		if err == nil && len(tasks) > 0 {
+			fmt.Fprintln(stdout, "board:")
+			tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "  ID\tSTATUS\tOWNER\tVERSION\tTITLE")
+			for _, t := range tasks {
+				fmt.Fprintf(tw, "  %s\t%s\t%s\t%d\t%s\n",
+					t.ID, t.Status, emptyOr(t.OwnerName, "-"), t.Version, t.Title)
+			}
+			if err := tw.Flush(); err != nil {
+				log.Errorf("Error writing board: %v\n", err)
+				return 1
+			}
+		}
+	}
 	return 0
 }
 

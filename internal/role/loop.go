@@ -51,6 +51,9 @@ type Runtime struct {
 	// Mailer sends a message to another session. nil when the host cannot deliver
 	// session mail (for example a one-shot CLI run with no daemon).
 	Mailer core.Mailer
+	// Tasks is the group board. nil for a session that has no group, which is what
+	// keeps the board out of ungrouped runs entirely.
+	Tasks core.Tasks
 	// Trace and Hops describe the activation in flight: the chain of work it
 	// belongs to and how many cross-session deliveries led to it. The service
 	// driver sets them per wake; mail copies them forward so a reply chain stays

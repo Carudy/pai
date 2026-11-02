@@ -787,10 +787,10 @@ including ones waiting for a retry, and dead-lettered events are marked as such.
 
 A group is a boundary over existing service sessions, not a new kind of process:
 each member keeps its own role, model, workspace, and watchers. It decides who
-may mail whom, and it gives every member the same three things: a shared goal,
-the roster (the exact names `mail.to` accepts), and `mail` itself when the
-member's role does not declare it. It schedules nothing and budgets nothing — a
-member's autonomy stays its own manifest's business.
+may mail whom, and it gives every member the same four things: a shared goal, the
+roster (the exact names `mail.to` accepts), `mail` when the role does not declare
+it, and the shared board. It schedules nothing and budgets nothing — a member's
+autonomy stays its own manifest's business.
 
 ```toml
 # hydro.toml
@@ -819,6 +819,24 @@ sender is not copied). Addressed mail stays the narrow path — `"to":
 "hydrology"` reaches one session. `pai group start|stop` applies the service
 transition to every member, and `pai group rm` deletes only the directory —
 member sessions and their transcripts stay.
+
+### The board
+
+Work that outlives one activation goes on the group board, so members claim it
+instead of discovering it twice:
+
+```text
+task_add     add a unit of work
+task_claim   take it, or renew your lease (15 minutes)
+task_update  claimed | blocked | done | cancelled | open, with expect_version
+task_list    read the board, actionable first
+```
+
+A claim is a lease, not a lock: an abandoned task becomes `orphaned` when the
+lease lapses and another member can take it. Every write carries the version it
+read, and a stale write is refused with the current version — the board never
+silently merges two members' edits. When a task stays blocked for 30 minutes, or
+loses its owner, the host tells the group's lead once (if a lead is set).
 
 Groups are managed from the CLI while the store is unlocked (that is, while `pai
 serve` is stopped); a running server enforces the membership it read at startup,

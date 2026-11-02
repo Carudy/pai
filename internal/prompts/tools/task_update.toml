@@ -1,0 +1,37 @@
+# Tool: task_update
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "task_update"
+brief       = "change a board task's status or add a note"
+description = '''
+Move a task you own, and record what happened in a short note. Statuses:
+
+  claimed    take or renew the lease; you already hold the task
+  blocked    you cannot proceed yet; the task keeps its owner
+  done       finished; the task closes
+  cancelled  will not be done
+  open       release it back to the group
+
+Every write must carry `expect_version`, the version of the task you read. If
+someone else changed it first, the tool returns an error naming the current
+version: read the task again with `task_list` and decide from the new state.
+That is the point of the version — the board never silently merges two members'
+edits.
+
+Notes are appended, not replaced, and are bounded. Keep them to a line or two:
+the next reader needs the outcome, not the transcript.
+'''
+schema = '''
+{
+  "id":             "task id (required)",
+  "expect_version": "version you read (required)",
+  "status":         "claimed | blocked | done | cancelled | open",
+  "note":           "optional one-line outcome or blocker"
+}
+'''

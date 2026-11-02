@@ -68,10 +68,22 @@ Broadcasts are rate limited per sender, because each one costs a wake in every
 member. `group:<name>` requires membership; `lead` is only an escalation hint.
 
 A member's prompt head carries a `GroupBrief` (shared goal, roster, addressing
-rule), built once per worker, and the host adds `mail` as a session-layer tool so
-a role that lacks it can still talk to its group. A group never schedules a
-member: it carries no budget and cannot pause work, so a session's autonomy stays
-its own manifest's business.
+rule), built once per worker, and the host adds `mail` and the `task_*` board
+tools as session-layer tools so a role that lacks them can still work with its
+group. A group never schedules a member: it carries no budget and cannot pause
+work, so a session's autonomy stays its own manifest's business.
+
+## The board
+
+`TaskBackend` is the optional group board: `task_add`, `task_claim`,
+`task_update`, and `task_list` are ordinary built-ins dispatch through it. A
+claim sets a lease, and `ExpireTasks` returns a lapsed claim to the group as
+orphaned. Every write is optimistic (`expect_version`), so a stale edit is
+rejected instead of merged. `checkBoard` runs on the first activation of a group
+each minute: it expires leases, orphans work held by a session that left, and
+sends the lead one `escalation` event per stuck task (`MarkTaskEscalated` makes
+that exactly-once). A group with no lead records the escalation as skipped
+rather than retrying forever.
 
 ## Integration contract
 

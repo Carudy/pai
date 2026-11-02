@@ -227,6 +227,21 @@ type GroupBackend interface {
 	GroupMembers(groupID string) ([]core.GroupMember, error)
 }
 
+// TaskBackend is the optional group board. A backend without it runs groups
+// without a board: the task tools report that this host has none, and delivery
+// and prompts are unaffected.
+type TaskBackend interface {
+	CreateTask(core.Task) (core.Task, error)
+	Task(id string) (core.Task, error)
+	Tasks(groupID string, statuses []core.TaskStatus, limit int) ([]core.Task, error)
+	ClaimTask(id, ownerID string, now time.Time, lease time.Duration) (core.Task, error)
+	UpdateTask(id, actorID string, expectVersion int, status core.TaskStatus, note string, allowForeign bool, now time.Time) (core.Task, error)
+	ExpireTasks(now time.Time) ([]core.Task, error)
+	OrphanTasksOwnedBy(sessionID string, now time.Time) ([]core.Task, error)
+	DueEscalations(groupID string, now time.Time) ([]core.Task, error)
+	MarkTaskEscalated(id string, kind core.TaskStatus, now time.Time) (bool, error)
+}
+
 // ServiceEditor replaces a stopped service's manifest. It is deliberately not a
 // live edit: the session identity, history, and queued events are kept, while the
 // role, workspace, spec, and watcher set are reconciled.

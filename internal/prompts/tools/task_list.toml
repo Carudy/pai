@@ -1,0 +1,30 @@
+# Tool: task_list
+#
+#   name        identifier used in JSON responses and referenced by roles
+#   brief       one-line summary, rendered in the compact per-turn reminder
+#   description detailed prose, rendered once into the frozen system prompt
+#   schema      the shape of the tool's `payload`
+#
+# The Go implementation is registered under this name in internal/role/tools.go.
+
+name        = "task_list"
+brief       = "read the group board"
+description = '''
+Read your group's board before planning or claiming work. Each row shows the
+task id, its status, its owner, the version you must pass to `task_update`, and
+the title.
+
+Without a filter you see the work that matters now: open, orphaned, blocked, and
+claimed items, actionable first. Filter by status for a narrower view, and read
+a task's version right before you write to it — a version that is a few turns old
+is exactly what a stale-write rejection is for.
+
+Do not rebuild the plan from memory: the board is the shared truth, and another
+member may have finished or blocked the item you are about to start.
+'''
+schema = '''
+{
+  "status": "optional: open | claimed | blocked | orphaned | done | cancelled",
+  "limit":  "optional, default 50"
+}
+'''
