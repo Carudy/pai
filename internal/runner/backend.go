@@ -23,6 +23,9 @@ type Meta struct {
 	// ID is the immutable identity events, watchers, mail, and tasks reference.
 	// Name remains the display key used by the CLI and web routes.
 	ID string `json:"id,omitempty"`
+	// Turns is the stored turn count, so a remote listing shows the same column a
+	// local one does without reading the transcript.
+	Turns int `json:"turns,omitempty"`
 	// Mode is "chat" or "service"; State is the last persisted runtime state.
 	Mode     string     `json:"mode,omitempty"`
 	State    string     `json:"state,omitempty"`
@@ -225,6 +228,7 @@ type GroupBackend interface {
 	GroupByName(name string) (core.Group, bool, error)
 	GroupBySession(sessionID string) (core.Group, bool, error)
 	GroupMembers(groupID string) ([]core.GroupMember, error)
+	Groups() ([]core.Group, error)
 }
 
 // TaskBackend is the optional group board. A backend without it runs groups

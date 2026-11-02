@@ -117,9 +117,10 @@ func validateGroupName(name string) error {
 
 func (s *sqliteStore) GroupByName(name string) (core.Group, bool, error) {
 	var g core.Group
-	err := s.db.QueryRow(`SELECT g.id, g.name, g.goal, g.lead_id, COALESCE(l.name, ''), g.max_members
+	err := s.db.QueryRow(`SELECT g.id, g.name, g.goal, g.lead_id, COALESCE(l.name, ''), g.max_members,
+  (SELECT COUNT(1) FROM group_members m WHERE m.group_id = g.id)
 FROM groups g LEFT JOIN sessions l ON l.id = g.lead_id
-WHERE g.name = ?`, name).Scan(&g.ID, &g.Name, &g.Goal, &g.LeadID, &g.LeadName, &g.MaxMembers)
+WHERE g.name = ?`, name).Scan(&g.ID, &g.Name, &g.Goal, &g.LeadID, &g.LeadName, &g.MaxMembers, &g.Members)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.Group{}, false, nil
 	}
@@ -131,11 +132,12 @@ WHERE g.name = ?`, name).Scan(&g.ID, &g.Name, &g.Goal, &g.LeadID, &g.LeadName, &
 
 func (s *sqliteStore) GroupBySession(sessionID string) (core.Group, bool, error) {
 	var g core.Group
-	err := s.db.QueryRow(`SELECT g.id, g.name, g.goal, g.lead_id, COALESCE(l.name, ''), g.max_members
+	err := s.db.QueryRow(`SELECT g.id, g.name, g.goal, g.lead_id, COALESCE(l.name, ''), g.max_members,
+  (SELECT COUNT(1) FROM group_members m2 WHERE m2.group_id = g.id)
 FROM groups g
 JOIN group_members m ON m.group_id = g.id
 LEFT JOIN sessions l ON l.id = g.lead_id
-WHERE m.session_id = ?`, sessionID).Scan(&g.ID, &g.Name, &g.Goal, &g.LeadID, &g.LeadName, &g.MaxMembers)
+WHERE m.session_id = ?`, sessionID).Scan(&g.ID, &g.Name, &g.Goal, &g.LeadID, &g.LeadName, &g.MaxMembers, &g.Members)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.Group{}, false, nil
 	}
@@ -146,7 +148,8 @@ WHERE m.session_id = ?`, sessionID).Scan(&g.ID, &g.Name, &g.Goal, &g.LeadID, &g.
 }
 
 func (s *sqliteStore) Groups() ([]core.Group, error) {
-	rows, err := s.db.Query(`SELECT g.id, g.name, g.goal, g.lead_id, COALESCE(l.name, ''), g.max_members
+	rows, err := s.db.Query(`SELECT g.id, g.name, g.goal, g.lead_id, COALESCE(l.name, ''), g.max_members,
+  (SELECT COUNT(1) FROM group_members m WHERE m.group_id = g.id)
 FROM groups g LEFT JOIN sessions l ON l.id = g.lead_id ORDER BY g.name`)
 	if err != nil {
 		return nil, err
@@ -155,7 +158,7 @@ FROM groups g LEFT JOIN sessions l ON l.id = g.lead_id ORDER BY g.name`)
 	var out []core.Group
 	for rows.Next() {
 		var g core.Group
-		if err := rows.Scan(&g.ID, &g.Name, &g.Goal, &g.LeadID, &g.LeadName, &g.MaxMembers); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Goal, &g.LeadID, &g.LeadName, &g.MaxMembers, &g.Members); err != nil {
 			return nil, err
 		}
 		out = append(out, g)

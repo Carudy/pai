@@ -237,6 +237,10 @@ rejected; there is no URL authentication.
   filtered total, so the sidebar's one-mode list can say whether more exist.
   `default_cwd` is the server's launch directory — the default for new sessions,
   which the UI prefills into its working-directory field.
+- `GET /api/group?name=...`: `runner.GroupView` — the roster with each member's
+  role, persisted state, next wake, and `lead` flag, plus the group's `tasks`.
+  Without `name` it returns `{"groups": [...]}`. Read-only, and the source
+  `pai group show` uses while the server holds the store lock.
 - `GET /api/service?name=...`: `runner.ServiceView` — the durable view of a
   resident session: metadata (mode, state, next wake), `status` (the last
   report), `spec` (the stored manifest as canonical JSON), `manifest_toml` (the

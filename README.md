@@ -838,9 +838,12 @@ read, and a stale write is refused with the current version — the board never
 silently merges two members' edits. When a task stays blocked for 30 minutes, or
 loses its owner, the host tells the group's lead once (if a lead is set).
 
-Groups are managed from the CLI while the store is unlocked (that is, while `pai
-serve` is stopped); a running server enforces the membership it read at startup,
-so a membership change takes effect on the next restart.
+Groups are managed from the CLI. Writes (`create`, `add`, `rm-member`, `rm`,
+`start`, `stop`) need the store to be unlocked, so stop `pai serve` first. Reads
+(`pai group ls/show`, `pai session ls/show`, `pai service ls/show`) fall back to
+the running server, so you can inspect the roster and board while it runs; they
+resolve the server exactly as `pai conn` does (`conn.url`/`conn.token`, or
+`PAI_SERVE_URL`/`PAI_SERVE_TOKEN`).
 
 ## 🌐 Browser / server mode
 

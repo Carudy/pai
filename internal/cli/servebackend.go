@@ -33,7 +33,7 @@ const serviceQueueLimit = 20
 func serveMeta(m session.Meta) runner.Meta {
 	return runner.Meta{Name: m.Name, ID: m.ID, Role: m.Role, Model: m.Model, Cwd: m.Cwd,
 		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, Mode: m.Mode, State: m.State,
-		NextWake: m.NextWake, TokenScale: m.TokenScale()}
+		NextWake: m.NextWake, TokenScale: m.TokenScale(), Turns: m.Turns}
 }
 
 // The serve backend is the production implementation of the optional resident
@@ -90,6 +90,16 @@ func (b *serveBackend) GroupMembers(groupID string) ([]core.GroupMember, error) 
 		return nil, err
 	}
 	return store.GroupMembers(groupID)
+}
+
+func (b *serveBackend) Groups() ([]core.Group, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return nil, err
+	}
+	return store.Groups()
 }
 
 func (b *serveBackend) taskStore() (session.TaskStore, error) {

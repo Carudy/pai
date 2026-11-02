@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/conn"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/runner"
 	"github.com/Carudy/pai/internal/session"
@@ -122,11 +123,19 @@ func groupByName(gs session.GroupStore, name string) (core.Group, bool, bool) {
 }
 
 func groupList(stdout io.Writer, log *tui.Logger) int {
-	store, gs, ok := openGroupStore(log)
+	store, client, ok := readSource(log)
 	if !ok {
 		return 1
 	}
+	if client != nil {
+		return groupListRemote(client, stdout, log)
+	}
 	defer store.Close()
+	gs, ok := store.(session.GroupStore)
+	if !ok {
+		log.Errorf("Error: this session store does not expose groups\n")
+		return 1
+	}
 	groups, err := gs.Groups()
 	if err != nil {
 		log.Errorf("Error listing groups: %v\n", err)
@@ -139,12 +148,33 @@ func groupList(stdout io.Writer, log *tui.Logger) int {
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tLEAD\tMEMBERS")
 	for _, g := range groups {
-		members, err := gs.GroupMembers(g.ID)
-		if err != nil {
-			log.Errorf("Error reading members of %s: %v\n", g.Name, err)
-			return 1
-		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\n", g.Name, emptyOr(g.LeadName, "-"), len(members))
+		fmt.Fprintf(tw, "%s\t%s\t%d\n", g.Name, emptyOr(g.LeadName, "-"), g.Members)
+	}
+	if err := tw.Flush(); err != nil {
+		log.Errorf("Error writing list: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// groupListRemote reads the directory from a running server, which is the only
+// view available while it owns the store.
+func groupListRemote(client *conn.Client, stdout io.Writer, log *tui.Logger) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	groups, err := client.Groups(ctx)
+	if err != nil {
+		log.Errorf("Error listing groups: %v\n", err)
+		return 1
+	}
+	if len(groups) == 0 {
+		fmt.Fprintln(stdout, "no groups")
+		return 0
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tLEAD\tMEMBERS")
+	for _, g := range groups {
+		fmt.Fprintf(tw, "%s\t%s\t%d\n", g.Name, emptyOr(g.LeadName, "-"), g.Members)
 	}
 	if err := tw.Flush(); err != nil {
 		log.Errorf("Error writing list: %v\n", err)
@@ -154,11 +184,19 @@ func groupList(stdout io.Writer, log *tui.Logger) int {
 }
 
 func groupShow(name string, stdout io.Writer, log *tui.Logger) int {
-	store, gs, ok := openGroupStore(log)
+	store, client, ok := readSource(log)
 	if !ok {
 		return 1
 	}
+	if client != nil {
+		return groupShowRemote(client, name, stdout, log)
+	}
 	defer store.Close()
+	gs, ok := store.(session.GroupStore)
+	if !ok {
+		log.Errorf("Error: this session store does not expose groups\n")
+		return 1
+	}
 	g, found, ok := groupByName(gs, name)
 	if !ok {
 		log.Errorf("Error reading group %s\n", name)
@@ -182,32 +220,59 @@ func groupShow(name string, stdout io.Writer, log *tui.Logger) int {
 	for _, m := range metas {
 		state[m.ID] = m.State
 	}
-	fmt.Fprintf(stdout, "name:        %s\n", g.Name)
-	fmt.Fprintf(stdout, "id:          %s\n", g.ID)
-	fmt.Fprintf(stdout, "lead:        %s\n", emptyOr(g.LeadName, "-"))
-	fmt.Fprintf(stdout, "members:     %d/%d\n", len(members), g.MaxMembers)
-	if goal := strings.TrimSpace(g.Goal); goal != "" {
-		fmt.Fprintf(stdout, "goal:        %s\n", goal)
-	}
+	printGroupHeader(g, stdout)
 	fmt.Fprintln(stdout, "member               state")
 	for _, m := range members {
 		fmt.Fprintf(stdout, "%-20s %s\n", m.Name, emptyOr(state[m.SessionID], "-"))
 	}
+	var tasks []core.Task
 	if ts, ok := store.(session.TaskStore); ok {
-		tasks, err := ts.Tasks(g.ID, nil, 20)
-		if err == nil && len(tasks) > 0 {
-			fmt.Fprintln(stdout, "board:")
-			tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "  ID\tSTATUS\tOWNER\tVERSION\tTITLE")
-			for _, t := range tasks {
-				fmt.Fprintf(tw, "  %s\t%s\t%s\t%d\t%s\n",
-					t.ID, t.Status, emptyOr(t.OwnerName, "-"), t.Version, t.Title)
-			}
-			if err := tw.Flush(); err != nil {
-				log.Errorf("Error writing board: %v\n", err)
-				return 1
-			}
-		}
+		tasks, _ = ts.Tasks(g.ID, nil, 20)
+	}
+	return renderGroupBoard(tasks, stdout, log)
+}
+
+// groupShowRemote renders the same view from a running server.
+func groupShowRemote(client *conn.Client, name string, stdout io.Writer, log *tui.Logger) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	view, err := client.Group(ctx, name)
+	if err != nil {
+		log.Errorf("Error: %v\n", err)
+		return 1
+	}
+	printGroupHeader(view.Group, stdout)
+	fmt.Fprintln(stdout, "member               state")
+	for _, m := range view.Members {
+		fmt.Fprintf(stdout, "%-20s %s\n", m.Name, emptyOr(m.State, "-"))
+	}
+	return renderGroupBoard(view.Tasks, stdout, log)
+}
+
+func printGroupHeader(g core.Group, stdout io.Writer) {
+	fmt.Fprintf(stdout, "name:        %s\n", g.Name)
+	fmt.Fprintf(stdout, "id:          %s\n", g.ID)
+	fmt.Fprintf(stdout, "lead:        %s\n", emptyOr(g.LeadName, "-"))
+	fmt.Fprintf(stdout, "members:     %d/%d\n", g.Members, g.MaxMembers)
+	if goal := strings.TrimSpace(g.Goal); goal != "" {
+		fmt.Fprintf(stdout, "goal:        %s\n", goal)
+	}
+}
+
+func renderGroupBoard(tasks []core.Task, stdout io.Writer, log *tui.Logger) int {
+	if len(tasks) == 0 {
+		return 0
+	}
+	fmt.Fprintln(stdout, "board:")
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "  ID\tSTATUS\tOWNER\tVERSION\tTITLE")
+	for _, t := range tasks {
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%d\t%s\n",
+			t.ID, t.Status, emptyOr(t.OwnerName, "-"), t.Version, t.Title)
+	}
+	if err := tw.Flush(); err != nil {
+		log.Errorf("Error writing board: %v\n", err)
+		return 1
 	}
 	return 0
 }

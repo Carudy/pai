@@ -54,6 +54,16 @@ func (b *groupTestBackend) GroupMembers(groupID string) ([]core.GroupMember, err
 	return append([]core.GroupMember(nil), b.members[groupID]...), nil
 }
 
+func (b *groupTestBackend) Groups() ([]core.Group, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]core.Group, 0, len(b.groups))
+	for _, g := range b.groups {
+		out = append(out, g)
+	}
+	return out, nil
+}
+
 // The board half of the backend. Semantics only need to be faithful enough to
 // exercise the manager's group scoping and the escalation sweep.
 
@@ -370,6 +380,36 @@ func TestCheckBoardEscalatesOnce(t *testing.T) {
 	m.checkBoard(w, now.Add(2*boardSweepInterval))
 	if got := len(backend.eventsSnapshot()); got != 1 {
 		t.Fatalf("escalated %d times, want once", got)
+	}
+}
+
+// GroupView is what `GET /api/group` serves, so it must carry the roster with
+// each member's persisted state and the board in one response.
+func TestGroupViewForTheServer(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+	backend.mu.Lock()
+	backend.tasks["t1"] = core.Task{ID: "t1", GroupID: "g-hydro", Title: "check the gate", Status: core.TaskOpen, Version: 1}
+	backend.mu.Unlock()
+
+	view, err := m.GroupView("hydro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Group.Name != "hydro" || len(view.Members) != 2 || len(view.Tasks) != 1 {
+		t.Fatalf("view = %+v", view)
+	}
+	lead := false
+	for _, mem := range view.Members {
+		if mem.Name == "coord" && mem.Lead {
+			lead = true
+		}
+	}
+	if !lead {
+		t.Fatalf("the lead flag is missing: %+v", view.Members)
+	}
+	if _, err := m.GroupView("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing group = %v", err)
 	}
 }
 

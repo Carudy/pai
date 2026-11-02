@@ -22,6 +22,10 @@ See the [module map](../organization.md) for dependency rules.
   `service.go` it needs the store lock. Membership is enforced by `runner` through
   the optional `GroupBackend` port, which `servebackend.go` forwards to the store;
   the board is forwarded the same way through `TaskBackend`.
+  - `remote.go` is the read fallback: while `pai serve` owns the store lock, the
+  read commands (`session ls/show`, `service ls/show`, `group ls/show`) query the
+  running server through `conn` instead of failing. Writes still require the lock,
+  so the error they print says so.
 - A service is run by `pai serve`, which registers every `mode=service` session
   with the scheduler at startup — except one persisted as `stopped`.
 - The `serve*.go` files compose the session backend, `runner.Manager`, and

@@ -143,6 +143,51 @@ func (c *Client) Ping(ctx context.Context) error {
 	return resp.Body.Close()
 }
 
+// Group returns one group's roster and board, as the running server sees them.
+// It is the read path for `pai group show` while the server owns the store.
+func (c *Client) Group(ctx context.Context, name string) (runner.GroupView, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/api/group?name="+url.QueryEscape(name), nil)
+	if err != nil {
+		return runner.GroupView{}, err
+	}
+	defer resp.Body.Close()
+	var view runner.GroupView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		return runner.GroupView{}, err
+	}
+	return view, nil
+}
+
+// Groups lists the group directory.
+func (c *Client) Groups(ctx context.Context) ([]core.Group, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/api/group", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Groups []core.Group `json:"groups"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Groups, nil
+}
+
+// ServiceView returns one resident session's inspection view.
+func (c *Client) ServiceView(ctx context.Context, name string) (runner.ServiceView, error) {
+	resp, err := c.do(ctx, http.MethodGet, "/api/service?name="+url.QueryEscape(name), nil)
+	if err != nil {
+		return runner.ServiceView{}, err
+	}
+	defer resp.Body.Close()
+	var view runner.ServiceView
+	if err := json.NewDecoder(resp.Body).Decode(&view); err != nil {
+		return runner.ServiceView{}, err
+	}
+	return view, nil
+}
+
 // Sessions lists known sessions.
 func (c *Client) Sessions(ctx context.Context, offset, limit int) ([]runner.Meta, int, error) {
 	resp, err := c.do(ctx, http.MethodGet, fmt.Sprintf("/api/sessions?offset=%d&limit=%d", offset, limit), nil)

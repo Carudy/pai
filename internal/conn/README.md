@@ -30,6 +30,9 @@ err = conn.Run(ctx, conn.Options{
 - `New` only records the base URL and bearer token; it opens no connection and
   reads no config. `Ping` is a `GET /api/sessions` round trip, chosen because it
   requires authentication and touches no session state.
+- `Group`, `Groups`, and `ServiceView` are read-only inspection calls. The CLI's
+  `session`/`service`/`group` read commands use them when a running server owns
+  the store lock; writes are not routed here.
 - Mutating requests carry the base URL's origin. The server's mutation gate
   accepts a same-origin request or a bearer token; a terminal has no browser
   origin, so it claims the address it is already talking to. A proxied server

@@ -513,6 +513,26 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respond(w, 200, snapshot)
+	case "/api/group":
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		name := r.URL.Query().Get("name")
+		if name == "" {
+			groups, err := h.manager.Groups()
+			if err != nil {
+				managerError(w, err)
+				return
+			}
+			respond(w, 200, map[string]any{"groups": groups})
+			return
+		}
+		view, err := h.manager.GroupView(name)
+		if err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, view)
 	case "/api/service":
 		switch r.Method {
 		case http.MethodGet:

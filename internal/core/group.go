@@ -15,6 +15,9 @@ type Group struct {
 	LeadID     string
 	LeadName   string // resolved for display; empty when the lead row is gone
 	MaxMembers int
+	// Members is the roster size, populated by read queries so a listing does not
+	// need one query per group.
+	Members int
 }
 
 // GroupMember is one session's membership. Name is the session's display name,

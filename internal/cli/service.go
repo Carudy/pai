@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/conn"
 	"github.com/Carudy/pai/internal/paths"
 	"github.com/Carudy/pai/internal/prompts"
 	"github.com/Carudy/pai/internal/runner"
@@ -96,6 +97,11 @@ func runServiceCmd(_ context.Context, args []string, stdout io.Writer, log *tui.
 func openServiceStore(log *tui.Logger) (session.Store, bool) {
 	store, err := session.Open()
 	if err != nil {
+		if errors.Is(err, session.ErrLocked) {
+			log.Errorf("Error: the session store is owned by a running `pai serve`; stop it to make changes.\n" +
+				"Read commands fall back to the server automatically.\n")
+			return nil, false
+		}
 		log.Errorf("Error opening sessions: %v\n", err)
 		return nil, false
 	}
@@ -143,9 +149,12 @@ func serviceDelete(name string, stdout io.Writer, log *tui.Logger) int {
 }
 
 func serviceList(stdout io.Writer, log *tui.Logger) int {
-	store, ok := openServiceStore(log)
+	store, client, ok := readSource(log)
 	if !ok {
 		return 1
+	}
+	if client != nil {
+		return serviceListRemote(client, stdout, log)
 	}
 	defer store.Close()
 	metas, err := store.List()
@@ -186,9 +195,12 @@ func serviceList(stdout io.Writer, log *tui.Logger) int {
 }
 
 func serviceShow(name string, stdout io.Writer, log *tui.Logger) int {
-	store, ok := openServiceStore(log)
+	store, client, ok := readSource(log)
 	if !ok {
 		return 1
+	}
+	if client != nil {
+		return serviceShowRemote(client, name, stdout, log)
 	}
 	defer store.Close()
 
@@ -672,4 +684,109 @@ func emptyOr(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// serviceListRemote reads the resident-session list from a running server. It
+// asks for each service's view as well, because the goal and queue columns live
+// there and the session list does not carry them.
+func serviceListRemote(client *conn.Client, stdout io.Writer, log *tui.Logger) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	metas, _, err := client.Sessions(ctx, 0, 200)
+	if err != nil {
+		log.Errorf("Error listing sessions: %v\n", err)
+		return 1
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tSTATE\tNEXT WAKE\tEVENTS\tROLE\tGOAL")
+	found := false
+	for _, meta := range metas {
+		if meta.Mode != runner.ModeService {
+			continue
+		}
+		found = true
+		events, goal := 0, ""
+		if view, err := client.ServiceView(ctx, meta.Name); err == nil {
+			events = len(view.Queue)
+			if manifest, err := config.ParseStoredServiceSpec(view.Spec); err == nil {
+				goal = manifest.Goal
+			}
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
+			meta.Name, emptyOr(meta.State, "-"), formatWake(meta.NextWake), events, meta.Role, goal)
+	}
+	if err := tw.Flush(); err != nil {
+		log.Errorf("Error writing list: %v\n", err)
+		return 1
+	}
+	if !found {
+		fmt.Fprintln(stdout, "no service sessions")
+	}
+	return 0
+}
+
+// serviceShowRemote renders the same inspection view from a running server.
+func serviceShowRemote(client *conn.Client, name string, stdout io.Writer, log *tui.Logger) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	view, err := client.ServiceView(ctx, name)
+	if err != nil {
+		log.Errorf("Error: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "name:        %s\n", view.Name)
+	fmt.Fprintf(stdout, "id:          %s\n", view.ID)
+	fmt.Fprintf(stdout, "role:        %s\n", view.Role)
+	fmt.Fprintf(stdout, "model:       %s\n", view.Model)
+	fmt.Fprintf(stdout, "workspace:   %s\n", view.Cwd)
+	fmt.Fprintf(stdout, "state:       %s\n", emptyOr(view.State, "-"))
+	if view.Phase != "" {
+		fmt.Fprintf(stdout, "phase:       %s\n", view.Phase)
+	}
+	if view.Error != "" {
+		fmt.Fprintf(stdout, "error:       %s\n", view.Error)
+	}
+	fmt.Fprintf(stdout, "next wake:   %s\n", formatWake(view.NextWake))
+	fmt.Fprintf(stdout, "events:      %d queued\n", len(view.Queue))
+	if len(view.Queue) > 0 {
+		fmt.Fprintln(stdout, "queue:")
+		tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "  STATE\tCLASS\tPRIORITY\tSOURCE\tAT\tATTEMPTS\tDETAIL")
+		for _, ev := range view.Queue {
+			fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\t%s\t%d\t%s\n",
+				emptyOr(ev.State, "-"), ev.Class, ev.Priority, ev.Source, formatWake(&ev.At), ev.Attempts,
+				emptyOr(clip(strings.TrimSpace(ev.Payload), 60), "-"))
+		}
+		if err := tw.Flush(); err != nil {
+			log.Errorf("Error writing queue: %v\n", err)
+			return 1
+		}
+	}
+	if strings.TrimSpace(view.Status) != "" {
+		fmt.Fprintf(stdout, "status:\n%s\n", strings.TrimSpace(view.Status))
+	}
+	if strings.TrimSpace(view.ManifestTOML) != "" {
+		fmt.Fprintf(stdout, "manifest:\n%s\n", view.ManifestTOML)
+	} else if view.Spec != "" && view.Spec != "{}" {
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, []byte(view.Spec), "", "  "); err == nil {
+			fmt.Fprintf(stdout, "manifest:\n%s\n", pretty.String())
+		}
+	}
+	if len(view.Watchers) == 0 {
+		fmt.Fprintln(stdout, "watchers:    none")
+		return 0
+	}
+	fmt.Fprintln(stdout, "watchers:")
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "  NAME\tENABLED\tLAST RUN\tNEXT RUN\tSTATE\tERROR")
+	for _, w := range view.Watchers {
+		fmt.Fprintf(tw, "  %s\t%v\t%s\t%s\t%s\t%s\n",
+			w.Name, w.Enabled, formatWake(w.LastRun), formatWake(w.NextRun), emptyOr(w.LastState, "-"), w.LastError)
+	}
+	if err := tw.Flush(); err != nil {
+		log.Errorf("Error writing watchers: %v\n", err)
+		return 1
+	}
+	return 0
 }

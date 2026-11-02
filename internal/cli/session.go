@@ -12,6 +12,7 @@ import (
 
 	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
+	"github.com/Carudy/pai/internal/conn"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/paths"
 	"github.com/Carudy/pai/internal/provider"
@@ -195,29 +196,52 @@ func toMessages(turns []core.Turn) []provider.Message {
 }
 
 // runSession handles `pai session <list|show|rm|rename>`.
-func runSession(_ context.Context, args []string, stdout io.Writer, log *tui.Logger) int {
+func runSession(ctx context.Context, args []string, stdout io.Writer, log *tui.Logger) int {
 	if len(args) == 0 {
 		args = []string{"list"}
 	}
 
+	switch args[0] {
+	case "list", "ls":
+		store, client, ok := readSource(log)
+		if !ok {
+			return 1
+		}
+		if client != nil {
+			return sessionListRemote(ctx, client, stdout, log)
+		}
+		defer store.Close()
+		return sessionList(store, stdout, log)
+
+	case "show", "cat":
+		if len(args) < 2 {
+			log.Errorf("Usage: pai session show <name>\n")
+			return 1
+		}
+		store, client, ok := readSource(log)
+		if !ok {
+			return 1
+		}
+		if client != nil {
+			return sessionShowRemote(ctx, client, args[1], stdout, log)
+		}
+		defer store.Close()
+		return sessionShow(store, args[1], stdout, log)
+	}
+
+	// Writes need the store itself.
 	store, err := session.Open()
 	if err != nil {
+		if errors.Is(err, session.ErrLocked) {
+			log.Errorf("Error: the session store is owned by a running `pai serve`; stop it to %s.\n", args[0])
+			return 1
+		}
 		log.Errorf("Error opening session store: %v\n", err)
 		return 1
 	}
 	defer store.Close()
 
 	switch args[0] {
-	case "list", "ls":
-		return sessionList(store, stdout, log)
-
-	case "show":
-		if len(args) < 2 {
-			log.Errorf("Usage: pai session show <name>\n")
-			return 1
-		}
-		return sessionShow(store, args[1], stdout, log)
-
 	case "rm", "delete":
 		if len(args) < 2 {
 			log.Errorf("Usage: pai session rm <name>\n")
@@ -372,4 +396,58 @@ func clip(s string, n int) string {
 		return string(flat[:n]) + "…"
 	}
 	return string(flat)
+}
+
+// sessionListRemote reads the session list from a running server. The store is
+// locked while serve runs, so this is the same information from the process that
+// owns it.
+func sessionListRemote(ctx context.Context, client *conn.Client, stdout io.Writer, log *tui.Logger) int {
+	metas, _, err := client.Sessions(ctx, 0, 200)
+	if err != nil {
+		log.Errorf("Error listing sessions: %v\n", err)
+		return 1
+	}
+	if len(metas) == 0 {
+		fmt.Fprintln(stdout, "No sessions yet.")
+		return 0
+	}
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tMODE\tROLE\tTURNS\tUPDATED\tCWD")
+	for _, m := range metas {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n",
+			m.Name, emptyOr(m.Mode, session.ModeChat), m.Role, m.Turns, humanAge(m.UpdatedAt), m.Cwd)
+	}
+	return flush(tw)
+}
+
+// sessionShowRemote renders the same view `pai session show` renders locally,
+// from the server's history endpoint.
+func sessionShowRemote(ctx context.Context, client *conn.Client, name string, stdout io.Writer, log *tui.Logger) int {
+	const tail = 20
+	first, err := client.History(ctx, name, 0, 1)
+	if err != nil {
+		log.Errorf("Error: %v\n", err)
+		return 1
+	}
+	offset := 0
+	if first.Total > tail {
+		offset = first.Total - tail
+	}
+	h, err := client.History(ctx, name, offset, tail)
+	if err != nil {
+		log.Errorf("Error: %v\n", err)
+		return 1
+	}
+	meta := h.Meta
+	fmt.Fprintf(stdout, "name:    %s\nmode:    %s\nrole:    %s\nmodel:   %s\ncwd:     %s\ncreated: %s\nupdated: %s\nturns:   %d\n\n",
+		meta.Name, emptyOr(meta.Mode, session.ModeChat), meta.Role, meta.Model, meta.Cwd,
+		meta.CreatedAt.Format(time.RFC3339), humanAge(meta.UpdatedAt), meta.Turns)
+
+	if offset > 0 {
+		fmt.Fprintf(stdout, "… %d earlier turns omitted …\n", offset)
+	}
+	for i, t := range h.Turns {
+		fmt.Fprintf(stdout, "%4d  %-9s %-11s %s\n", offset+i+1, t.Role, t.Kind, describeTurn(t, 100))
+	}
+	return 0
 }
