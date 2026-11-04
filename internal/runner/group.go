@@ -163,6 +163,46 @@ func (m *Manager) markGroupDirty(name string) {
 	}
 }
 
+// Bounds for a group timeline read. The panel asks for the newest few and grows
+// the window only when the reader asks for more; the underlying events are kept
+// for 30 days, so this is about what one refresh reads, not retention.
+const (
+	groupActivityDefault = 10
+	groupActivityMax     = 100
+)
+
+// GroupActivity is the read side of a group's timeline, for a panel that wants a
+// different window than GroupView carries. A limit of 0 means the default; it is
+// clamped to groupActivityMax.
+func (m *Manager) GroupActivity(name string, limit int) ([]GroupActivity, error) {
+	groups, ok := m.backend.(GroupBackend)
+	if !ok {
+		return nil, errors.New("this host has no group directory")
+	}
+	g, found, err := groups.GroupByName(name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	activity, ok := m.backend.(GroupActivityBackend)
+	if !ok {
+		return nil, nil
+	}
+	members, err := groups.GroupMembers(g.ID)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = groupActivityDefault
+	}
+	if limit > groupActivityMax {
+		limit = groupActivityMax
+	}
+	return activity.GroupActivity(members, limit)
+}
+
 // GroupView assembles a group, its roster with each member's persisted state,
 // and the board. It reads persisted state only, so it works with no live worker.
 func (m *Manager) GroupView(name string) (GroupView, error) {
@@ -200,9 +240,10 @@ func (m *Manager) GroupView(name string) (GroupView, error) {
 		}
 	}
 	// A timeline is a convenience, like the board: a backend without one, or a
-	// failed read, still returns the roster and the goal.
+	// failed read, still returns the roster and the goal. The view carries the
+	// newest few rows; `GroupActivity` serves a wider window on request.
 	if activity, ok := m.backend.(GroupActivityBackend); ok {
-		if list, err := activity.GroupActivity(members, 0); err == nil {
+		if list, err := activity.GroupActivity(members, groupActivityDefault); err == nil {
 			view.Activity = list
 		}
 	}

@@ -25,6 +25,9 @@ type groupTestBackend struct {
 	// idsBySession is the name→id table this double needs because the admin port
 	// speaks names while the read port speaks ids, exactly as the store does.
 	idsBySession map[string]string
+	// lastActivityLimit records the window the manager asked for, so a test can
+	// check the default and the clamp without a real store.
+	lastActivityLimit int
 
 	// board is the in-memory task store; due/escalated model the sweep.
 	tasks     map[string]core.Task
@@ -435,6 +438,9 @@ func TestGroupWriteRefreshesPreparedMembers(t *testing.T) {
 }
 
 func (b *groupTestBackend) GroupActivity(members []core.GroupMember, limit int) ([]GroupActivity, error) {
+	b.mu.Lock()
+	b.lastActivityLimit = limit
+	b.mu.Unlock()
 	if len(members) == 0 {
 		return nil, nil
 	}
@@ -737,5 +743,63 @@ func TestBroadcastLimits(t *testing.T) {
 	}
 	if _, err := m.deliverMail("coord", "group:pair", "one too many", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "too many group broadcasts") {
 		t.Fatalf("rate limit = %v", err)
+	}
+}
+
+// The sidebar renders /api/sessions, and the store only knows the state an
+// activation ended in. A live worker's state must win, otherwise every row reads
+// "idle" while the session is visibly working.
+func TestListReportsTheLiveState(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.meta.State = StateSuspended
+
+	list, err := m.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].State != StateSuspended {
+		t.Fatalf("list = %+v, want the persisted state with no worker", list)
+	}
+
+	w := &worker{m: m, name: "svc", mode: ModeService, state: StateBusy, done: make(chan struct{})}
+	w.cancel = func() {}
+	m.mu.Lock()
+	m.entries["svc"] = w
+	m.mu.Unlock()
+	t.Cleanup(func() {
+		m.mu.Lock()
+		delete(m.entries, "svc")
+		m.mu.Unlock()
+	})
+
+	list, err = m.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].State != StateBusy {
+		t.Fatalf("list = %+v, want the live busy state", list)
+	}
+}
+
+// A timeline read is bounded: the panel asks for a few rows and grows the window
+// on demand, so an unset limit is the default and a large one is clamped.
+func TestGroupActivityWindowIsBounded(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+
+	if _, err := m.GroupActivity("hydro", 0); err != nil {
+		t.Fatal(err)
+	}
+	if backend.lastActivityLimit != groupActivityDefault {
+		t.Fatalf("limit = %d, want the default %d", backend.lastActivityLimit, groupActivityDefault)
+	}
+	if _, err := m.GroupActivity("hydro", 5000); err != nil {
+		t.Fatal(err)
+	}
+	if backend.lastActivityLimit != groupActivityMax {
+		t.Fatalf("limit = %d, want the cap %d", backend.lastActivityLimit, groupActivityMax)
+	}
+	if _, err := m.GroupActivity("nope", 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing group = %v", err)
 	}
 }

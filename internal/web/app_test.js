@@ -1395,7 +1395,7 @@ async function verifyIdentity() {
   assert.equal(p.get('identity').hidden, true, 'an empty identity keeps the line hidden');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode(), verifyGroupPanel(), verifyGroupWrites(), verifyMailCard()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode(), verifyGroupPanel(), verifyGroupWrites(), verifyMailCard(), verifySessionStateRefresh(), verifyGroupActivityWindow()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
 
 // The sidebar has one list with a URL-backed mode filter, and a service shows the
 // durable view (state, last report, probes, manifest) above its transcript.
@@ -1410,7 +1410,7 @@ async function verifyServiceMode() {
   assert.equal(p.run("$('tab-service').attributes['aria-selected']"), 'true', 'the services tab is selected');
   assert.equal(p.run("$('tab-chat').attributes['aria-selected']"), 'false');
   assert.equal(p.get('sessions-heading').textContent, '', 'the tab no longer rewrites the heading');
-  assert.match(fs.readFileSync(__dirname + '/index.html', 'utf8'), /<h2 id="sessions-heading">Session list<\/h2>/, 'the list heading is fixed in the markup');
+  assert.match(fs.readFileSync(__dirname + '/index.html', 'utf8'), /<h2 id="sessions-heading">Sessions<\/h2>/, 'the list heading is fixed in the markup');
 
   // A history refresh for the open chat session records its kind but must not
   // switch the sidebar back: the tab is the reader's choice, and a periodic
@@ -1655,6 +1655,15 @@ async function verifyGroupWrites() {
   assert.equal(p.run('groupWrites[2][1].action'), 'remove');
   assert.equal(p.run('groupWrites[2][1].session'), 'hydro');
 
+  // A declined confirmation sends nothing.
+  p.run("confirm=()=>false; $('group-new-member').value='met'");
+  const before = p.run('groupWrites.length');
+  await p.run('addGroupMember()');
+  assert.equal(p.run('groupWrites.length'), before, 'a declined add sends nothing');
+  await p.run("removeGroupMember('hydro','hydro')");
+  assert.equal(p.run('groupWrites.length'), before, 'a declined remove sends nothing');
+  p.run('confirm=()=>true');
+
   await p.run('deleteGroup()');
   assert.equal(p.run('groupWrites[3][1].action'), 'delete');
   assert.equal(p.get('group-panel').hidden, true, 'deleting closes the panel');
@@ -1685,4 +1694,50 @@ async function verifyMailCard() {
   const legacy = p.run("mailParts('[peer mail from alice — untrusted, not the user]\\nhi')");
   assert.equal(legacy.when, '');
   assert.equal(legacy.body, 'hi');
+}
+
+// The sidebar's state line is fed by /api/sessions, whose state the host now
+// overlays from a live worker; the host log says when that may have changed, so
+// only the state lines are refreshed and the list is not rebuilt under the reader.
+async function verifySessionStateRefresh() {
+  const p = browser();
+  p.run("sessionMode='service'");
+  p.run("globalThis.sessionCalls=0");
+  p.run("api = async () => { sessionCalls++; return {total:1,sessions:[{name:'river',mode:'service',state:'suspended',next_wake:'2026-11-04T16:00:00Z'}]}; }");
+  await p.run('sessions(true)');
+  const row = p.get('sessions').children[0];
+  const line = row.children[2];
+  assert.match(line.textContent, /^Idle · next /, 'the persisted state paints as idle');
+  assert.equal(line.dataset.state, 'suspended');
+
+  // The worker reports busy; the next refresh updates only this line.
+  p.run("api = async () => ({total:1,sessions:[{name:'river',mode:'service',state:'busy',next_wake:null}]})");
+  await p.run('refreshSessionStates()');
+  assert.equal(line.textContent, 'Working', 'a live busy state replaces the persisted one');
+  assert.equal(line.dataset.state, 'busy');
+  assert.equal(p.get('sessions').children.length, 1, 'the list is not rebuilt');
+  assert.equal(p.run('sessionStateLine({state:"parked"}).text'), 'Parked', 'the shared label is used both ways');
+}
+
+// The timeline is bounded: the view carries the newest rows, and "show more" asks
+// for a wider window rather than reading everything on every refresh.
+async function verifyGroupActivityWindow() {
+  const p = browser();
+  const rows = n => Array.from({length: n}, (_, i) => ({at:'2026-11-04T15:00:00Z', kind: i % 2 ? 'inform' : 'mail', from:'coord', detail:'row ' + i}));
+  p.run("globalThis.activityCalls=[]");
+  p.run("api = async path => { activityCalls.push(path); return {activity:" + JSON.stringify(rows(12)) + "}; }");
+  p.run("groupName='hydro'; groupView={group:{name:'hydro',max_members:8},members:[],tasks:[],activity:" + JSON.stringify(rows(10)) + "}; groupActivityShown=10; paintGroup()");
+
+  assert.equal(p.get('group-activity').children.length, 11, 'a header plus the view window');
+  assert.equal(p.get('group-activity-more').hidden, false, 'more rows are offered when the window is full');
+
+  await p.run('showMoreGroupActivity()');
+  assert.equal(p.run('activityCalls[0]'), 'group/activity?name=hydro&limit=40', 'more asks for one wider window');
+  assert.equal(p.run('groupActivityShown'), 40);
+  assert.equal(p.get('group-activity').children.length, 13, 'every returned row is shown');
+  assert.equal(p.get('group-activity-more').hidden, true, 'a short answer proves there is nothing more');
+
+  // A view with fewer rows than the window offers no button.
+  p.run("groupActivityShown=10; groupView.activity=" + JSON.stringify(rows(3)) + "; paintGroup()");
+  assert.equal(p.get('group-activity-more').hidden, true);
 }

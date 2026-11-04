@@ -587,6 +587,29 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Allow", "GET, POST")
 			fail(w, 405, "method not allowed")
 		}
+	case "/api/group/activity":
+		if !method(w, r, http.MethodGet) {
+			return
+		}
+		// A wider window than the group view carries. The panel asks for it only
+		// when the reader clicks "more", so a refresh stays one small read.
+		name := r.URL.Query().Get("name")
+		if strings.TrimSpace(name) == "" {
+			fail(w, 400, "name is required")
+			return
+		}
+		limit := 0
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil {
+				limit = n
+			}
+		}
+		activity, err := h.manager.GroupActivity(name, limit)
+		if err != nil {
+			managerError(w, err)
+			return
+		}
+		respond(w, 200, map[string]any{"activity": activity})
 	case "/api/service":
 		switch r.Method {
 		case http.MethodGet:

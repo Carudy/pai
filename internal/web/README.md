@@ -243,10 +243,13 @@ rejected; there is no URL authentication.
   which the UI prefills into its working-directory field.
 - `GET /api/group?name=...`: `runner.GroupView` — the roster with each member's
   role, persisted state, next wake, and `lead` flag, plus the group's `tasks` and
-  its `activity` (newest first: mail, broadcasts, instructions, escalations, and
-  the members' `inform`/`done` reports). Without `name` it returns
+  its `activity` (the newest 10 rows: mail, broadcasts, instructions, escalations,
+  and the members' `inform`/`done` reports). Without `name` it returns
   `{"groups": [...]}`. The source `pai group show` uses while the server holds the
   store lock.
+- `GET /api/group/activity?name=...&limit=...`: `{"activity": [...]}` — the same
+  rows over a wider window, for the panel's **Show more**. The limit defaults to
+  10 and is clamped to 100; the roster and board are not re-read.
 - `POST /api/group`: `{ "action": "create" | "add" | "remove" | "delete",
   "name": "<group>", "goal": "...", "lead": "<session>", "members": [...] ,
   "max_members": 8, "session": "<session>" }`. `create` returns 201 with the new
@@ -450,7 +453,12 @@ so neither becomes session state.
 The list has two modes — **Chat** and **Services** — filtered server-side and
 named in the URL: `/dashboard` and `/dashboard/service`. The URL remains the
 only authority, so a reload or bookmark keeps the tab, and a session URL
-(`/session/<name>`) switches the tab to that session's own mode. Creating is one
+(`/session/<name>`) switches the tab to that session's own mode. A service row's
+second line is its state and next wake, and it is live: `/api/sessions` reports a
+prepared worker's state instead of the state the last activation ended in, and a
+host-log line that can change it (an activation starting or ending, a service
+starting or stopping) refreshes just those lines — no polling, and no rebuilding
+the list under a reader who has scrolled. Creating is one
 flow with two forms behind **+ New session**: chat asks for a name, workspace,
 model, reasoning, and role; service asks for a name, optional model/reasoning,
 and a manifest. The service
@@ -502,7 +510,11 @@ lands on it. The composer is hidden while it is open — a group has no
 conversation of its own. Below the roster, a **Board** section lists the tasks
 and an **Activity** section merges deliveries to members (mail, broadcasts, user
 instructions, escalations) with their `inform`/`done` reports, newest first; it is
-part of `GET /api/group?name=…`, so one refresh rebuilds everything. A group
+part of `GET /api/group?name=…`, so one refresh rebuilds everything. The timeline
+is bounded: the view carries the newest 10 rows and scrolls inside its own box,
+and **Show more** asks `GET /api/group/activity` for a wider window (10 → 40 →
+100) instead of reading everything on every refresh. Adding or removing a member
+asks for confirmation first; neither touches the session or its history. A group
 covers the service bar, which describes a service's own watchers and manifest and
 is therefore not shown here.
 

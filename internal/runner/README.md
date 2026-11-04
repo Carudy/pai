@@ -102,10 +102,16 @@ the server runs.
 `GroupView` also carries a timeline when the backend implements
 `GroupActivityBackend`: recent deliveries to the members (mail, broadcasts,
 instructions, escalations) and the `inform`/`done` reports they wrote back,
-newest first. The runner only merges what the adapter hands it — the adapter is
-where the two sources are read (events by id, turns by name) and where a report's
-action is parsed out of its JSON. A timeline is presentation, so a failure or a
-missing port leaves the roster and goal intact rather than failing the view.
+newest first. The view carries the newest 10 rows; `Manager.GroupActivity`
+serves a wider window (default 10, capped at 100) for a panel that offers
+"more". The runner only merges what the adapter hands it — the adapter is where
+the two sources are read (events by id, turns by name) and where a report's action
+is parsed out of its JSON. A timeline is presentation, so a failure or a missing
+port leaves the roster and goal intact rather than failing the view.
+
+`List` overlays a live worker's state on the stored one. The store only records
+the state an activation ended in; "busy" exists in the worker, and a listing is
+what a sidebar paints, so reporting the stale value made every row read idle.
 
 ## The board
 

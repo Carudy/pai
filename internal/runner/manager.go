@@ -116,7 +116,23 @@ func New(ctx context.Context, backend Backend, max int) *Manager {
 	go func() { <-ctx.Done(); m.Close() }()
 	return m
 }
-func (m *Manager) List() ([]Meta, error) { return m.backend.List() }
+func (m *Manager) List() ([]Meta, error) {
+	list, err := m.backend.List()
+	if err != nil {
+		return nil, err
+	}
+	// The store keeps the state an activation ended in; "busy" only exists in a
+	// live worker. A listing is what a sidebar paints, so it reports the live state
+	// when there is one — the same rule a service view uses for its phase.
+	m.mu.Lock()
+	for i := range list {
+		if w := m.entries[list[i].Name]; w != nil && w.state != "" {
+			list[i].State = w.state
+		}
+	}
+	m.mu.Unlock()
+	return list, nil
+}
 func (m *Manager) History(name string, offset, limit int) (History, error) {
 	return m.backend.History(name, offset, limit)
 }

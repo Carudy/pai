@@ -21,6 +21,10 @@ let serviceView = null, serviceRequest = 0, serviceTimer = null, serviceError = 
 // The open group (name, loaded view, load error, request counter). A group is a
 // different view over the same workspace, so it also suppresses the service bar.
 let groupName = '', groupView = null, groupError = '', groupRequest = 0;
+// How many timeline rows are shown, and how much one "show more" adds. The server
+// defaults the group view to the same 10; keep the two numbers in step.
+const groupActivityDefault = 10, groupActivityStep = 30, groupActivityMax = 100;
+let groupActivityShown = groupActivityDefault;
 // Trace the operator narrowed the queue to, or '' for everything. It is UI state
 // only: one instruction can cross sessions, and the queue is where a chain is
 // read. It resets with the selection, since a trace belongs to one session's view.
@@ -573,6 +577,47 @@ async function info() {
   label.hidden = !identity;
 }
 function query(endpoint, offset, limit = 100) { return endpoint + '?name=' + encodeURIComponent(selected) + '&offset=' + offset + '&limit=' + limit; }
+// One service row's second line, shared by the first paint and a live refresh so
+// the two cannot disagree about how a state is written.
+function sessionStateLine(meta) {
+  const label = serviceStateLabel(meta.state);
+  let text = label, title = 'State: ' + label;
+  if (meta.next_wake) {
+    text += ' · next ' + formatWakeShort(meta.next_wake);
+    title += '\nNext wake: ' + formatTimeExact(meta.next_wake);
+  }
+  return {text, title, state: String(meta.state || 'stored')};
+}
+// The store keeps the state an activation ended in, so a live "Working" never
+// reaches the sidebar from a rebuild alone. The host log says when that can have
+// changed (an activation starting or ending, a service starting or stopping), so
+// those facts refresh just the state lines: no polling, and no re-rendering of a
+// list the reader may have scrolled.
+let stateRefreshTimer = null;
+function scheduleSessionStateRefresh() {
+  if (stateRefreshTimer !== null) return;
+  stateRefreshTimer = setTimeout(() => { stateRefreshTimer = null; refreshSessionStates(); }, 1200);
+}
+async function refreshSessionStates() {
+  let page;
+  try { page = await api('sessions?offset=0&limit=100&mode=' + sessionMode); }
+  catch (_) { return; }
+  const byName = new Map((page.sessions || []).map(meta => [meta.name, meta]));
+  for (const row of $('sessions').children) {
+    const meta = byName.get(row.dataset.name);
+    if (!meta || meta.mode !== 'service') continue;
+    let line = null;
+    for (const node of row.children) {
+      if (node.className === 'session-state') { line = node; break; }
+    }
+    if (!line) continue;
+    const next = sessionStateLine(meta);
+    if (line.textContent === next.text) continue;
+    line.textContent = next.text;
+    line.title = next.title;
+    line.dataset.state = next.state;
+  }
+}
 async function sessions(reset = false) {
   if (reset) { sessionOffset = 0; $('sessions').replaceChildren(); }
   $('sessions-status').replaceChildren(spinner(), text('span', 'Loading sessions…'));
@@ -600,14 +645,10 @@ async function sessions(reset = false) {
     if (meta.mode === 'service') {
       // Two lines in a narrow column: name on top, then state and the next wake
       // in one muted line. The short vocabulary matches the header.
-      const state = text('span', serviceStateLabel(meta.state), 'session-state');
-      state.dataset.state = String(meta.state || 'stored');
-      if (meta.next_wake) {
-        state.textContent += ' · next ' + formatWakeShort(meta.next_wake);
-        state.title = 'State: ' + serviceStateLabel(meta.state) + '\nNext wake: ' + formatTimeExact(meta.next_wake);
-      } else {
-        state.title = 'State: ' + serviceStateLabel(meta.state);
-      }
+      const line = sessionStateLine(meta);
+      const state = text('span', line.text, 'session-state');
+      state.dataset.state = line.state;
+      state.title = line.title;
       row.append(state);
     }
     $('sessions').append(row);
@@ -2574,6 +2615,9 @@ function connectDiagnostics() {
     let diagnostic;
     try { diagnostic = JSON.parse(event.data); } catch (_) { return; }
     appendDiagnostic(diagnostic);
+    // Only the facts that can change a session's state: an activation starting or
+    // ending, or a service being started, stopped, created, or edited.
+    if (diagnostic && (diagnostic.kind === 'activation' || diagnostic.kind === 'service')) scheduleSessionStateRefresh();
   };
 }
 function diagnosticNote(message) {
@@ -2844,6 +2888,7 @@ function paintGroupList(groups) {
 async function openGroup(name) {
   groupName = name;
   groupError = '';
+  groupActivityShown = groupActivityDefault;
   const request = ++groupRequest;
   $('group-panel').hidden = false;
   $('conversation').hidden = true;
@@ -2924,8 +2969,14 @@ function paintGroup() {
 function paintGroupActivity(items) {
   const box = $('group-activity');
   box.replaceChildren();
+  // A refresh shows the newest rows: the list is newest-first, so that is the top.
+  box.scrollTop = 0;
+  // There may be more than the view carried; the button grows the window by one
+  // read rather than fetching everything on every refresh.
+  $('group-activity-more').hidden = items.length < groupActivityShown || groupActivityShown >= groupActivityMax;
   if (!items.length) {
     box.append(text('p', 'Nothing yet: mail, instructions, and reports appear here.', 'muted'));
+    $('group-activity-more').hidden = true;
     return;
   }
   const head = text('div', '', 'group-activity-head');
@@ -3105,9 +3156,20 @@ async function createGroup(e) {
   finally { groupBusy = false; $('create-group').disabled = false; }
 }
 
+async function showMoreGroupActivity() {
+  if (!groupName) return;
+  const limit = Math.min(groupActivityShown + groupActivityStep, groupActivityMax);
+  const data = await api('group/activity?name=' + encodeURIComponent(groupName) + '&limit=' + limit);
+  if (!groupName) return;
+  groupActivityShown = limit;
+  if (groupView) groupView.activity = data.activity || [];
+  paintGroup();
+}
+
 async function addGroupMember() {
   const member = $('group-new-member').value;
   if (!groupName || !member) return;
+  if (!confirm('Add "' + member + '" to group "' + groupName + '"?')) return;
   const view = await api('group', {action:'add', name:groupName, session:member});
   groupView = view;
   paintGroup();
@@ -3116,6 +3178,7 @@ async function addGroupMember() {
 
 async function removeGroupMember(group, member) {
   if (!group || !member) return;
+  if (!confirm('Remove "' + member + '" from group "' + group + '"? The session and its history are kept.')) return;
   const view = await api('group', {action:'remove', name:group, session:member});
   if (group === groupName) { groupView = view; paintGroup(); }
   await loadGroups().catch(() => {});
@@ -3181,6 +3244,7 @@ $('open-group-create').onclick = () => { openGroupCreate().catch(error); };
 $('close-group-create').onclick = closeGroupCreate;
 $('new-group').onsubmit = createGroup;
 $('group-add-member').onclick = () => { addGroupMember().catch(error); };
+$('group-activity-more').onclick = () => { showMoreGroupActivity().catch(error); };
 $('delete-group').onclick = () => { deleteGroup().catch(error); };
 $('theme-toggle').onclick = toggleTheme;
 $('show-context').onchange = () => setContextOpen($('show-context').checked);

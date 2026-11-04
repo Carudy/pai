@@ -2796,7 +2796,19 @@ header p {
     font-size: 12px;
 }
 
-/* A group timeline: one row per message or report, newest first. */
+/* A group timeline: one row per message or report, newest first. The box scrolls
+   on its own so a busy team cannot push the roster off the screen. */
+.group-activity {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.group-activity-more {
+    margin-top: 6px;
+    padding: 3px 10px;
+    font-size: 12px;
+}
+
 .group-activity-head,
 .group-activity-row {
     display: grid;

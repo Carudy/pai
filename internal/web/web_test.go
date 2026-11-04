@@ -1907,6 +1907,8 @@ type groupAdminAPI struct {
 	// calls records one line per accepted write, so a test can tell which port
 	// method the endpoint used rather than just that something changed.
 	calls []string
+	// activityLimit records the window the last timeline read asked for.
+	activityLimit int
 }
 
 func (b *groupAdminAPI) GroupByName(name string) (core.Group, bool, error) {
@@ -1985,6 +1987,11 @@ func (b *groupAdminAPI) DeleteGroup(name string) error {
 	return nil
 }
 
+func (b *groupAdminAPI) GroupActivity(members []core.GroupMember, limit int) ([]runner.GroupActivity, error) {
+	b.activityLimit = limit
+	return []runner.GroupActivity{{Kind: "mail", From: "coord", To: "hydro", Detail: "gate schedule final?"}}, nil
+}
+
 // Creating a group from the browser is one POST with an action; the response is
 // the same view GET returns, so the panel does not need a second round trip.
 func TestGroupCreateAPI(t *testing.T) {
@@ -2037,5 +2044,48 @@ func TestGroupCreateAPI(t *testing.T) {
 	}
 	if w := request(h, http.MethodPut, "/api/group", "", nil, "http://pai.test"); w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("PUT = %d, want 405", w.Code)
+	}
+}
+
+// The timeline window is a separate read: the group view carries the newest few
+// rows, and a reader who wants more asks for a wider window without re-reading
+// the roster or the board.
+func TestGroupActivityAPI(t *testing.T) {
+	b := &groupAdminAPI{
+		groups:  map[string]core.Group{"hydro": {ID: "g1", Name: "hydro", MaxMembers: 8}},
+		members: map[string][]core.GroupMember{"hydro": {{GroupID: "g1", SessionID: "id-coord", Name: "coord"}}},
+	}
+	m := runner.New(context.Background(), b, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+
+	w := request(h, http.MethodGet, "/api/group/activity?name=hydro", "", nil, "http://pai.test")
+	if w.Code != http.StatusOK {
+		t.Fatalf("activity: %d %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Activity []runner.GroupActivity `json:"activity"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Activity) != 1 || body.Activity[0].Kind != "mail" {
+		t.Fatalf("activity = %+v", body.Activity)
+	}
+	if b.activityLimit != 10 {
+		t.Fatalf("default limit = %d, want 10", b.activityLimit)
+	}
+
+	if w := request(h, http.MethodGet, "/api/group/activity?name=hydro&limit=25", "", nil, "http://pai.test"); w.Code != http.StatusOK {
+		t.Fatalf("limit: %d %s", w.Code, w.Body.String())
+	}
+	if b.activityLimit != 25 {
+		t.Fatalf("requested limit = %d, want 25", b.activityLimit)
+	}
+	if w := request(h, http.MethodGet, "/api/group/activity?name=missing", "", nil, "http://pai.test"); w.Code != http.StatusNotFound {
+		t.Fatalf("missing group = %d, want 404", w.Code)
+	}
+	if w := request(h, http.MethodGet, "/api/group/activity", "", nil, "http://pai.test"); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing name = %d, want 400", w.Code)
 	}
 }
