@@ -18,6 +18,10 @@ let selectedMode = '';
 // slow refresh from painting over a newer one. serviceError keeps the bar stable
 // when a view cannot be loaded instead of hiding it.
 let serviceView = null, serviceRequest = 0, serviceTimer = null, serviceError = '';
+// Trace the operator narrowed the queue to, or '' for everything. It is UI state
+// only: one instruction can cross sessions, and the queue is where a chain is
+// read. It resets with the selection, since a trace belongs to one session's view.
+let focusTrace = '';
 // Manifest form state. The create and edit dialogs share one renderer, so the
 // watcher fields cannot drift between the two entry points.
 let serviceRoles = [], serviceDefaultRole = '';
@@ -1109,14 +1113,27 @@ function paintService() {
   const queue = $('service-queue');
   queue.replaceChildren();
   const queued = view.queue || [];
+  // The queue is the one place a chain is visible: an instruction fans out as
+  // mail, so the trace is what lets an operator read one chain instead of a list.
+  const shown = focusTrace ? queued.filter(ev => ev.trace === focusTrace) : queued;
   if (!queued.length) {
     queue.append(text('p', 'Queue empty: nothing is waiting for this session.', 'muted'));
   } else {
+    if (focusTrace) {
+      const bar = text('div', '', 'queue-focus');
+      bar.append(text('span', 'trace ' + focusTrace, 'queue-trace-label'));
+      const clear = text('button', 'show all', 'queue-trace-clear');
+      clear.type = 'button';
+      clear.onclick = () => { focusTrace = ''; paintService(); };
+      bar.append(clear);
+      queue.append(bar);
+    }
     const head = text('div', '', 'queue-head');
-    for (const label of ['Class', 'Priority', 'Source', 'Queued', 'Tries', 'Detail']) head.append(text('span', label));
+    for (const label of ['Class', 'Priority', 'Source', 'Trace', 'Queued', 'Tries', 'Detail']) head.append(text('span', label));
     queue.append(head);
+    if (!shown.length) queue.append(text('p', 'Nothing queued for trace ' + focusTrace + '.', 'muted'));
   }
-  for (const ev of queued) {
+  for (const ev of shown) {
     const row = text('div', '', 'queue-row');
     const dead = ev.state === 'dead';
     const cls = text('span', (ev.class || 'event') + (dead ? ' · dead' : ''), 'queue-class');
@@ -1124,6 +1141,15 @@ function paintService() {
     row.append(cls);
     row.append(text('span', ev.priority ? 'p' + ev.priority : '—', 'queue-priority'));
     row.append(text('span', ev.source || '—', 'queue-source'));
+    // A trace cell is a filter: clicking it narrows the queue to the chain the
+    // message belongs to, and the bar above the table clears it again.
+    const trace = text('span', ev.trace ? ev.trace + (ev.hops > 1 ? '·' + ev.hops : '') : '—', 'queue-trace');
+    if (ev.trace) {
+      trace.title = 'trace ' + ev.trace + (ev.hops ? ', hop ' + ev.hops : '') + ' — click to show only this chain';
+      trace.dataset.trace = ev.trace;
+      trace.onclick = () => { focusTrace = ev.trace; paintService(); };
+    }
+    row.append(trace);
     row.append(text('span', formatTimeExact(ev.at) || '—', 'queue-time'));
     row.append(text('span', ev.attempts ? String(ev.attempts) : '—', 'queue-attempts'));
     const detail = String(ev.payload || '').replace(/\s+/g, ' ').trim() || ev.kind || '—';
@@ -2241,7 +2267,7 @@ async function select(name, cwd, replaceURL = false) {
     $('title').textContent = name; $('title').title = name;
   durable = []; liveSteps = []; currentStep = null; thinking = ''; historyTotal = 0;
   liveCard = null; liveType = ''; liveText = '';
-  serviceView = null; serviceError = ''; paintService();
+  serviceView = null; serviceError = ''; focusTrace = ''; paintService();
   closeServiceEdit();
   $('history').replaceChildren(); clearPending(); $('live-progress').replaceChildren(); $('error').textContent = '';
   updateJumpButtons();

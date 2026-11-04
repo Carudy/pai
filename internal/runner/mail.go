@@ -22,7 +22,20 @@ const (
 	// not what a member may do with its own schedule.
 	broadcastWindow        = 10 * time.Minute
 	maxBroadcastsPerWindow = 10
+	// A directed pair may exchange this many messages per window. The hop cap
+	// bounds how long a chain may run; this bounds how fast two sessions can talk,
+	// which a polite two-party handshake can otherwise do indefinitely.
+	quarantineWindow    = 10 * time.Minute
+	maxPerPairPerWindow = 20
 )
+
+// quarantineEntry counts the messages one directed pair sent inside the window,
+// and remembers whether the refusal was already reported. The report is per
+// episode, not per message: a loop must not turn its own diagnostics into load.
+type quarantineEntry struct {
+	times    []time.Time
+	reported bool
+}
 
 // sessionMailer binds the mail tool to its sender, so the tool never has to
 // trust a session name supplied by the model.
@@ -101,6 +114,9 @@ func (m *Manager) deliverMail(from, to, text string, meta core.MailMeta) (int, e
 	if err := m.mailboxHasRoom(id, to); err != nil {
 		return 0, err
 	}
+	if err := m.admit(from, []string{to}, to); err != nil {
+		return 0, err
+	}
 	ev := core.Event{
 		Session: id, Class: core.EventPeer, Kind: "mail",
 		Source: "session:" + from, Payload: text, At: time.Now(),
@@ -165,6 +181,16 @@ func (m *Manager) broadcast(from, fromID, name, text, trace string, hops int) (i
 			return 0, fmt.Errorf("%v; the broadcast was not sent", err)
 		}
 	}
+	// The pair cap also applies per recipient, so a large group cannot be used to
+	// exceed what an addressed message to the same peer would allow. One refusal
+	// refuses the send, for the same all-or-nothing reason as a full mailbox.
+	names := make([]string, 0, len(targets))
+	for _, t := range targets {
+		names = append(names, t.Name)
+	}
+	if err := m.admit(from, names, "group:"+g.Name); err != nil {
+		return 0, fmt.Errorf("%v; the broadcast was not sent", err)
+	}
 	now := time.Now()
 	for _, t := range targets {
 		ev := core.Event{
@@ -179,6 +205,73 @@ func (m *Manager) broadcast(from, fromID, name, text, trace string, hops int) (i
 	m.diag(Diagnostic{Session: from, Kind: "mail", Subject: "group:" + g.Name, Outcome: "queued",
 		Detail: fmt.Sprintf("broadcast to %d member(s) hop %d trace %s", len(targets), hops, trace)})
 	return len(targets), nil
+}
+
+// admit counts one message per recipient for the directed pairs from→recipient,
+// or refuses the whole batch. Nothing is counted on a refusal, so a blocked
+// broadcast cannot push an unrelated pair over the edge. subject is what the one
+// diagnostic names: the recipient for addressed mail, the group for a broadcast.
+func (m *Manager) admit(from string, tos []string, subject string) error {
+	if bad, first := m.admitSends(from, tos); bad != "" {
+		if first {
+			m.diag(Diagnostic{Session: from, Kind: "mail", Subject: subject, Outcome: "refused",
+				Detail: fmt.Sprintf("more than %d messages to %s in %s", maxPerPairPerWindow, bad, quarantineWindow)})
+		}
+		return fmt.Errorf("too many messages from %s to %s in %s; wait for the window to drain rather than resending",
+			from, bad, quarantineWindow)
+	}
+	return nil
+}
+
+// admitSends is the quarantine itself. It returns the recipient that is over the
+// limit and whether this is the first refusal of the episode.
+func (m *Manager) admitSends(from string, tos []string) (string, bool) {
+	now := time.Now()
+	m.quarantineMu.Lock()
+	defer m.quarantineMu.Unlock()
+	if m.quarantine == nil {
+		m.quarantine = make(map[string]*quarantineEntry)
+	}
+	// Expire quiet pairs here rather than on a timer: the map is small, and a
+	// session that has gone silent should become reachable again immediately.
+	for key, e := range m.quarantine {
+		e.times = withinWindow(e.times, now)
+		switch {
+		case len(e.times) == 0:
+			delete(m.quarantine, key)
+		case len(e.times) < maxPerPairPerWindow:
+			e.reported = false
+		}
+	}
+	for _, to := range tos {
+		if e := m.quarantine[pairKey(from, to)]; e != nil && len(e.times) >= maxPerPairPerWindow {
+			first := !e.reported
+			e.reported = true
+			return to, first
+		}
+	}
+	for _, to := range tos {
+		key := pairKey(from, to)
+		e := m.quarantine[key]
+		if e == nil {
+			e = &quarantineEntry{}
+			m.quarantine[key] = e
+		}
+		e.times = append(e.times, now)
+	}
+	return "", false
+}
+
+func pairKey(from, to string) string { return from + "\x00" + to }
+
+func withinWindow(times []time.Time, now time.Time) []time.Time {
+	kept := times[:0]
+	for _, at := range times {
+		if now.Sub(at) < quarantineWindow {
+			kept = append(kept, at)
+		}
+	}
+	return kept
 }
 
 // mailboxHasRoom applies the pending cap to one recipient.

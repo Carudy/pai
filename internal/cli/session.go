@@ -247,6 +247,19 @@ func runSession(ctx context.Context, args []string, stdout io.Writer, log *tui.L
 			log.Errorf("Usage: pai session rm <name>\n")
 			return 1
 		}
+		// Same guards as `pai service rm`: a session removed by the wrong verb must
+		// not leave a group led by nobody or board work owned by nobody.
+		var id string
+		if info, err := store.Get(args[1]); err == nil {
+			id = info.Meta.ID
+		} else if !errors.Is(err, session.ErrNotFound) {
+			log.Errorf("Error: %v\n", err)
+			return 1
+		}
+		if refused := rmGuard(store, args[1], id); refused != "" {
+			log.Errorf("Error: %s\n", refused)
+			return 1
+		}
 		if err := store.Delete(args[1]); err != nil {
 			log.Errorf("Error: %v\n", err)
 			return 1

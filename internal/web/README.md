@@ -451,9 +451,13 @@ confirmation card.
 Opening a service shows a **stable bar above the transcript**, collapsed to one
 line by default: **Details** expands the state, a table of watchers
 (name, schedule, last/next run, humanized latch state), the stored manifest, and
-the pending queue (class, priority, sender/source, arrival, attempts, payload
+the pending queue (class, priority, sender/source, trace, arrival, attempts, payload
 preview, with dead entries marked), so an unhandled mail or probe event is visible
-rather than a bare count.
+rather than a bare count. The trace cell is a filter: a click narrows the queue to
+one chain of cross-session work, and a bar above the table clears it, which makes
+the same instruction traceable in each recipient's session. Delivered events are
+kept for 30 days for that audit; pending, leased, and dead-lettered ones are never
+pruned, and board rows live as long as their group.
 The last report is not repeated there — it is already a transcript card — but
 remains available in the state badge tooltip and in `pai service show`. While
 the service is stopped the bar also carries **✎ Edit**, which opens the shared

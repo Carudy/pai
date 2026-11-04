@@ -335,6 +335,7 @@ func (b *serveBackend) serviceViewLocked(name string) (runner.ServiceView, error
 		view.Queue = append(view.Queue, runner.QueuedEvent{
 			ID: ev.ID, Class: ev.Class.String(), Kind: ev.Kind, Source: ev.Source,
 			Payload: ev.Payload, At: ev.At, Deadline: ev.Deadline, Attempts: ev.Attempts, State: ev.State,
+			Trace: ev.Trace, Hops: ev.Hops,
 		})
 	}
 	return view, nil

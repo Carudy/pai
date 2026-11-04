@@ -185,6 +185,11 @@ type QueuedEvent struct {
 	At       time.Time `json:"at"`
 	Deadline time.Time `json:"deadline"`
 	Attempts int       `json:"attempts,omitempty"`
+	// Trace names the chain of cross-session work this event belongs to, and Hops
+	// how many deliveries led here. Both are host-assigned, so an operator can
+	// follow one instruction across sessions without trusting the model's account.
+	Trace string `json:"trace,omitempty"`
+	Hops  int    `json:"hops,omitempty"`
 	// State is pending, leased, or dead. Dead entries stay visible for inspection
 	// instead of disappearing with the pending queue.
 	State string `json:"state,omitempty"`

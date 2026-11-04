@@ -144,6 +144,24 @@ name = "hydro"
 		t.Fatalf("a chat session joined a group: %s", out.String())
 	}
 
+	// The lead is the group's address, so neither delete verb may remove it and
+	// leave the group pointing at nobody.
+	for _, cmd := range [][]string{{"rm", "coord"}, {"session", "rm", "coord"}} {
+		out.Reset()
+		code := 1
+		if cmd[0] == "session" {
+			code = runSession(context.Background(), cmd[1:], &out, log)
+		} else {
+			code = runServiceCmd(context.Background(), cmd, &out, log)
+		}
+		if code == 0 {
+			t.Fatalf("`%s` deleted the lead: %s", strings.Join(cmd, " "), out.String())
+		}
+		if !strings.Contains(out.String(), "leads group") {
+			t.Fatalf("`%s` refusal does not name the group: %q", strings.Join(cmd, " "), out.String())
+		}
+	}
+
 	// Deleting the group keeps its member sessions.
 	out.Reset()
 	if code := runGroupCmd(context.Background(), []string{"rm", "hydro"}, &out, log); code != 0 {

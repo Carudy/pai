@@ -71,7 +71,9 @@ See the [module map](../organization.md) for the storage adapter boundary.
   backfilled at startup.
 - A group carries no scheduler state: it owns no wake counter and cannot pause a
   member. The only durable facts are the roster, the shared goal, and an optional
-  lead.
+  lead. `groups.lead_id` is deliberately not a foreign key: a lead that no longer
+  exists reads as "no lead" (`GroupByName` left-joins the name), and both delete
+  paths refuse to create one in the first place.
 - `TaskStore` is the group board: `tasks` rows with a status, an owner, a lease,
   and a version. A claim is a lease, so a lapsed one is recoverable without an
   operator; every write is optimistic, so a stale edit is rejected with the

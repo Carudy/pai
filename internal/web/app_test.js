@@ -1427,7 +1427,7 @@ async function verifyServiceMode() {
     next_wake: '2026-10-27T12:00:00Z', status: 'level 3.8 m, above the warning band',
     spec: '{"goal":"watch the river","role":"devops"}',
     queue: [
-      {id: 7, class: 'peer', priority: 60, kind: 'mail', source: 'session:alice', payload: 'check the gate', at: '2026-10-27T11:58:00Z', attempts: 0},
+      {id: 7, class: 'peer', priority: 60, kind: 'mail', source: 'session:alice', payload: 'check the gate', at: '2026-10-27T11:58:00Z', attempts: 0, trace: 'ab12cd34', hops: 2},
     ],
     watchers: [
       {name: 'heartbeat', enabled: true, spec: '{"interval":"1h","priority":30}', last_run: '2026-10-27T11:00:00Z', next_run: '2026-10-27T12:00:00Z'},
@@ -1450,7 +1450,22 @@ async function verifyServiceMode() {
   assert.equal(p.get('service-queue').children[1].children[0].textContent, 'peer', 'the queued class is shown');
   assert.equal(p.get('service-queue').children[1].children[1].textContent, 'p60', 'the numeric priority is shown');
   assert.equal(p.get('service-queue').children[1].children[2].textContent, 'session:alice', 'the sender is shown');
-  assert.match(p.get('service-queue').children[1].children[5].textContent, /check the gate/, 'the payload preview is shown');
+  assert.equal(p.get('service-queue').children[1].children[3].textContent, 'ab12cd34·2', 'the trace and hop count are shown together');
+  assert.match(p.get('service-queue').children[1].children[6].textContent, /check the gate/, 'the payload preview is shown');
+
+  // A trace cell narrows the queue to one chain; the bar above the table clears it.
+  p.run("serviceView.queue.push({id: 8, class: 'watcher', priority: 40, kind: 'watch', trace: 'ff00ff00', payload: 'probe', at: '2026-10-27T11:59:00Z'}); paintService()");
+  assert.equal(p.get('service-queue').children.length, 3, 'both queued messages are listed before filtering');
+  p.run("$('service-queue').children[2].children[3].onclick()");
+  assert.equal(p.run('focusTrace'), 'ff00ff00', 'clicking a trace focuses it');
+  assert.equal(p.get('service-queue').children.length, 3, 'a focus bar, a header, and one row survive the filter');
+  assert.equal(p.get('service-queue').children[0].children[0].textContent, 'trace ff00ff00', 'the bar names the focused trace');
+  assert.equal(p.get('service-queue').children[2].children[2].textContent, '—', 'only the matching row is left');
+  p.run("$('service-queue').children[0].children[1].onclick()");
+  assert.equal(p.run('focusTrace'), '', 'show all clears the focus');
+  assert.equal(p.get('service-queue').children.length, 3, 'the whole queue is back');
+  assert.equal(p.get('service-queue').children[0].children[0].textContent, 'Class', 'the filter bar is gone with the focus');
+  p.run('focusTrace=""; serviceView.queue.pop(); paintService()');
 
   // last_state is a probe document: reported without acknowledged is work still
   // open, and a handled fire is closed until the condition ends.

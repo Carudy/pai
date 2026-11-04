@@ -108,6 +108,32 @@ func openServiceStore(log *tui.Logger) (session.Store, bool) {
 	return store, true
 }
 
+// rmGuard refuses to delete a session that leads a group, and releases any board
+// work it held. A lead is an address the other members still hold, so removing it
+// silently would leave the group pointing at nobody; the operator has to delete
+// the group or pick another lead. The runner applies the same rule while `pai
+// serve` is running; this copy exists because the CLI writes the store directly.
+// It returns a non-empty message when the delete must be refused.
+func rmGuard(store session.Store, name, sessionID string) string {
+	if groups, ok := store.(session.GroupStore); ok && sessionID != "" {
+		g, in, err := groups.GroupBySession(sessionID)
+		switch {
+		case err != nil:
+			return fmt.Sprintf("look up its group: %v", err)
+		case in && g.LeadID == sessionID:
+			return fmt.Sprintf("%s leads group %q; delete the group or choose another lead first", name, g.Name)
+		}
+	}
+	// Work it was holding goes back to the board as orphaned instead of vanishing
+	// with the row, so another member can pick it up.
+	if ts, ok := store.(session.TaskStore); ok && sessionID != "" {
+		if _, err := ts.OrphanTasksOwnedBy(sessionID, time.Now()); err != nil {
+			return fmt.Sprintf("release its tasks: %v", err)
+		}
+	}
+	return ""
+}
+
 // serviceDelete removes a service and everything attached to it. The store is
 // exclusive, so no scheduler is running; watchers, queued events, and turns
 // follow the row through ON DELETE CASCADE. A chat session is refused: deleting
@@ -132,13 +158,9 @@ func serviceDelete(name string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error: %q is not a service; use `pai session rm %s`\n", name, name)
 		return 1
 	}
-	// Work it was holding goes back to the board as orphaned instead of vanishing
-	// with the row, so another member can pick it up.
-	if ts, ok := store.(session.TaskStore); ok && info.ID != "" {
-		if _, err := ts.OrphanTasksOwnedBy(info.ID, time.Now()); err != nil {
-			log.Errorf("Error releasing its tasks: %v\n", err)
-			return 1
-		}
+	if refused := rmGuard(store, name, info.ID); refused != "" {
+		log.Errorf("Error: %s\n", refused)
+		return 1
 	}
 	if err := store.Delete(name); err != nil {
 		log.Errorf("Error: %v\n", err)
@@ -194,6 +216,19 @@ func serviceList(stdout io.Writer, log *tui.Logger) int {
 	return 0
 }
 
+// traceCell renders a trace and its hop count in one column: a chain is
+// followable without widening the queue table with a second number. A hop of 1
+// is the first delivery and needs no annotation.
+func traceCell(trace string, hops int) string {
+	if trace == "" {
+		return "-"
+	}
+	if hops > 1 {
+		return fmt.Sprintf("%s·%d", trace, hops)
+	}
+	return trace
+}
+
 func serviceShow(name string, stdout io.Writer, log *tui.Logger) int {
 	store, client, ok := readSource(log)
 	if !ok {
@@ -226,11 +261,11 @@ func serviceShow(name string, stdout io.Writer, log *tui.Logger) int {
 	if queued, err := ss.QueuedEvents(info.ID, 20); err == nil && len(queued) > 0 {
 		fmt.Fprintln(stdout, "queue:")
 		tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "  STATE\tCLASS\tPRIORITY\tSOURCE\tAT\tATTEMPTS\tDETAIL")
+		fmt.Fprintln(tw, "  STATE\tCLASS\tPRIORITY\tSOURCE\tTRACE\tAT\tATTEMPTS\tDETAIL")
 		for _, ev := range queued {
-			fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\t%s\t%d\t%s\n",
-				emptyOr(ev.State, "-"), ev.Class, ev.Priority, ev.Source, formatWake(&ev.At), ev.Attempts,
-				emptyOr(clip(strings.TrimSpace(ev.Payload), 60), "-"))
+			fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\t%s\t%s\t%d\t%s\n",
+				emptyOr(ev.State, "-"), ev.Class, ev.Priority, ev.Source, traceCell(ev.Trace, ev.Hops),
+				formatWake(&ev.At), ev.Attempts, emptyOr(clip(strings.TrimSpace(ev.Payload), 60), "-"))
 		}
 		if err := tw.Flush(); err != nil {
 			log.Errorf("Error writing queue: %v\n", err)
@@ -751,11 +786,11 @@ func serviceShowRemote(client *conn.Client, name string, stdout io.Writer, log *
 	if len(view.Queue) > 0 {
 		fmt.Fprintln(stdout, "queue:")
 		tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "  STATE\tCLASS\tPRIORITY\tSOURCE\tAT\tATTEMPTS\tDETAIL")
+		fmt.Fprintln(tw, "  STATE\tCLASS\tPRIORITY\tSOURCE\tTRACE\tAT\tATTEMPTS\tDETAIL")
 		for _, ev := range view.Queue {
-			fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\t%s\t%d\t%s\n",
-				emptyOr(ev.State, "-"), ev.Class, ev.Priority, ev.Source, formatWake(&ev.At), ev.Attempts,
-				emptyOr(clip(strings.TrimSpace(ev.Payload), 60), "-"))
+			fmt.Fprintf(tw, "  %s\t%s\t%d\t%s\t%s\t%s\t%d\t%s\n",
+				emptyOr(ev.State, "-"), ev.Class, ev.Priority, ev.Source, traceCell(ev.Trace, ev.Hops),
+				formatWake(&ev.At), ev.Attempts, emptyOr(clip(strings.TrimSpace(ev.Payload), 60), "-"))
 		}
 		if err := tw.Flush(); err != nil {
 			log.Errorf("Error writing queue: %v\n", err)

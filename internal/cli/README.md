@@ -15,7 +15,14 @@ See the [module map](../organization.md) for dependency rules.
   state, status, watchers, and next wake, edits a stopped service's manifest,
   stops or starts them, and deletes one with its history (`svc` is an alias).
   Stop/start/edit/delete only work while the server is down, because they need
-  the store lock; the web API exposes the same transitions.
+  the store lock; the web API exposes the same transitions. `service show` prints
+  the queue with its trace and hop count, so one chain of cross-session work can
+  be followed from either the terminal or the browser.
+  Both delete verbs (`service rm`, `session rm`) go through `rmGuard`: a session
+  that leads a group is refused until the group is deleted or its lead changes,
+  and any board work the session held is released as orphaned first so another
+  member can pick it up. `runner.Manager.Delete` applies the same rule while the
+  server is running, which is why the rule lives in both places.
 - `group.go` manages the group directory: create from a manifest, list, show the
   shared goal, members, and board, add or remove a member, start or stop every
   member, and delete the directory without touching the sessions. Like

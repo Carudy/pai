@@ -92,6 +92,11 @@ type Manager struct {
 	// per wake for no benefit.
 	boardMu     sync.Mutex
 	boardChecks map[string]time.Time
+
+	// quarantineMu guards the per-pair mail rate. In memory for the same reason as
+	// the broadcast window: it breaks a burst, and a restart may reset it.
+	quarantineMu sync.Mutex
+	quarantine   map[string]*quarantineEntry
 }
 
 func New(ctx context.Context, backend Backend, max int) *Manager {
@@ -753,6 +758,19 @@ func (m *Manager) Delete(name string) error {
 	m.mu.Lock()
 	sessionID := m.sessionIDs[name]
 	m.mu.Unlock()
+	// Leading a group is an address other members still hold. Reads tolerate a
+	// dangling lead, but silently leaving one behind is worse than asking the
+	// operator to decide, so the delete is refused with the way out in the message.
+	// `pai service rm` carries the same guard: the CLI writes while serve is off.
+	if groups, ok := m.backend.(GroupBackend); ok && sessionID != "" {
+		g, in, err := groups.GroupBySession(sessionID)
+		switch {
+		case err != nil:
+			return fmt.Errorf("look up its group: %w", err)
+		case in && g.LeadID == sessionID:
+			return fmt.Errorf("%s leads group %q; delete the group or choose another lead first", name, g.Name)
+		}
+	}
 	finish, err := m.reserveIdle(name)
 	if err != nil {
 		return err

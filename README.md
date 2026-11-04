@@ -820,6 +820,15 @@ sender is not copied). Addressed mail stays the narrow path — `"to":
 transition to every member, and `pai group rm` deletes only the directory —
 member sessions and their transcripts stay.
 
+Two structural limits keep a pair of polite sessions from talking forever:
+a message chain stops after six cross-session deliveries, and one directed pair
+may exchange at most 20 messages per 10 minutes, whether by addressed mail or by
+broadcast. Past that the send is refused with a `[tool error]`, and the refusal
+is logged once per episode rather than once per message. A session that leads a
+group cannot be deleted (`pai service rm` and `pai session rm` both refuse it)
+until the group is deleted or another member becomes the lead, because the lead
+is an address the other members still hold.
+
 ### The board
 
 Work that outlives one activation goes on the group board, so members claim it
@@ -846,6 +855,13 @@ resolve the server exactly as `pai conn` does (`conn.url`/`conn.token`, or
 `PAI_SERVE_URL`/`PAI_SERVE_TOKEN`). The browser has the same view: a **Groups**
 section in the sidebar opens a read-only panel with the shared goal, the roster,
 and the board.
+
+The service panel's **Queue** section is where a chain is read: every queued
+mail and probe event shows the host-assigned trace and its hop count, and
+clicking a trace narrows the queue to that one chain (an instruction that fanned
+out as mail appears in each recipient's queue under the same trace). Delivered
+events are kept for 30 days for exactly this kind of audit; pending, leased, and
+dead-lettered events are never pruned.
 
 ## 🌐 Browser / server mode
 

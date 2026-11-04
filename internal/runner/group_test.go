@@ -134,6 +134,15 @@ func (b *groupTestBackend) OrphanTasksOwnedBy(sessionID string, now time.Time) (
 	return nil, nil
 }
 
+// Delete lets the manager's delete path run; the real store drops the row and the
+// cascade with it, which no runner test needs to model.
+func (b *groupTestBackend) Delete(name string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.groups, name)
+	return nil
+}
+
 func (b *groupTestBackend) DueEscalations(groupID string, now time.Time) ([]core.Task, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -157,6 +166,99 @@ func (b *groupTestBackend) MarkTaskEscalated(id string, kind core.TaskStatus, no
 	}
 	b.escalated[id] = true
 	return true, nil
+}
+
+// A directed pair is quarantined once it exceeds the window's limit. The refusal
+// is structural: the model cannot talk its way past it, and it is reported once
+// per episode so a loop cannot turn its own diagnostics into load.
+func TestMailQuarantineStopsAPair(t *testing.T) {
+	m, _ := groupManager(t)
+	m.mu.Lock()
+	m.stoppedServices["lone"] = true
+	m.stoppedServices["solo"] = true
+	m.mu.Unlock()
+	diags, unsubscribe, err := m.SubscribeDiagnostics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+
+	for i := 0; i < maxPerPairPerWindow; i++ {
+		if _, err := m.deliverMail("lone", "solo", "tick", core.MailMeta{}); err != nil {
+			t.Fatalf("message %d: %v", i, err)
+		}
+	}
+	if _, err := m.deliverMail("lone", "solo", "one too many", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "too many messages") {
+		t.Fatalf("quarantine = %v", err)
+	}
+	// The reverse direction is a different directed pair and stays open.
+	if _, err := m.deliverMail("solo", "lone", "hi", core.MailMeta{}); err != nil {
+		t.Fatalf("reverse direction: %v", err)
+	}
+	// Repeating a refused send does not repeat the diagnostic.
+	if _, err := m.deliverMail("lone", "solo", "again", core.MailMeta{}); err == nil {
+		t.Fatal("the pair stayed open")
+	}
+	refusals := 0
+	for _, d := range drainDiagnostics(diags) {
+		if d.Kind == "mail" && d.Outcome == "refused" && d.Subject == "solo" && strings.Contains(d.Detail, "more than") {
+			refusals++
+		}
+	}
+	if refusals != 1 {
+		t.Fatalf("refusal diagnostics = %d, want 1", refusals)
+	}
+
+	// The window is wall-clock, so age the entry rather than sleeping: the pair
+	// must become reachable again without a restart.
+	m.quarantineMu.Lock()
+	for _, e := range m.quarantine {
+		for i := range e.times {
+			e.times[i] = time.Now().Add(-quarantineWindow - time.Minute)
+		}
+	}
+	m.quarantineMu.Unlock()
+	if _, err := m.deliverMail("lone", "solo", "after the window", core.MailMeta{}); err != nil {
+		t.Fatalf("after the window: %v", err)
+	}
+}
+
+// A broadcast is admitted per recipient, so a large group cannot be used to send
+// more to one peer than an addressed message would allow. Nothing is counted on
+// a refusal, so the batch is all-or-nothing like a full mailbox.
+func TestBroadcastCountsEveryRecipient(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}, {"m1", "met"}})
+	m.mu.Lock()
+	for _, name := range []string{"coord", "hydro", "met"} {
+		m.stoppedServices[name] = true
+	}
+	m.mu.Unlock()
+
+	// Fill the hydro→met pair with addressed mail, then try one broadcast: it would
+	// push that pair over the limit, so the whole send is refused before anything
+	// is queued for the other member either.
+	for i := 0; i < maxPerPairPerWindow; i++ {
+		if _, err := m.deliverMail("hydro", "met", "tick", core.MailMeta{}); err != nil {
+			t.Fatalf("message %d: %v", i, err)
+		}
+	}
+	if _, err := m.deliverMail("hydro", "group:hydro", "status", core.MailMeta{}); err == nil || !strings.Contains(err.Error(), "too many messages") {
+		t.Fatalf("broadcast quarantine = %v", err)
+	}
+}
+
+// Leading a group is an address the other members still hold, so the delete is
+// refused rather than leaving a dangling lead behind.
+func TestDeleteRefusesAGroupLead(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+	if err := m.Delete("coord"); err == nil || !strings.Contains(err.Error(), "leads group") {
+		t.Fatalf("delete lead = %v", err)
+	}
+	if err := m.Delete("hydro"); err != nil {
+		t.Fatalf("delete a member: %v", err)
+	}
 }
 
 // seed registers a group and its members by immutable id.

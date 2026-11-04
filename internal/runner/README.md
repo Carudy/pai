@@ -67,6 +67,21 @@ slightly below a direct ask — so a group is one message and N copies, not N².
 Broadcasts are rate limited per sender, because each one costs a wake in every
 member. `group:<name>` requires membership; `lead` is only an escalation hint.
 
+Two structural limits bound a conversation that has no reason to end. A chain
+stops at `core.MaxMailHops` deliveries, and one directed pair may exchange at
+most 20 messages per 10 minutes — counted per recipient, so a broadcast uses the
+same allowance an addressed message would. The pair counter lives in memory: it
+exists to break a burst, and a restart may reset it. A refusal returns a `[tool
+error]` naming the pair and emits one `mail`/`refused` diagnostic per episode,
+not one per message, so a loop cannot turn its own diagnostics into load. Nothing
+is counted on a refusal, which keeps a blocked broadcast all-or-nothing.
+
+Deleting a session that leads a group is refused, by the runner here and by the
+CLI's own guard while it writes the store directly. A missing lead is tolerated
+when reading (a group is still a group without one), but silently creating a
+dangling address is worse than asking the operator to delete the group or pick
+another lead.
+
 A member's prompt head carries a `GroupBrief` (shared goal, roster, addressing
 rule), built once per worker, and the host adds `mail` and the `task_*` board
 tools as session-layer tools so a role that lacks them can still work with its
