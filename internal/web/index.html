@@ -501,20 +501,26 @@
                         rows="3"
                         placeholder="What is this team working towards? Optional; it is added to every member's prompt."
                     ></textarea>
-                    <p class="muted">
+                    <p class="field-hint">
                         A group is a boundary over existing resident services: each member keeps its own role, model, workspace, and
                         watchers. The roster becomes the addresses <code>mail</code> accepts, and membership is read by a member when its
                         next wake re-prepares, so a change takes effect without a restart.
                     </p>
-                    <label for="group-new-lead">Lead</label>
-                    <select id="group-new-lead" title="Optional escalation hint; it plays no role in addressing">
-                        <option value="">No lead</option>
-                    </select>
                     <div class="watcher-form-head">
                         <span>Members</span>
                         <span id="group-new-members-hint" class="muted"></span>
                     </div>
                     <div id="group-new-members" class="check-list"></div>
+                    <!-- The lead is chosen from the ticked members, so it follows the picker. -->
+                    <label for="group-new-lead">Lead <span class="optional">optional</span></label>
+                    <select id="group-new-lead" title="Escalation hint; it plays no part in addressing">
+                        <option value="">No lead</option>
+                    </select>
+                    <p class="field-hint">
+                        The lead is told once when a board task stays blocked for 30 minutes or loses its owner. Without one, those
+                        escalations are recorded as skipped. Addressing never uses the lead: <code>group:&lt;name&gt;</code> reaches
+                        every member, and a direct <code>mail</code> names one.
+                    </p>
                     <label for="group-new-max">Max members</label>
                     <input id="group-new-max" type="number" min="1" max="32" value="8" />
                     <button id="create-group" class="primary" type="submit">Create group</button>

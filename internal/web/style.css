@@ -149,6 +149,21 @@ select {
     background: var(--panel);
 }
 
+/* A checkbox is not a text field. The rule above gives every control a full
+   width plus a padded border, which stretches a checkbox into a column and
+   squeezes its label into a ragged sliver; radios had to reset that locally.
+   Do it once, here, so a new form cannot reintroduce it. */
+input[type='checkbox'],
+input[type='radio'] {
+    flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    accent-color: var(--accent);
+}
+
 textarea {
     resize: vertical;
     max-height: 160px;
@@ -2442,6 +2457,28 @@ header p {
     color: var(--muted);
 }
 
+/* A quiet line under a field: explanation, not a label. */
+.field-hint {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--muted);
+}
+
+.field-hint code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.95em;
+}
+
+/* "optional" beside a label, so an empty control reads as a choice. */
+.optional {
+    font-weight: 400;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+}
+
 .muted {
     color: var(--muted);
 }
@@ -2718,16 +2755,28 @@ header p {
 }
 
 /* A member picker is a short scrollable list: a group is bounded, but the host's
-   service list is not, and the dialog should not grow with it. */
+   service list is not, and the dialog should not grow with it. Each row is one
+   clickable band, so the checkbox column lines up whatever the names are. */
 .check-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 2px;
     max-height: 200px;
     overflow-y: auto;
     padding: 6px 8px;
     border: 1px solid var(--border);
     border-radius: 8px;
+}
+
+.check-list .check {
+    padding: 3px 4px;
+    border-radius: 6px;
+    font-weight: 500;
+    color: var(--ink);
+}
+
+.check-list .check:hover {
+    background: var(--soft);
 }
 
 .group-row-head,
