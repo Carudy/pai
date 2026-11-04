@@ -85,6 +85,13 @@ See the [module map](../organization.md) for the storage adapter boundary.
   implement the host's exactly-once notification for stuck work. Deleting the
   group cascades to its board; deleting a session leaves its tasks ownerless so
   the work is not lost.
+- `ActivityStore` is the group timeline's raw material, and it is two reads
+  because the two sides are keyed differently: `GroupEvents` returns the host's
+  deliveries to a set of session ids (mail, broadcast, user input, escalation —
+  probes are a member's own business and are excluded), and `RecentOutputs`
+  returns the most recent assistant outputs for a set of display names. The
+  store does not interpret a report's content; the adapter parses the action out
+  of it.
 - Migrations are additive: existing databases gain `id`, `mode`, `state`,
   `status`, `spec`, and `next_wake`, rows are backfilled with an immutable id,
   and `PRAGMA user_version` is set. v2 adds `events.priority` and backfills it

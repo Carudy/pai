@@ -31,7 +31,9 @@ See the [module map](../organization.md) for dependency rules.
   the board is forwarded the same way through `TaskBackend`. The web edits the
   same directory through `GroupAdminBackend`, so a group can be created while the
   server runs; name resolution lives in `session.GroupFromNames` so the manifest
-  and the form agree on what a member may be.
+  and the form agree on what a member may be. `group show` also lists the newest
+  activity rows; `groupactivity.go` builds that timeline (events plus parsed
+  `inform`/`done` turns) for both the local and the remote path.
   - `remote.go` is the read fallback: while `pai serve` owns the store lock, the
   read commands (`session ls/show`, `service ls/show`, `group ls/show`) query the
   running server through `conn` instead of failing. Writes still require the lock,

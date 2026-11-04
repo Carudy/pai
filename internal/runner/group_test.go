@@ -434,6 +434,13 @@ func TestGroupWriteRefreshesPreparedMembers(t *testing.T) {
 	}
 }
 
+func (b *groupTestBackend) GroupActivity(members []core.GroupMember, limit int) ([]GroupActivity, error) {
+	if len(members) == 0 {
+		return nil, nil
+	}
+	return []GroupActivity{{Kind: "mail", From: members[0].Name, To: members[len(members)-1].Name, Detail: "gate schedule final?"}}, nil
+}
+
 // seed registers a group and its members by immutable id.
 func (b *groupTestBackend) seed(name, leadID string, members [][2]string) {
 	g := core.Group{ID: "g-" + name, Name: name, LeadID: leadID, MaxMembers: 8}
@@ -675,6 +682,11 @@ func TestGroupViewForTheServer(t *testing.T) {
 	}
 	if view.Group.Name != "hydro" || len(view.Members) != 2 || len(view.Tasks) != 1 {
 		t.Fatalf("view = %+v", view)
+	}
+	// The timeline is part of the same response: the panel does not make a second
+	// round trip just to show what the team has been doing.
+	if len(view.Activity) != 1 || view.Activity[0].Kind != "mail" {
+		t.Fatalf("activity = %+v", view.Activity)
 	}
 	lead := false
 	for _, mem := range view.Members {

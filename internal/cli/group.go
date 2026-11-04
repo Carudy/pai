@@ -230,7 +230,15 @@ func groupShow(name string, stdout io.Writer, log *tui.Logger) int {
 	if ts, ok := store.(session.TaskStore); ok {
 		tasks, _ = ts.Tasks(g.ID, nil, 20)
 	}
-	return renderGroupBoard(tasks, stdout, log)
+	if code := renderGroupBoard(tasks, stdout, log); code != 0 {
+		return code
+	}
+	activity, err := groupActivity(store, members, 0)
+	if err != nil {
+		log.Errorf("Error reading activity: %v\n", err)
+		return 1
+	}
+	return renderGroupActivity(activity, stdout, log)
 }
 
 // groupShowRemote renders the same view from a running server.
@@ -247,7 +255,10 @@ func groupShowRemote(client *conn.Client, name string, stdout io.Writer, log *tu
 	for _, m := range view.Members {
 		fmt.Fprintf(stdout, "%-20s %s\n", m.Name, emptyOr(m.State, "-"))
 	}
-	return renderGroupBoard(view.Tasks, stdout, log)
+	if code := renderGroupBoard(view.Tasks, stdout, log); code != 0 {
+		return code
+	}
+	return renderGroupActivity(view.Activity, stdout, log)
 }
 
 func printGroupHeader(g core.Group, stdout io.Writer) {
@@ -273,6 +284,36 @@ func renderGroupBoard(tasks []core.Task, stdout io.Writer, log *tui.Logger) int 
 	}
 	if err := tw.Flush(); err != nil {
 		log.Errorf("Error writing board: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// renderGroupActivity shows the newest rows first. The terminal gets a short
+// window into what the browser panel shows in full: enough to answer "what has
+// this team been doing", not a transcript reader.
+func renderGroupActivity(items []runner.GroupActivity, stdout io.Writer, log *tui.Logger) int {
+	if len(items) == 0 {
+		return 0
+	}
+	const rows = 12
+	fmt.Fprintln(stdout, "activity:")
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "  AT\tKIND\tROUTE\tDETAIL")
+	for i, a := range items {
+		if i == rows {
+			fmt.Fprintf(tw, "  …\t\t%d more\n", len(items)-rows)
+			break
+		}
+		route := emptyOr(a.From, "-")
+		if a.To != "" {
+			route += " → " + a.To
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n",
+			formatWake(&a.At), a.Kind, route, emptyOr(clip(a.Detail, 60), "-"))
+	}
+	if err := tw.Flush(); err != nil {
+		log.Errorf("Error writing activity: %v\n", err)
 		return 1
 	}
 	return 0

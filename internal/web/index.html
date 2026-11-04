@@ -201,14 +201,27 @@
                         </div>
                         <p id="group-error" class="service-error" hidden></p>
                         <p id="group-goal" class="group-goal"></p>
-                        <div id="group-members" class="group-members"></div>
-                        <div id="group-add" class="group-add" hidden>
-                            <select id="group-new-member" aria-label="Service session to add"></select>
-                            <button id="group-add-member" type="button">＋ Add member</button>
+                        <div class="group-section-head">
+                            <span id="group-members-count" class="group-section-title"></span>
+                            <div id="group-add" class="group-add" hidden>
+                                <select
+                                    id="group-new-member"
+                                    title="A resident service that is not in this group yet"
+                                    aria-label="Service session to add"
+                                ></select>
+                                <button id="group-add-member" type="button" title="Add the selected service to this group">
+                                    ＋ Add
+                                </button>
+                            </div>
                         </div>
+                        <div id="group-members" class="group-members"></div>
                         <details id="group-board-box" open>
                             <summary>Board</summary>
                             <div id="group-board" class="group-board"></div>
+                        </details>
+                        <details id="group-activity-box" open>
+                            <summary>Activity</summary>
+                            <div id="group-activity" class="group-activity"></div>
                         </details>
                     </section>
                     <section id="service-panel" aria-label="Service" hidden>

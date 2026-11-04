@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/session"
@@ -173,5 +174,68 @@ name = "hydro"
 	}
 	if !strings.Contains(out.String(), "coord") || !strings.Contains(out.String(), "hydro") {
 		t.Fatalf("deleting the group removed its sessions:\n%s", out.String())
+	}
+}
+
+// The group timeline merges deliveries (events) with reports (turns): a reader
+// wants one story of what the team did, not two lists that must be lined up by
+// hand. Only actions that end an activation with something to say are kept.
+func TestGroupActivityMergesDeliveriesAndReports(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_DATA_HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
+	store, err := session.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	coord, err := store.Create(session.Meta{Name: "coord", Mode: session.ModeService})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hydro, err := store.Create(session.Meta{Name: "hydro", Mode: session.ModeService})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ss, ok := store.(session.ServiceStore)
+	if !ok {
+		t.Fatal("store does not expose events")
+	}
+	past := time.Now().Add(-10 * time.Minute)
+	if _, err := ss.AppendEvent(core.Event{
+		Session: hydro.Meta.ID, Class: core.EventPeer, Kind: "mail",
+		Source: "session:coord", Payload: "gate schedule final?", At: past,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Two outputs: the inform is team news, the tool result is not.
+	if err := store.Append("hydro",
+		core.Turn{Role: "assistant", Kind: core.KindOutput, Content: `{"action":"inform","payload":"level 3.8 m, above the band"}`},
+		core.Turn{Role: "assistant", Kind: core.KindOutput, Content: `{"action":"tool","toolname":"read","payload":{"path":"x"}}`},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	members := []core.GroupMember{
+		{SessionID: coord.Meta.ID, Name: "coord"},
+		{SessionID: hydro.Meta.ID, Name: "hydro"},
+	}
+	items, err := groupActivity(store, members, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("activity = %+v, want the mail and the inform only", items)
+	}
+	// Newest first: the report happened now, the mail ten minutes ago.
+	if items[0].Kind != "inform" || items[0].From != "hydro" {
+		t.Fatalf("newest row = %+v, want hydro's report", items[0])
+	}
+	if !strings.Contains(items[0].Detail, "level 3.8") {
+		t.Fatalf("report detail = %q, want the payload text", items[0].Detail)
+	}
+	if items[1].Kind != "mail" || items[1].From != "coord" || items[1].To != "hydro" {
+		t.Fatalf("mail row = %+v, want coord -> hydro", items[1])
 	}
 }

@@ -254,6 +254,16 @@ type GroupAdminBackend interface {
 	DeleteGroup(name string) error
 }
 
+// GroupActivityBackend is the optional timeline reader: the messages a group's
+// members exchanged and the reports they made. A backend without it shows a
+// group without a timeline.
+type GroupActivityBackend interface {
+	// GroupActivity takes the members because the two sources are keyed
+	// differently (events by immutable id, turns by display name). A limit of 0
+	// leaves the adapter its default.
+	GroupActivity(members []core.GroupMember, limit int) ([]GroupActivity, error)
+}
+
 // TaskBackend is the optional group board. A backend without it runs groups
 // without a board: the task tools report that this host has none, and delivery
 // and prompts are unaffected.

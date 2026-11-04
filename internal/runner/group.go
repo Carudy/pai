@@ -23,9 +23,25 @@ type GroupMemberView struct {
 // GroupView is the read model for `pai group show` over a running server, which
 // is the only way to inspect a group while `pai serve` owns the store.
 type GroupView struct {
-	Group   core.Group        `json:"group"`
-	Members []GroupMemberView `json:"members"`
-	Tasks   []core.Task       `json:"tasks,omitempty"`
+	Group    core.Group        `json:"group"`
+	Members  []GroupMemberView `json:"members"`
+	Tasks    []core.Task       `json:"tasks,omitempty"`
+	Activity []GroupActivity   `json:"activity,omitempty"`
+}
+
+// GroupActivity is one row of a group's timeline: a message the host delivered to
+// a member, or a report a member wrote back. It is a view, not a durable type:
+// the events and turns it is built from are already stored.
+type GroupActivity struct {
+	At   time.Time `json:"at"`
+	Kind string    `json:"kind"` // mail, broadcast, user_input, escalation, inform, done
+	// From is a session name, "user", or "group:<name>" for an escalation; To is
+	// the recipient of a delivery and is empty for a report.
+	From   string `json:"from,omitempty"`
+	To     string `json:"to,omitempty"`
+	Trace  string `json:"trace,omitempty"`
+	State  string `json:"state,omitempty"` // delivery state, when the row is an event
+	Detail string `json:"detail,omitempty"`
 }
 
 // Groups lists the group directory.
@@ -181,6 +197,13 @@ func (m *Manager) GroupView(name string) (GroupView, error) {
 	if tasks, ok := m.backend.(TaskBackend); ok {
 		if list, err := tasks.Tasks(g.ID, nil, 50); err == nil {
 			view.Tasks = list
+		}
+	}
+	// A timeline is a convenience, like the board: a backend without one, or a
+	// failed read, still returns the roster and the goal.
+	if activity, ok := m.backend.(GroupActivityBackend); ok {
+		if list, err := activity.GroupActivity(members, 0); err == nil {
+			view.Activity = list
 		}
 	}
 	return view, nil

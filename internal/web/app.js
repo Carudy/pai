@@ -18,6 +18,9 @@ let selectedMode = '';
 // slow refresh from painting over a newer one. serviceError keeps the bar stable
 // when a view cannot be loaded instead of hiding it.
 let serviceView = null, serviceRequest = 0, serviceTimer = null, serviceError = '';
+// The open group (name, loaded view, load error, request counter). A group is a
+// different view over the same workspace, so it also suppresses the service bar.
+let groupName = '', groupView = null, groupError = '', groupRequest = 0;
 // Trace the operator narrowed the queue to, or '' for everything. It is UI state
 // only: one instruction can cross sessions, and the queue is where a chain is
 // read. It resets with the selection, since a trace belongs to one session's view.
@@ -1032,7 +1035,10 @@ function paintService() {
   // refresh: a stable bar with an explanation beats one that blinks in and out.
   // The tab may disagree with the open session (browsing Services while a chat
   // is selected), and the bar is about the session, so both must agree.
-  if (sessionMode !== 'service' || selectedMode !== 'service' || !selected) { panel.hidden = true; controls(); return; }
+  // A group view covers the conversation, including this bar. The bar describes a
+  // service, and leaving it up showed that service's watchers and manifest inside
+  // a group that has neither.
+  if (groupName || sessionMode !== 'service' || selectedMode !== 'service' || !selected) { panel.hidden = true; controls(); return; }
   panel.hidden = false;
 
   const badge = $('service-state');
@@ -2770,10 +2776,8 @@ function composerKey(e) {
 // ── Groups ─────────────────────────────────────────────────
 // A group is a read-only inspector, not a session: it covers the conversation
 // while it is open and changes no URL state, so a reload returns to the selected
-// session. Membership and the board are edited from the CLI; this view is for
-// watching them while `pai serve` runs, which a bare `pai group show` cannot do.
+// session. Its state lives with the other module state at the top of the file.
 const GROUPS_COLLAPSED_KEY = 'pai.groupsCollapsed';
-let groupName = '', groupView = null, groupError = '', groupRequest = 0;
 
 function groupsCollapsed() { return !!$('groups-body').hidden; }
 function storedGroupsCollapsed() { try { return localStorage.getItem(GROUPS_COLLAPSED_KEY) === '1'; } catch (_) { return false; } }
@@ -2825,6 +2829,7 @@ async function openGroup(name) {
   $('conversation').hidden = true;
   const dock = $('composer-dock');
   if (dock) dock.hidden = true;
+  paintService();
   paintGroup();
   for (const row of $('groups').children) {
     const active = row.dataset && row.dataset.name === name;
@@ -2858,6 +2863,8 @@ function closeGroup() {
   const dock = $('composer-dock');
   if (dock) dock.hidden = false;
   for (const row of $('groups').children) row.classList.remove('selected');
+  // The service bar was suppressed while the group covered it; put it back.
+  paintService();
 }
 
 function paintGroup() {
@@ -2870,8 +2877,10 @@ function paintGroup() {
     $('group-lead').textContent = '';
     $('group-goal').textContent = '';
     $('group-goal').hidden = true;
+    $('group-members-count').textContent = '';
     $('group-members').replaceChildren();
     $('group-board').replaceChildren();
+    $('group-activity').replaceChildren();
     $('group-add').hidden = true;
     return;
   }
@@ -2879,9 +2888,45 @@ function paintGroup() {
   $('group-lead').textContent = g.lead_name ? 'lead ' + g.lead_name : 'no lead';
   $('group-goal').textContent = g.goal || '';
   $('group-goal').hidden = !g.goal;
-  paintGroupMembers(view.members || []);
-  paintGroupAdd(view.members || []);
+  const members = view.members || [];
+  // The count belongs to the roster head, next to the add control, so the two
+  // facts a reader needs (how big is this team, can I add to it) sit together.
+  $('group-members-count').textContent = members.length + (g.max_members ? '/' + g.max_members : '') + ' member(s)';
+  paintGroupMembers(members);
+  paintGroupAdd(members);
   paintGroupBoard(view.tasks || []);
+  paintGroupActivity(view.activity || []);
+}
+
+// The timeline merges what the host delivered to members (mail, instructions,
+// escalations) with what they reported back (inform/done). Rows are newest
+// first; the store keeps the durable material, this is a view of it.
+function paintGroupActivity(items) {
+  const box = $('group-activity');
+  box.replaceChildren();
+  if (!items.length) {
+    box.append(text('p', 'Nothing yet: mail, instructions, and reports appear here.', 'muted'));
+    return;
+  }
+  const head = text('div', '', 'group-activity-head');
+  for (const label of ['When', 'Kind', 'From → To', 'Detail']) head.append(text('span', label));
+  box.append(head);
+  for (const a of items) {
+    const row = text('div', '', 'group-activity-row');
+    row.append(text('span', formatTimeExact(a.at) || '—', 'group-activity-time'));
+    const kind = text('span', a.kind || 'event', 'group-activity-kind');
+    kind.dataset.kind = a.kind || '';
+    if (a.state && a.state !== 'done') { kind.textContent = (a.kind || 'event') + ' · ' + a.state; }
+    if (a.trace) kind.title = 'trace ' + a.trace + (a.state ? ', ' + a.state : '');
+    row.append(kind);
+    const route = a.to ? (a.from ? a.from + ' → ' + a.to : '→ ' + a.to) : (a.from || '—');
+    row.append(text('span', route, 'group-activity-route'));
+    const detail = String(a.detail || '').replace(/\s+/g, ' ').trim() || '—';
+    const tail = text('span', detail.length > 140 ? detail.slice(0, 139) + '…' : detail, 'group-activity-detail');
+    if (detail.length > 140) tail.title = detail;
+    row.append(tail);
+    box.append(row);
+  }
 }
 
 // The add-member control offers only resident services that are not already here.

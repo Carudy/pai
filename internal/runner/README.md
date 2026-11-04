@@ -97,6 +97,14 @@ before a later wake: interrupting a tool call or dropping a question to refresh 
 prompt would be the worse trade. This is what lets the browser edit groups while
 the server runs.
 
+`GroupView` also carries a timeline when the backend implements
+`GroupActivityBackend`: recent deliveries to the members (mail, broadcasts,
+instructions, escalations) and the `inform`/`done` reports they wrote back,
+newest first. The runner only merges what the adapter hands it — the adapter is
+where the two sources are read (events by id, turns by name) and where a report's
+action is parsed out of its JSON. A timeline is presentation, so a failure or a
+missing port leaves the roster and goal intact rather than failing the view.
+
 ## The board
 
 `TaskBackend` is the optional group board: `task_add`, `task_claim`,

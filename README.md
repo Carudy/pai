@@ -872,6 +872,14 @@ out as mail appears in each recipient's queue under the same trace). Delivered
 events are kept for 30 days for exactly this kind of audit; pending, leased, and
 dead-lettered events are never pruned.
 
+Opening a group also shows its **Activity**: one timeline, newest first, of what
+the host delivered to the members (mail, broadcasts, user instructions,
+escalations) and what they reported back (`inform`/`done`). It is built from the
+same durable events and transcripts, so it costs one read per panel refresh —
+the ↻ button rebuilds it — and `pai group show` prints the newest rows too. A
+member's own probe events are deliberately left out: they are that session's
+internals, not the team's conversation.
+
 ## 🌐 Browser / server mode
 
 ```bash

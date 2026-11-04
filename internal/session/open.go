@@ -38,7 +38,9 @@ func Open() (Store, error) {
 	service, _ := store.(ServiceStore)
 	groups, _ := store.(GroupStore)
 	tasks, _ := store.(TaskStore)
-	return &ownedStore{Store: store, ServiceStore: service, GroupStore: groups, TaskStore: tasks, lock: lock}, nil
+	activity, _ := store.(ActivityStore)
+	return &ownedStore{Store: store, ServiceStore: service, GroupStore: groups, TaskStore: tasks,
+		ActivityStore: activity, lock: lock}, nil
 }
 
 type ownedStore struct {
@@ -52,6 +54,8 @@ type ownedStore struct {
 	GroupStore
 	// TaskStore is the group board, same reason again.
 	TaskStore
+	// ActivityStore is a group's timeline behind the same wrapper.
+	ActivityStore
 	lock *os.File
 	once sync.Once
 	err  error
@@ -60,6 +64,7 @@ type ownedStore struct {
 var _ ServiceStore = (*ownedStore)(nil)
 var _ GroupStore = (*ownedStore)(nil)
 var _ TaskStore = (*ownedStore)(nil)
+var _ ActivityStore = (*ownedStore)(nil)
 
 func (s *ownedStore) Close() error {
 	s.once.Do(func() {

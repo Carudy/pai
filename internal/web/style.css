@@ -2713,11 +2713,21 @@ header p {
 .group-row-head,
 .group-member {
     display: grid;
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto 16ch auto;
+    /* Every row is its own grid, so a content-sized (auto) track would be sized
+       per row and the columns would drift apart. Fixed tracks keep State and the
+       next wake on one vertical line whatever a role name is. */
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 11ch 16ch auto;
     gap: 10px;
     align-items: baseline;
     padding: 5px 0;
     border-top: 1px solid var(--border);
+}
+
+.group-member > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* Removing a member is a row action, not a headline: a quiet glyph that only
@@ -2741,17 +2751,90 @@ header p {
     cursor: default;
 }
 
-.group-add {
+/* The add control is a section affordance, not a headline: it sits at the right
+   end of the roster head, compact enough to ignore until it is needed. */
+.group-section-head {
     display: flex;
     gap: 8px;
     align-items: center;
-    padding: 8px 0;
-    border-top: 1px solid var(--border);
+    justify-content: space-between;
+    padding: 2px 0 4px;
+}
+
+.group-section-title {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.group-add {
+    display: flex;
+    gap: 6px;
+    align-items: center;
 }
 
 .group-add select {
-    flex: 1 1 auto;
+    width: auto;
+    max-width: 22ch;
+    padding: 3px 8px;
+    font-size: 12px;
+}
+
+.group-add button {
+    padding: 3px 10px;
+    font-size: 12px;
+}
+
+/* A group timeline: one row per message or report, newest first. */
+.group-activity-head,
+.group-activity-row {
+    display: grid;
+    grid-template-columns: 17ch 12ch minmax(10ch, 1fr) minmax(14ch, 2fr);
+    gap: 10px;
+    align-items: baseline;
+    padding: 4px 0;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+
+.group-activity-head {
+    padding-top: 0;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.group-activity-row {
+    border-top: 1px solid var(--border);
+}
+
+.group-activity-head + .group-activity-row {
+    border-top: 0;
+}
+
+.group-activity-kind {
+    font-weight: 650;
+}
+
+.group-activity-kind[data-kind='mail'],
+.group-activity-kind[data-kind='broadcast'] {
+    color: var(--accent);
+}
+
+.group-activity-kind[data-kind='inform'],
+.group-activity-kind[data-kind='done'] {
+    color: var(--green);
+}
+
+.group-activity-route,
+.group-activity-detail {
     min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* A member picker is a short scrollable list: a group is bounded, but the host's

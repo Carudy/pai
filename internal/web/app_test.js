@@ -1563,7 +1563,9 @@ async function verifyGroupPanel() {
   p.run("api = async path => { globalThis.groupCalls.push(path); return {" +
     "group:{name:'hydro',goal:'keep the gates safe',lead_name:'coord',members:2,max_members:8}," +
     "members:[{name:'coord',lead:true,role:'devops',state:'suspended',next_wake:'2026-10-30T02:00:00Z'},{name:'hydro',role:'coder',state:'stopped'}]," +
-    "tasks:[{id:'t1',title:'check the gate',status:'open',owner_name:'',version:1},{id:'t2',title:'dive team',status:'blocked',owner_name:'coord',version:3}] }; }");
+    "tasks:[{id:'t1',title:'check the gate',status:'open',owner_name:'',version:1},{id:'t2',title:'dive team',status:'blocked',owner_name:'coord',version:3}]," +
+    "activity:[{at:'2026-10-30T01:05:00Z',kind:'inform',from:'hydro',detail:'level 3.8 m'}," +
+    "{at:'2026-10-30T01:00:00Z',kind:'mail',from:'coord',to:'hydro',trace:'ab12cd34',detail:'gate schedule final?'}] }; }");
   await p.run("openGroup('hydro')");
   assert.equal(p.run("groupCalls[0]"), "group?name=hydro", "the detail is fetched by name");
   assert.equal(p.get("group-panel").hidden, false, "the group panel opens");
@@ -1580,7 +1582,27 @@ async function verifyGroupPanel() {
   assert.match(board, /check the gate/, "the board lists tasks");
   assert.match(board, /blocked/, "task status is rendered");
   assert.match(board, /v3/, "the version is visible so a writer knows what it read");
-  p.run("closeGroup()");
+
+  // The timeline merges deliveries with reports, newest first.
+  assert.equal(p.get('group-members-count').textContent, '2/8 member(s)', 'the roster head carries the count');
+  const activity = p.get('group-activity');
+  assert.equal(activity.children.length, 3, 'a header plus two rows');
+  assert.equal(activity.children[0].children[3].textContent, 'Detail', 'the timeline has aligned columns');
+  assert.match(activity.children[1].textContent, /inform/, 'a report is on the timeline');
+  assert.match(activity.children[1].textContent, /level 3\.8/, 'the report text is shown');
+  assert.match(activity.children[2].textContent, /coord → hydro/, 'a delivery names both ends');
+  assert.match(activity.children[2].textContent, /gate schedule final/, 'the message is previewed');
+  // A group covers the service bar, not just the conversation: the bar describes a
+  // service, and its watchers/manifest used to stay visible inside a group.
+  p.run("closeGroup(); selected='river'; selectedMode='service'; sessionMode='service';" +
+    "serviceView={name:'river',state:'parked',watchers:[{name:'level'}],queue:[]}; paintService()");
+  assert.equal(p.get('service-panel').hidden, false, 'the service bar shows for a service');
+  await p.run("openGroup('hydro')");
+  assert.equal(p.get('service-panel').hidden, true, 'opening a group hides the service bar');
+  p.run('closeGroup()');
+  assert.equal(p.get('service-panel').hidden, false, 'closing the group restores it');
+
+  p.run('closeGroup()');
   assert.equal(p.get("group-panel").hidden, true, "closing restores the session view");
   assert.equal(p.get("conversation").hidden, false);
   assert.equal(p.get("composer-dock").hidden, false);

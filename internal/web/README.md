@@ -238,9 +238,11 @@ rejected; there is no URL authentication.
   `default_cwd` is the server's launch directory — the default for new sessions,
   which the UI prefills into its working-directory field.
 - `GET /api/group?name=...`: `runner.GroupView` — the roster with each member's
-  role, persisted state, next wake, and `lead` flag, plus the group's `tasks`.
-  Without `name` it returns `{"groups": [...]}`. The source `pai group show` uses
-  while the server holds the store lock.
+  role, persisted state, next wake, and `lead` flag, plus the group's `tasks` and
+  its `activity` (newest first: mail, broadcasts, instructions, escalations, and
+  the members' `inform`/`done` reports). Without `name` it returns
+  `{"groups": [...]}`. The source `pai group show` uses while the server holds the
+  store lock.
 - `POST /api/group`: `{ "action": "create" | "add" | "remove" | "delete",
   "name": "<group>", "goal": "...", "lead": "<session>", "members": [...] ,
   "max_members": 8, "session": "<session>" }`. `create` returns 201 with the new
@@ -492,8 +494,13 @@ one, and **Delete** removes the directory after a confirmation. Every write goes
 through `POST /api/group`; a change takes effect at each member's next wake, so
 none of it needs a restart. It calls `GET /api/group?name=…` to read, changes no
 URL state, and a close button returns to the selected session, so a reload never
-lands on it. The composer is hidden while it is open — a group has no conversation
-of its own.
+lands on it. The composer is hidden while it is open — a group has no
+conversation of its own. Below the roster, a **Board** section lists the tasks
+and an **Activity** section merges deliveries to members (mail, broadcasts, user
+instructions, escalations) with their `inform`/`done` reports, newest first; it is
+part of `GET /api/group?name=…`, so one refresh rebuilds everything. A group
+covers the service bar, which describes a service's own watchers and manifest and
+is therefore not shown here.
 
 Model, role, and reasoning are editable in the shared header while the service is
 idle — suspended, parked, or stopped — because the resident runtime is retired

@@ -45,6 +45,7 @@ var _ runner.ServiceBackend = (*serveBackend)(nil)
 var _ runner.ServiceCreator = (*serveBackend)(nil)
 var _ runner.GroupBackend = (*serveBackend)(nil)
 var _ runner.GroupAdminBackend = (*serveBackend)(nil)
+var _ runner.GroupActivityBackend = (*serveBackend)(nil)
 var _ runner.TaskBackend = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
@@ -173,6 +174,12 @@ func (b *serveBackend) DeleteGroup(name string) error {
 		return err
 	}
 	return store.DeleteGroup(name)
+}
+
+func (b *serveBackend) GroupActivity(members []core.GroupMember, limit int) ([]runner.GroupActivity, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return groupActivity(b.store, members, limit)
 }
 
 func (b *serveBackend) taskStore() (session.TaskStore, error) {
