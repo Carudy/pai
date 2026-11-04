@@ -51,21 +51,22 @@ const (
 // concurrency: a write carries the version it read, and a mismatch is rejected
 // rather than merged, so two members cannot silently overwrite each other.
 type Task struct {
-	ID        string
-	GroupID   string
-	Title     string
-	Detail    string
-	Status    TaskStatus
-	OwnerID   string
-	OwnerName string
-	Version   int
-	// LeaseUntil is when an un-renewed claim becomes orphaned; zero when the task
-	// has no owner.
-	LeaseUntil time.Time
-	Priority   int
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	ClosedAt   time.Time
+	ID        string     `json:"id"`
+	GroupID   string     `json:"group_id"`
+	Title     string     `json:"title"`
+	Detail    string     `json:"detail,omitempty"`
+	Status    TaskStatus `json:"status"`
+	OwnerID   string     `json:"owner_id,omitempty"`
+	OwnerName string     `json:"owner_name,omitempty"`
+	Version   int        `json:"version"`
+	// LeaseUntil is when an un-renewed claim becomes orphaned; zero means the task
+	// has no owner. The times are always present: a zero time is the signal, and
+	// encoding/json would not omit a struct field anyway.
+	LeaseUntil time.Time `json:"lease_until"`
+	Priority   int       `json:"priority"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	ClosedAt   time.Time `json:"closed_at"`
 }
 
 // Terminal reports whether a status ends a task's life.

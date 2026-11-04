@@ -155,6 +155,7 @@ func (m *Manager) WakeService(name string, wake core.Wake) bool {
 // worker, runs any due probes, and — only when something warrants it — hands one
 // wake to RunService and waits for that activation to end.
 func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*time.Time, error) {
+	m.recycleGroupWorker(name)
 	w, err := m.serviceWorker(ctx, name)
 	if err != nil {
 		if errors.Is(err, ErrStopped) {
@@ -231,6 +232,31 @@ func (m *Manager) Activate(ctx context.Context, name string, wake core.Wake) (*t
 	at = earlier(at, m.nextPendingEvent(w))
 	m.persistNextWake(w, name, at)
 	return at, err
+}
+
+// recycleGroupWorker retires a worker whose group membership changed, so the wake
+// it is about to serve is prepared with the current roster and group tools. It is
+// deliberately conservative: a worker that is busy, starting, or holding a
+// pending confirmation keeps the flag and is retried before a later wake, because
+// dropping a question or interrupting a tool call to refresh a prompt is worse
+// than one stale head.
+func (m *Manager) recycleGroupWorker(name string) {
+	m.mu.Lock()
+	w := m.entries[name]
+	if w == nil || w.mode != ModeService || !w.groupDirty || w.parked || w.pending != nil ||
+		w.state == StateBusy || w.state == StateStarting {
+		m.mu.Unlock()
+		return
+	}
+	w.groupDirty = false
+	w.state = StateStopped
+	w.cancel()
+	m.mu.Unlock()
+	// finishRun removes the entry and closes done, so the prepare below starts from
+	// a fresh runtime rather than racing the retiring one.
+	<-w.done
+	m.diag(Diagnostic{Session: name, Kind: "group", Outcome: "reloaded",
+		Detail: "membership changed; the prompt head was rebuilt from the directory"})
 }
 
 // persistNextWake records the timer the scheduler will use after a restart. A

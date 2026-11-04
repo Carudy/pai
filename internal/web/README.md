@@ -239,8 +239,17 @@ rejected; there is no URL authentication.
   which the UI prefills into its working-directory field.
 - `GET /api/group?name=...`: `runner.GroupView` — the roster with each member's
   role, persisted state, next wake, and `lead` flag, plus the group's `tasks`.
-  Without `name` it returns `{"groups": [...]}`. Read-only, and the source
-  `pai group show` uses while the server holds the store lock.
+  Without `name` it returns `{"groups": [...]}`. The source `pai group show` uses
+  while the server holds the store lock.
+- `POST /api/group`: `{ "action": "create" | "add" | "remove" | "delete",
+  "name": "<group>", "goal": "...", "lead": "<session>", "members": [...] ,
+  "max_members": 8, "session": "<session>" }`. `create` returns 201 with the new
+  view, `add` and `remove` return 200 with the updated one, `delete` returns
+  `{ "ok": true }`. This is the only write path that works while the server owns
+  the store: every affected member's worker is marked, and its next wake rebuilds
+  the prompt head (roster, shared goal, group tools) from the directory, so no
+  restart is needed. Names are resolved by `session.GroupFromNames`, the same rule
+  the CLI manifest uses.
 - `GET /api/service?name=...`: `runner.ServiceView` — the durable view of a
   resident session: metadata (mode, state, next wake), `status` (the last
   report), `spec` (the stored manifest as canonical JSON), `manifest_toml` (the
@@ -473,13 +482,18 @@ Below the session list, a **Groups** section lists the group directory (name and
 roster size, collapsed state remembered per browser). Both sections live in one
 scroll region and size to their content, so a short session list no longer
 stretches to fill the column and push Groups to the floor; when the combined
-list is longer than the sidebar, that region scrolls. Opening a group covers the
-conversation with a read-only inspector: its shared goal, the roster with each
-member's role, state, next wake and lead marker, and the board (`title`, status,
-owner, version). It calls `GET /api/group?name=…`, changes no URL state, and a
-close button returns to the selected session, so a reload never lands on it. The
-composer is hidden while it is open — membership and the board are edited from
-the CLI, not here.
+list is longer than the sidebar, that region scrolls. **＋** beside the Groups
+heading opens a form over the resident services (name, shared goal, optional lead,
+member checkboxes, member cap). Opening a group covers the conversation with an
+inspector: its shared goal, the roster with each member's role, state, next wake
+and lead marker, and the board (`title`, status, owner, version). A roster row
+removes that member (inert for the lead, which the store refuses), a select adds
+one, and **Delete** removes the directory after a confirmation. Every write goes
+through `POST /api/group`; a change takes effect at each member's next wake, so
+none of it needs a restart. It calls `GET /api/group?name=…` to read, changes no
+URL state, and a close button returns to the selected session, so a reload never
+lands on it. The composer is hidden while it is open — a group has no conversation
+of its own.
 
 Model, role, and reasoning are editable in the shared header while the service is
 idle — suspended, parked, or stopped — because the resident runtime is retired

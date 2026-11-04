@@ -22,6 +22,9 @@ type groupTestBackend struct {
 	groups    map[string]core.Group
 	bySession map[string]string
 	members   map[string][]core.GroupMember
+	// idsBySession is the name→id table this double needs because the admin port
+	// speaks names while the read port speaks ids, exactly as the store does.
+	idsBySession map[string]string
 
 	// board is the in-memory task store; due/escalated model the sweep.
 	tasks     map[string]core.Task
@@ -139,6 +142,90 @@ func (b *groupTestBackend) OrphanTasksOwnedBy(sessionID string, now time.Time) (
 func (b *groupTestBackend) Delete(name string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	delete(b.groups, name)
+	return nil
+}
+
+// The write half of the directory, kept faithful enough that the manager's
+// post-write read (GroupView) sees what was written.
+func (b *groupTestBackend) CreateGroup(name, goal, lead string, members []string, maxMembers int) error {
+	b.mu.Lock()
+	_, exists := b.groups[name]
+	b.mu.Unlock()
+	if exists {
+		return errors.New("group already exists")
+	}
+	pairs := make([][2]string, 0, len(members))
+	for _, member := range members {
+		pairs = append(pairs, [2]string{b.idsBySession[member], member})
+	}
+	b.seed(name, b.idsBySession[lead], pairs)
+	b.mu.Lock()
+	g := b.groups[name]
+	g.Goal, g.MaxMembers, g.Members = goal, maxMembers, len(pairs)
+	b.groups[name] = g
+	b.mu.Unlock()
+	return nil
+}
+
+func (b *groupTestBackend) AddGroupMember(group, member string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	g, ok := b.groups[group]
+	if !ok {
+		return errors.New("group not found")
+	}
+	id := b.idsBySession[member]
+	if id == "" {
+		return errors.New("session not found")
+	}
+	for _, mem := range b.members[g.ID] {
+		if mem.SessionID == id {
+			return nil
+		}
+	}
+	b.bySession[id] = group
+	b.members[g.ID] = append(b.members[g.ID], core.GroupMember{GroupID: g.ID, SessionID: id, Name: member})
+	g.Members = len(b.members[g.ID])
+	b.groups[group] = g
+	return nil
+}
+
+func (b *groupTestBackend) RemoveGroupMember(group, member string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	g, ok := b.groups[group]
+	if !ok {
+		return errors.New("group not found")
+	}
+	id := b.idsBySession[member]
+	if g.LeadID == id {
+		return errors.New("the lead cannot be removed")
+	}
+	kept := b.members[g.ID][:0]
+	for _, mem := range b.members[g.ID] {
+		if mem.SessionID != id {
+			kept = append(kept, mem)
+		}
+	}
+	b.members[g.ID] = kept
+	delete(b.bySession, id)
+	g.Members = len(kept)
+	b.groups[group] = g
+	return nil
+}
+
+func (b *groupTestBackend) DeleteGroup(name string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	g, ok := b.groups[name]
+	if !ok {
+		return errors.New("group not found")
+	}
+	for _, mem := range b.members[g.ID] {
+		delete(b.bySession, mem.SessionID)
+	}
+	delete(b.members, g.ID)
 	delete(b.groups, name)
 	return nil
 }
@@ -261,6 +348,92 @@ func TestDeleteRefusesAGroupLead(t *testing.T) {
 	}
 }
 
+// A group write made while the server runs must reach the members that are
+// already prepared: their prompt head (roster, shared goal, group tools) is
+// frozen, so the worker is marked and Activate rebuilds it before the next wake.
+func TestGroupWriteRefreshesPreparedMembers(t *testing.T) {
+	m, backend := groupManager(t)
+	idle := &worker{mode: ModeService, state: StateSuspended, done: make(chan struct{})}
+	var once sync.Once
+	idle.cancel = func() { once.Do(func() { close(idle.done) }) }
+	m.mu.Lock()
+	m.entries["coord"] = idle
+	m.mu.Unlock()
+	t.Cleanup(func() {
+		m.mu.Lock()
+		delete(m.entries, "coord")
+		m.mu.Unlock()
+	})
+	diags, unsubscribe, err := m.SubscribeDiagnostics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unsubscribe()
+
+	view, err := m.CreateGroup("hydro", "keep the gates safe", "coord", []string{"coord", "hydro"}, 8)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if view.Group.Name != "hydro" || len(view.Members) != 2 || view.Group.Goal != "keep the gates safe" {
+		t.Fatalf("view = %+v", view)
+	}
+	if !idle.groupDirty {
+		t.Fatal("the prepared member was not marked for a reload")
+	}
+
+	m.recycleGroupWorker("coord")
+	if idle.groupDirty || idle.state != StateStopped {
+		t.Fatalf("worker after recycle = dirty %v state %q", idle.groupDirty, idle.state)
+	}
+	if findDiagnostic(drainDiagnostics(diags), func(d Diagnostic) bool {
+		return d.Kind == "group" && d.Outcome == "reloaded" && d.Session == "coord"
+	}) == nil {
+		t.Fatal("no reload diagnostic")
+	}
+
+	// A parked worker holds a question nobody else can answer; it keeps the flag
+	// and is left alone until a later wake.
+	parked := &worker{mode: ModeService, state: StateParked, parked: true, groupDirty: true, done: make(chan struct{})}
+	parked.cancel = func() { t.Fatal("a parked worker must not be retired") }
+	m.mu.Lock()
+	m.entries["hydro"] = parked
+	m.mu.Unlock()
+	t.Cleanup(func() {
+		m.mu.Lock()
+		delete(m.entries, "hydro")
+		m.mu.Unlock()
+	})
+	m.recycleGroupWorker("hydro")
+	if !parked.groupDirty || parked.state != StateParked {
+		t.Fatal("a parked worker lost its flag or its state")
+	}
+
+	// Adding and removing also mark the roster, so every member rebuilds.
+	idle.groupDirty = false
+	if _, err := m.AddGroupMember("hydro", "met"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if !idle.groupDirty {
+		t.Fatal("adding a member did not mark the others")
+	}
+	idle.groupDirty = false
+	if _, err := m.RemoveGroupMember("hydro", "met"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if !idle.groupDirty {
+		t.Fatal("removing a member did not mark the others")
+	}
+	if _, err := m.RemoveGroupMember("hydro", "coord"); err == nil {
+		t.Fatal("the lead was removed")
+	}
+	if err := m.DeleteGroup("hydro"); err != nil {
+		t.Fatalf("delete group: %v", err)
+	}
+	if _, found, _ := backend.GroupByName("hydro"); found {
+		t.Fatal("the group survived the delete")
+	}
+}
+
 // seed registers a group and its members by immutable id.
 func (b *groupTestBackend) seed(name, leadID string, members [][2]string) {
 	g := core.Group{ID: "g-" + name, Name: name, LeadID: leadID, MaxMembers: 8}
@@ -280,22 +453,24 @@ func (b *groupTestBackend) seed(name, leadID string, members [][2]string) {
 
 func groupManager(t *testing.T) (*Manager, *groupTestBackend) {
 	t.Helper()
+	identities := map[string]string{
+		"coord": "c1", "hydro": "h1", "met": "m1", "svc": "s1", "lone": "l2", "solo": "s2",
+	}
 	backend := &groupTestBackend{
 		serviceTestBackend: &serviceTestBackend{
 			meta: Meta{Name: "svc", ID: "s1", Mode: ModeService, Cwd: t.TempDir(), CreatedAt: time.Now()},
 		},
-		groups:    map[string]core.Group{},
-		bySession: map[string]string{},
-		members:   map[string][]core.GroupMember{},
-		tasks:     map[string]core.Task{},
-		escalated: map[string]bool{},
+		groups:       map[string]core.Group{},
+		bySession:    map[string]string{},
+		members:      map[string][]core.GroupMember{},
+		idsBySession: identities,
+		tasks:        map[string]core.Task{},
+		escalated:    map[string]bool{},
 	}
 	m := New(context.Background(), backend, 4)
 	t.Cleanup(m.Close)
 	m.mu.Lock()
-	for name, id := range map[string]string{
-		"coord": "c1", "hydro": "h1", "met": "m1", "svc": "s1", "lone": "l2", "solo": "s2",
-	} {
+	for name, id := range identities {
 		m.serviceNames[name] = true
 		m.sessionIDs[name] = id
 	}

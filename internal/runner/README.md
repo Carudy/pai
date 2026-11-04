@@ -88,6 +88,15 @@ tools as session-layer tools so a role that lacks them can still work with its
 group. A group never schedules a member: it carries no budget and cannot pause
 work, so a session's autonomy stays its own manifest's business.
 
+Because that head is frozen, a directory change would otherwise be invisible to
+a prepared worker. `GroupAdminBackend` (create, add, remove, delete) therefore
+marks every affected member, and `Activate` retires a marked worker before the
+next wake so its preparation reads the current roster and tools. A worker that is
+busy, starting, or holding a pending confirmation keeps the mark and is refreshed
+before a later wake: interrupting a tool call or dropping a question to refresh a
+prompt would be the worse trade. This is what lets the browser edit groups while
+the server runs.
+
 ## The board
 
 `TaskBackend` is the optional group board: `task_add`, `task_claim`,

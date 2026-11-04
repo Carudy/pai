@@ -95,3 +95,42 @@ func TestGroupRejectsAStrangerLead(t *testing.T) {
 		t.Fatalf("CreateGroup = %v, want a lead refusal", err)
 	}
 }
+
+// GroupFromNames is the one place a group definition written by a person becomes
+// ids: the CLI manifest and the web form both call it, so "a member is a resident
+// service" cannot mean two different things on the two surfaces.
+func TestGroupFromNames(t *testing.T) {
+	s := openSQLiteStore(t)
+	svc := makeService(t, s, "hydro")
+	if _, err := s.Create(Meta{Name: "chatty", Cwd: "/w"}); err != nil {
+		t.Fatal(err)
+	}
+
+	g, ids, err := GroupFromNames(s, "river", "keep the gates safe", "hydro", []string{"hydro"}, 4)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if g.Name != "river" || g.Goal != "keep the gates safe" || g.LeadID != svc || g.MaxMembers != 4 {
+		t.Fatalf("group = %+v", g)
+	}
+	if len(ids) != 1 || ids[0] != svc {
+		t.Fatalf("ids = %v, want [%s]", ids, svc)
+	}
+	if err := s.CreateGroup(g, ids); err != nil {
+		t.Fatalf("the resolved group did not persist: %v", err)
+	}
+
+	for _, tc := range []struct {
+		lead    string
+		members []string
+		want    string
+	}{
+		{"", []string{"chatty"}, "chat session"},
+		{"", []string{"ghost"}, "is not a session"},
+		{"nobody", []string{"hydro"}, "lead"},
+	} {
+		if _, _, err := GroupFromNames(s, "bad", "", tc.lead, tc.members, 8); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%v: %v, want %q", tc.members, err, tc.want)
+		}
+	}
+}

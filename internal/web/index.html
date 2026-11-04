@@ -62,6 +62,14 @@
                     <div class="panel-head">
                         <h2 id="groups-heading">Groups</h2>
                         <button
+                            id="open-group-create"
+                            class="panel-add"
+                            type="button"
+                            aria-label="Create a group"
+                            title="Create a group from resident services"
+                        >
+                            ＋</button
+                        ><button
                             id="toggle-groups-list"
                             class="panel-toggle"
                             type="button"
@@ -188,11 +196,16 @@
                             <span id="group-name" class="group-name"></span>
                             <span id="group-lead" class="service-next"></span>
                             <button id="refresh-group" type="button" title="Reload this group">↻</button>
+                            <button id="delete-group" type="button" class="caution" title="Delete this group; its member sessions are kept">Delete</button>
                             <button id="close-group" type="button" title="Close the group view">✕ Close</button>
                         </div>
                         <p id="group-error" class="service-error" hidden></p>
                         <p id="group-goal" class="group-goal"></p>
                         <div id="group-members" class="group-members"></div>
+                        <div id="group-add" class="group-add" hidden>
+                            <select id="group-new-member" aria-label="Service session to add"></select>
+                            <button id="group-add-member" type="button">＋ Add member</button>
+                        </div>
                         <details id="group-board-box" open>
                             <summary>Board</summary>
                             <div id="group-board" class="group-board"></div>
@@ -470,6 +483,41 @@
                         Pre-approve command watchers (otherwise the first run asks for confirmation)
                     </label>
                     <button id="create-service" class="primary" type="submit">Create service</button>
+                </form>
+            </div>
+        </div>
+        <div id="group-create-panel" class="panel-overlay" hidden>
+            <div class="panel-card" role="dialog" aria-modal="true" aria-labelledby="group-create-title">
+                <header>
+                    <h2 id="group-create-title">New group</h2>
+                    <button id="close-group-create" type="button" title="Close" aria-label="Close">✕</button>
+                </header>
+                <form id="new-group" class="create-form">
+                    <label for="group-new-name">Name</label>
+                    <input id="group-new-name" maxlength="256" placeholder="Group name" required />
+                    <label for="group-new-goal">Shared goal</label>
+                    <textarea
+                        id="group-new-goal"
+                        rows="3"
+                        placeholder="What is this team working towards? Optional; it is added to every member's prompt."
+                    ></textarea>
+                    <p class="muted">
+                        A group is a boundary over existing resident services: each member keeps its own role, model, workspace, and
+                        watchers. The roster becomes the addresses <code>mail</code> accepts, and membership is read by a member when its
+                        next wake re-prepares, so a change takes effect without a restart.
+                    </p>
+                    <label for="group-new-lead">Lead</label>
+                    <select id="group-new-lead" title="Optional escalation hint; it plays no role in addressing">
+                        <option value="">No lead</option>
+                    </select>
+                    <div class="watcher-form-head">
+                        <span>Members</span>
+                        <span id="group-new-members-hint" class="muted"></span>
+                    </div>
+                    <div id="group-new-members" class="check-list"></div>
+                    <label for="group-new-max">Max members</label>
+                    <input id="group-new-max" type="number" min="1" max="32" value="8" />
+                    <button id="create-group" class="primary" type="submit">Create group</button>
                 </form>
             </div>
         </div>

@@ -39,8 +39,9 @@ message and N copies, not N². ` + "`lead`" + ` is optional and is only an escal
 hint — it plays no role in addressing.
 
 The store is exclusive, so stop ` + "`pai serve`" + ` before creating, editing, or removing a
-group; a running server enforces the membership it read at startup, so a change
-takes effect when the server restarts.
+group from the terminal. The browser can do the same while the server runs: a
+member reads its roster when its next wake re-prepares its prompt, so a change
+needs no restart.
 `
 }
 
@@ -318,42 +319,10 @@ func groupCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 	}
 	defer store.Close()
 
-	metas, err := store.List()
+	group, ids, err := session.GroupFromNames(store, manifest.Name, manifest.Goal, manifest.Lead, manifest.Members, manifest.MaxMembers)
 	if err != nil {
-		log.Errorf("Error listing sessions: %v\n", err)
+		log.Errorf("Error: %v\n", err)
 		return 1
-	}
-	byName := make(map[string]session.Meta, len(metas))
-	for _, m := range metas {
-		byName[m.Name] = m
-	}
-	ids := make([]string, 0, len(manifest.Members))
-	for _, name := range manifest.Members {
-		meta, exists := byName[name]
-		if !exists {
-			log.Errorf("Error: %q is not a session; create it with `pai service create %s --file ...` first\n", name, name)
-			return 1
-		}
-		if meta.Mode != session.ModeService {
-			log.Errorf("Error: %q is a chat session; a group member must be a service session\n", name)
-			return 1
-		}
-		ids = append(ids, meta.ID)
-	}
-	leadID := ""
-	if manifest.Lead != "" {
-		lead, exists := byName[manifest.Lead]
-		if !exists {
-			log.Errorf("Error: the lead %q is not a session\n", manifest.Lead)
-			return 1
-		}
-		leadID = lead.ID
-	}
-	group := core.Group{
-		Name:       manifest.Name,
-		Goal:       manifest.Goal,
-		LeadID:     leadID,
-		MaxMembers: manifest.MaxMembers,
 	}
 	if err := gs.CreateGroup(group, ids); err != nil {
 		log.Errorf("Error creating group: %v\n", err)

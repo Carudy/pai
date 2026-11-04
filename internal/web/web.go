@@ -514,25 +514,79 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		respond(w, 200, snapshot)
 	case "/api/group":
-		if !method(w, r, http.MethodGet) {
-			return
-		}
-		name := r.URL.Query().Get("name")
-		if name == "" {
-			groups, err := h.manager.Groups()
+		switch r.Method {
+		case http.MethodGet:
+			name := r.URL.Query().Get("name")
+			if name == "" {
+				groups, err := h.manager.Groups()
+				if err != nil {
+					managerError(w, err)
+					return
+				}
+				respond(w, 200, map[string]any{"groups": groups})
+				return
+			}
+			view, err := h.manager.GroupView(name)
 			if err != nil {
 				managerError(w, err)
 				return
 			}
-			respond(w, 200, map[string]any{"groups": groups})
-			return
+			respond(w, 200, view)
+		case http.MethodPost:
+			var body struct {
+				Action     string   `json:"action"`
+				Name       string   `json:"name"`
+				Goal       string   `json:"goal"`
+				Lead       string   `json:"lead"`
+				Members    []string `json:"members"`
+				MaxMembers int      `json:"max_members"`
+				Session    string   `json:"session"`
+			}
+			if !decode(w, r, &body) {
+				return
+			}
+			if strings.TrimSpace(body.Name) == "" || len(body.Name) > 256 {
+				fail(w, 400, "group name must contain 1–256 bytes")
+				return
+			}
+			switch body.Action {
+			case "create":
+				view, err := h.manager.CreateGroup(body.Name, body.Goal, body.Lead, body.Members, body.MaxMembers)
+				if err != nil {
+					managerError(w, err)
+					return
+				}
+				respond(w, 201, view)
+			case "add", "remove":
+				if strings.TrimSpace(body.Session) == "" {
+					fail(w, 400, "session is required")
+					return
+				}
+				var view runner.GroupView
+				var err error
+				if body.Action == "add" {
+					view, err = h.manager.AddGroupMember(body.Name, body.Session)
+				} else {
+					view, err = h.manager.RemoveGroupMember(body.Name, body.Session)
+				}
+				if err != nil {
+					managerError(w, err)
+					return
+				}
+				respond(w, 200, view)
+			case "delete":
+				if err := h.manager.DeleteGroup(body.Name); err != nil {
+					managerError(w, err)
+					return
+				}
+				respond(w, 200, map[string]bool{"ok": true})
+			default:
+				fail(w, 400, "action must be create, add, remove, or delete")
+			}
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			fail(w, 405, "method not allowed")
 		}
-		view, err := h.manager.GroupView(name)
-		if err != nil {
-			managerError(w, err)
-			return
-		}
-		respond(w, 200, view)
 	case "/api/service":
 		switch r.Method {
 		case http.MethodGet:

@@ -37,6 +37,116 @@ func (m *Manager) Groups() ([]core.Group, error) {
 	return groups.Groups()
 }
 
+// CreateGroup writes a group from session names and returns the resulting view.
+//
+// Group membership is part of a resident worker's frozen prompt head (roster,
+// shared goal, and the group tools), so every member's worker is marked for
+// re-preparation: the next activation rebuilds its head from the directory
+// instead of serving a stale one. That is why this can run while the server is
+// up, which is the whole point of creating a group from the browser.
+func (m *Manager) CreateGroup(name, goal, lead string, members []string, maxMembers int) (GroupView, error) {
+	admin, ok := m.backend.(GroupAdminBackend)
+	if !ok {
+		return GroupView{}, errors.New("this host cannot create groups")
+	}
+	if err := admin.CreateGroup(name, goal, lead, members, maxMembers); err != nil {
+		return GroupView{}, err
+	}
+	m.diag(Diagnostic{Session: name, Kind: "group", Outcome: "created",
+		Detail: fmt.Sprintf("%d member(s)", len(members))})
+	m.reloadGroupMembers(name)
+	return m.GroupView(name)
+}
+
+// AddGroupMember adds one session and refreshes every member's prompt head: the
+// roster is shared, so an addition changes what each of them reads.
+func (m *Manager) AddGroupMember(group, session string) (GroupView, error) {
+	admin, ok := m.backend.(GroupAdminBackend)
+	if !ok {
+		return GroupView{}, errors.New("this host cannot edit groups")
+	}
+	if err := admin.AddGroupMember(group, session); err != nil {
+		return GroupView{}, err
+	}
+	m.diag(Diagnostic{Session: group, Kind: "group", Subject: session, Outcome: "joined"})
+	m.reloadGroupMembers(group)
+	return m.GroupView(group)
+}
+
+// RemoveGroupMember removes one membership. The lead is refused by the store,
+// which keeps the group addressable.
+func (m *Manager) RemoveGroupMember(group, session string) (GroupView, error) {
+	admin, ok := m.backend.(GroupAdminBackend)
+	if !ok {
+		return GroupView{}, errors.New("this host cannot edit groups")
+	}
+	if err := admin.RemoveGroupMember(group, session); err != nil {
+		return GroupView{}, err
+	}
+	m.diag(Diagnostic{Session: group, Kind: "group", Subject: session, Outcome: "left"})
+	m.reloadGroupMembers(group)
+	return m.GroupView(group)
+}
+
+// DeleteGroup removes the directory. The sessions keep running, but each one's
+// next wake re-prepares without a roster or the group tools, so a deleted group
+// does not linger in anybody's prompt.
+func (m *Manager) DeleteGroup(name string) error {
+	admin, ok := m.backend.(GroupAdminBackend)
+	if !ok {
+		return errors.New("this host cannot delete groups")
+	}
+	members := m.groupMemberNames(name)
+	if err := admin.DeleteGroup(name); err != nil {
+		return err
+	}
+	m.diag(Diagnostic{Session: name, Kind: "group", Outcome: "deleted"})
+	for _, member := range members {
+		m.markGroupDirty(member)
+	}
+	return nil
+}
+
+// groupMemberNames reads the roster before a delete, when the rows still exist.
+func (m *Manager) groupMemberNames(name string) []string {
+	groups, ok := m.backend.(GroupBackend)
+	if !ok {
+		return nil
+	}
+	g, found, err := groups.GroupByName(name)
+	if err != nil || !found {
+		return nil
+	}
+	members, err := groups.GroupMembers(g.ID)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(members))
+	for _, mem := range members {
+		names = append(names, mem.Name)
+	}
+	return names
+}
+
+// reloadGroupMembers marks every current member for re-preparation.
+func (m *Manager) reloadGroupMembers(name string) {
+	for _, member := range m.groupMemberNames(name) {
+		m.markGroupDirty(member)
+	}
+}
+
+// markGroupDirty asks a resident worker to rebuild its prompt head. The flag is
+// consumed by Activate rather than acted on here: a worker that is mid-activation
+// or holding a pending confirmation cannot be retired without losing work, and
+// it must not be blocked from finishing either.
+func (m *Manager) markGroupDirty(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if w := m.entries[name]; w != nil && w.mode == ModeService {
+		w.groupDirty = true
+	}
+}
+
 // GroupView assembles a group, its roster with each member's persisted state,
 // and the board. It reads persisted state only, so it works with no live worker.
 func (m *Manager) GroupView(name string) (GroupView, error) {

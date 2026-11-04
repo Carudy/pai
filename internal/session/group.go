@@ -42,6 +42,43 @@ type GroupStore interface {
 
 var _ GroupStore = (*sqliteStore)(nil)
 
+// GroupFromNames resolves a group definition given by session names, which is how
+// an operator writes one, into the durable form and the member ids the store
+// needs. It is the single definition of "a member is a resident service": the
+// CLI manifest and the web form both go through it, so they cannot disagree about
+// which sessions may join. The lead, when set, is resolved the same way and its
+// membership is left to CreateGroup to check.
+func GroupFromNames(store Store, name, goal, lead string, members []string, maxMembers int) (core.Group, []string, error) {
+	metas, err := store.List()
+	if err != nil {
+		return core.Group{}, nil, fmt.Errorf("list sessions: %w", err)
+	}
+	byName := make(map[string]Meta, len(metas))
+	for _, m := range metas {
+		byName[m.Name] = m
+	}
+	ids := make([]string, 0, len(members))
+	for _, member := range members {
+		meta, exists := byName[member]
+		if !exists {
+			return core.Group{}, nil, fmt.Errorf("%q is not a session; create it first", member)
+		}
+		if meta.Mode != ModeService {
+			return core.Group{}, nil, fmt.Errorf("%q is a chat session; a group member must be a service session", member)
+		}
+		ids = append(ids, meta.ID)
+	}
+	leadID := ""
+	if lead != "" {
+		meta, exists := byName[lead]
+		if !exists {
+			return core.Group{}, nil, fmt.Errorf("the lead %q is not a session", lead)
+		}
+		leadID = meta.ID
+	}
+	return core.Group{Name: name, Goal: goal, LeadID: leadID, MaxMembers: maxMembers}, ids, nil
+}
+
 // CreateGroup writes the group and its members in one transaction, so a partial
 // membership can never be visible to a mail delivery.
 func (s *sqliteStore) CreateGroup(g core.Group, memberIDs []string) error {

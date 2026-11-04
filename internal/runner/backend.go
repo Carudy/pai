@@ -236,6 +236,24 @@ type GroupBackend interface {
 	Groups() ([]core.Group, error)
 }
 
+// GroupAdminBackend is the write side of the directory. It takes session names
+// because that is what an operator types or picks; the adapter resolves them
+// against the store, which is also where "a member is a resident service" can be
+// enforced. It is separate from GroupBackend so a backend that only reads groups
+// (an older build, a test double) keeps working unchanged.
+type GroupAdminBackend interface {
+	// CreateGroup writes the directory rows. The lead, when set, must be one of the
+	// members, and the member count may not exceed maxMembers.
+	CreateGroup(name, goal, lead string, members []string, maxMembers int) error
+	// AddGroupMember adds one existing service session. A session already in the
+	// same group is a no-op; one in another group is refused.
+	AddGroupMember(group, session string) error
+	// RemoveGroupMember removes one membership. The lead cannot be removed.
+	RemoveGroupMember(group, session string) error
+	// DeleteGroup removes the directory rows and the board; member sessions stay.
+	DeleteGroup(name string) error
+}
+
 // TaskBackend is the optional group board. A backend without it runs groups
 // without a board: the task tools report that this host has none, and delivery
 // and prompts are unaffected.

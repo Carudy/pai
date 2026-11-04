@@ -812,6 +812,14 @@ pai group show hydro
 pai group add hydro meteo-ops
 ```
 
+The browser edits the same directory: **＋** beside the sidebar's Groups heading
+opens a form over your resident services (name, shared goal, optional lead,
+members), and the open group's panel can add or remove a member and delete the
+group. A write made while `pai serve` runs takes effect at each member's next
+wake — the host rebuilds that worker's prompt head from the directory — so
+neither surface needs a restart. Writing from the terminal still needs the store
+lock, since it opens the database directly.
+
 Mail never crosses a group edge, and a session outside every group may only mail
 another ungrouped one — so a group is a real boundary rather than a label.
 `group:<name>` broadcasts to every other member: one message, N copies (the
@@ -847,14 +855,15 @@ read, and a stale write is refused with the current version — the board never
 silently merges two members' edits. When a task stays blocked for 30 minutes, or
 loses its owner, the host tells the group's lead once (if a lead is set).
 
-Groups are managed from the CLI. Writes (`create`, `add`, `rm-member`, `rm`,
-`start`, `stop`) need the store to be unlocked, so stop `pai serve` first. Reads
-(`pai group ls/show`, `pai session ls/show`, `pai service ls/show`) fall back to
-the running server, so you can inspect the roster and board while it runs; they
-resolve the server exactly as `pai conn` does (`conn.url`/`conn.token`, or
-`PAI_SERVE_URL`/`PAI_SERVE_TOKEN`). The browser has the same view: a **Groups**
-section in the sidebar opens a read-only panel with the shared goal, the roster,
-and the board.
+Groups are managed from the CLI or the browser. Terminal writes (`create`,
+`add`, `rm-member`, `rm`, `start`, `stop`) need the store to be unlocked, so stop
+`pai serve` first; the browser writes the same directory through the server, so it
+works while PAI is running. Reads (`pai group ls/show`, `pai session ls/show`,
+`pai service ls/show`) fall back to the running server, so you can inspect the
+roster and board while it runs; they resolve the server exactly as `pai conn`
+does (`conn.url`/`conn.token`, or `PAI_SERVE_URL`/`PAI_SERVE_TOKEN`). In the
+browser, a **Groups** section in the sidebar lists the directory, **＋** creates
+one, and the open panel edits membership and deletes the group.
 
 The service panel's **Queue** section is where a chain is read: every queued
 mail and probe event shows the host-assigned trace and its hop count, and

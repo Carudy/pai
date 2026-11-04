@@ -50,10 +50,15 @@ type worker struct {
 	// Service mode. mode is "" for chat; a service worker keeps the runtime
 	// alive across wakes and blocks in RunService. inbox is the worker side of
 	// the scheduler; activation carries the end of one wake back to Activate.
-	mode       string
-	sessionID  string
-	inbox      *ServiceInbox
-	parked     bool // waiting for a human answer; suppress the report heartbeat
+	mode      string
+	sessionID string
+	inbox     *ServiceInbox
+	parked    bool // waiting for a human answer; suppress the report heartbeat
+	// groupDirty asks Activate to retire this worker so its next preparation
+	// rebuilds the frozen prompt head (roster, shared goal, group tools). A group
+	// write sets it; only Activate consumes it, because that is the one point where
+	// the worker is known to be between activations.
+	groupDirty bool
 	ready      chan struct{}
 	readyErr   error
 	activation chan serviceResult

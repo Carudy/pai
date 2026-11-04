@@ -44,6 +44,7 @@ var _ runner.ServiceStateBackend = (*serveBackend)(nil)
 var _ runner.ServiceBackend = (*serveBackend)(nil)
 var _ runner.ServiceCreator = (*serveBackend)(nil)
 var _ runner.GroupBackend = (*serveBackend)(nil)
+var _ runner.GroupAdminBackend = (*serveBackend)(nil)
 var _ runner.TaskBackend = (*serveBackend)(nil)
 
 func (b *serveBackend) serviceStore() (session.ServiceStore, error) {
@@ -100,6 +101,78 @@ func (b *serveBackend) Groups() ([]core.Group, error) {
 		return nil, err
 	}
 	return store.Groups()
+}
+
+// The write half of the directory. Names are resolved here rather than in the
+// runner, so the "a member is a service session" rule lives in one place
+// (`session.GroupFromNames`) and the CLI manifest and the web form share it.
+func (b *serveBackend) CreateGroup(name, goal, lead string, members []string, maxMembers int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return err
+	}
+	group, ids, err := session.GroupFromNames(b.store, name, goal, lead, members, maxMembers)
+	if err != nil {
+		return err
+	}
+	return store.CreateGroup(group, ids)
+}
+
+func (b *serveBackend) AddGroupMember(group, name string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return err
+	}
+	g, found, err := store.GroupByName(group)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("group %q does not exist", group)
+	}
+	meta, err := b.store.Get(name)
+	if err != nil {
+		return fmt.Errorf("%q is not a session: %w", name, err)
+	}
+	if meta.Meta.Mode != session.ModeService {
+		return fmt.Errorf("%q is a chat session; a group member must be a service session", name)
+	}
+	return store.AddGroupMember(g.ID, meta.Meta.ID)
+}
+
+func (b *serveBackend) RemoveGroupMember(group, name string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return err
+	}
+	g, found, err := store.GroupByName(group)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("group %q does not exist", group)
+	}
+	meta, err := b.store.Get(name)
+	if err != nil {
+		return fmt.Errorf("%q is not a session: %w", name, err)
+	}
+	return store.RemoveGroupMember(g.ID, meta.Meta.ID)
+}
+
+func (b *serveBackend) DeleteGroup(name string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	store, err := b.groupStore()
+	if err != nil {
+		return err
+	}
+	return store.DeleteGroup(name)
 }
 
 func (b *serveBackend) taskStore() (session.TaskStore, error) {

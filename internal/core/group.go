@@ -9,15 +9,17 @@ package core
 // shared goal, rendered into each member's prompt head. MaxMembers bounds the
 // roster, which is also what keeps that injected block small.
 type Group struct {
-	ID         string
-	Name       string
-	Goal       string
-	LeadID     string
-	LeadName   string // resolved for display; empty when the lead row is gone
-	MaxMembers int
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Goal string `json:"goal,omitempty"`
+	// LeadID is the escalation address, resolved to LeadName for display so a
+	// client needs no second lookup.
+	LeadID     string `json:"lead_id,omitempty"`
+	LeadName   string `json:"lead_name,omitempty"` // empty when the lead row is gone
+	MaxMembers int    `json:"max_members"`
 	// Members is the roster size, populated by read queries so a listing does not
 	// need one query per group.
-	Members int
+	Members int `json:"members"`
 }
 
 // GroupMember is one session's membership. Name is the session's display name,

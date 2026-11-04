@@ -2813,7 +2813,7 @@ function paintGroupList(groups) {
     row.append(text('span', (g.members || 0) + '/' + (g.max_members || 0), 'session-state'));
     nav.append(row);
   }
-  $('groups-status').textContent = groups.length ? '' : 'No groups. Create one with `pai group create --file …`.';
+  $('groups-status').textContent = groups.length ? '' : 'No groups yet. Use ＋ above to make one from your resident services.';
   $('groups-status').hidden = groups.length > 0;
 }
 
@@ -2831,7 +2831,12 @@ async function openGroup(name) {
     row.classList.toggle('selected', active);
   }
   try {
-    const view = await api('group?name=' + encodeURIComponent(name));
+    // The roster picker needs the service list; both reads are independent, so
+    // they share one round trip rather than delaying the panel on the second.
+    const [view] = await Promise.all([
+      api('group?name=' + encodeURIComponent(name)),
+      loadGroupServices(),
+    ]);
     if (request !== groupRequest) return;
     groupView = view;
     paintGroup();
@@ -2867,6 +2872,7 @@ function paintGroup() {
     $('group-goal').hidden = true;
     $('group-members').replaceChildren();
     $('group-board').replaceChildren();
+    $('group-add').hidden = true;
     return;
   }
   const g = view.group || {};
@@ -2874,7 +2880,25 @@ function paintGroup() {
   $('group-goal').textContent = g.goal || '';
   $('group-goal').hidden = !g.goal;
   paintGroupMembers(view.members || []);
+  paintGroupAdd(view.members || []);
   paintGroupBoard(view.tasks || []);
+}
+
+// The add-member control offers only resident services that are not already here.
+// The list is loaded separately from the view (one extra read), so a failure to
+// list sessions hides the control rather than breaking the panel.
+function paintGroupAdd(members) {
+  const select = $('group-new-member');
+  select.replaceChildren();
+  const present = members.map(m => m.name);
+  const candidates = groupServices.filter(name => !present.includes(name));
+  for (const name of candidates) {
+    const option = text('option', name);
+    option.value = name;
+    select.append(option);
+  }
+  $('group-add').hidden = !candidates.length;
+  $('group-add-member').disabled = !candidates.length;
 }
 
 function paintGroupMembers(members) {
@@ -2882,7 +2906,7 @@ function paintGroupMembers(members) {
   box.replaceChildren();
   if (!members.length) { box.append(text('p', 'No members.', 'muted')); return; }
   const head = text('div', '', 'group-row-head');
-  for (const label of ['Member', 'Role', 'State', 'Next wake']) head.append(text('span', label));
+  for (const label of ['Member', 'Role', 'State', 'Next wake', '']) head.append(text('span', label));
   box.append(head);
   for (const m of members) {
     const row = text('div', '', 'group-member');
@@ -2890,6 +2914,14 @@ function paintGroupMembers(members) {
     row.append(text('span', m.role || '—', 'group-member-meta'));
     row.append(text('span', serviceStateLabel(m.state || 'stored'), 'session-state'));
     row.append(text('span', m.next_wake ? formatWakeShort(m.next_wake) : '—', 'group-member-meta'));
+    // The lead is the group's escalation address, so the store refuses to remove
+    // it; say so on the control instead of letting the click fail.
+    const remove = text('button', '✕', 'group-member-remove');
+    remove.type = 'button';
+    remove.disabled = !!m.lead;
+    remove.title = m.lead ? 'The lead cannot be removed; delete the group or make another member the lead' : 'Remove ' + m.name + ' from this group';
+    remove.onclick = () => removeGroupMember(groupName, m.name).catch(error);
+    row.append(remove);
     box.append(row);
   }
 }
@@ -2913,6 +2945,125 @@ function paintGroupBoard(tasks) {
     row.append(text('span', 'v' + t.version, 'task-meta'));
     box.append(row);
   }
+}
+
+// ── Group writes ────────────────────────────────────────────
+// The browser writes the same directory `pai group` does. A write is applied to a
+// member's prompt at its next wake (the host re-prepares a worker whose
+// membership changed), so none of this needs the store lock or a restart.
+let groupBusy = false;
+let groupServices = [];
+
+async function loadGroupServices() {
+  try {
+    const page = await api('sessions?offset=0&limit=100&mode=service');
+    groupServices = (page.sessions || []).map(m => m.name);
+  } catch (_) { groupServices = []; }
+  return groupServices;
+}
+
+async function openGroupCreate() {
+  $('group-create-panel').hidden = false;
+  $('group-new-name').focus();
+  const services = await loadGroupServices();
+  paintGroupCreateMembers(services);
+  paintGroupCreateLeads([]);
+}
+
+function closeGroupCreate() { $('group-create-panel').hidden = true; }
+
+// The picker is rebuilt from the service list each time the dialog opens, so a
+// session created a minute ago is already selectable.
+function paintGroupCreateMembers(services) {
+  const box = $('group-new-members');
+  box.replaceChildren();
+  $('group-new-members-hint').textContent = services.length ? services.length + ' resident service(s)' : '';
+  if (!services.length) {
+    box.append(text('p', 'No resident services on this host yet. A group is made of services, so create one first.', 'muted'));
+    return;
+  }
+  for (const name of services) {
+    const label = text('label', '', 'check');
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = name;
+    // The lead must also be a member, so the lead choices follow the ticks.
+    input.onchange = () => paintGroupCreateLeads(groupCreateMembers());
+    label.append(input, text('span', name));
+    box.append(label);
+  }
+}
+
+function groupCreateMembers() {
+  const names = [];
+  for (const label of $('group-new-members').children) {
+    const input = label.firstElementChild;
+    if (input && input.type === 'checkbox' && input.checked) names.push(input.value);
+  }
+  return names;
+}
+
+function paintGroupCreateLeads(members) {
+  const select = $('group-new-lead');
+  const previous = select.value;
+  select.replaceChildren();
+  const none = text('option', 'No lead');
+  none.value = '';
+  select.append(none);
+  for (const name of members) {
+    const option = text('option', name);
+    option.value = name;
+    select.append(option);
+  }
+  select.value = members.includes(previous) ? previous : '';
+}
+
+async function createGroup(e) {
+  e.preventDefault();
+  if (groupBusy) return;
+  const name = $('group-new-name').value.trim();
+  const members = groupCreateMembers();
+  if (!name) { error(new Error('Enter a group name')); return; }
+  if (!members.length) { error(new Error('Pick at least one member')); return; }
+  const body = {action:'create', name, goal:$('group-new-goal').value.trim(), lead:$('group-new-lead').value, members};
+  const max = parseInt($('group-new-max').value, 10);
+  if (max > 0) body.max_members = max;
+  groupBusy = true;
+  $('create-group').disabled = true;
+  try {
+    await api('group', body);
+    closeGroupCreate();
+    await loadGroups().catch(() => {});
+    await openGroup(name);
+    toast('created group ' + name);
+  } catch (err) { error(err); }
+  finally { groupBusy = false; $('create-group').disabled = false; }
+}
+
+async function addGroupMember() {
+  const member = $('group-new-member').value;
+  if (!groupName || !member) return;
+  const view = await api('group', {action:'add', name:groupName, session:member});
+  groupView = view;
+  paintGroup();
+  await loadGroups().catch(() => {});
+}
+
+async function removeGroupMember(group, member) {
+  if (!group || !member) return;
+  const view = await api('group', {action:'remove', name:group, session:member});
+  if (group === groupName) { groupView = view; paintGroup(); }
+  await loadGroups().catch(() => {});
+}
+
+async function deleteGroup() {
+  if (!groupName) return;
+  const name = groupName;
+  if (!confirm('Delete group "' + name + '"? Its member sessions and transcripts are kept.')) return;
+  await api('group', {action:'delete', name});
+  closeGroup();
+  await loadGroups().catch(() => {});
+  toast('deleted group ' + name);
 }
 
 // ── Event wiring ────────────────────────────────────────────
@@ -2961,6 +3112,11 @@ $('toggle-sessions-list').onclick = () => applySessionsCollapsed(!sessionsCollap
 $('toggle-groups-list').onclick = () => applyGroupsCollapsed(!groupsCollapsed());
 $('refresh-group').onclick = () => { if (groupName) openGroup(groupName).catch(error); };
 $('close-group').onclick = () => closeGroup();
+$('open-group-create').onclick = () => { openGroupCreate().catch(error); };
+$('close-group-create').onclick = closeGroupCreate;
+$('new-group').onsubmit = createGroup;
+$('group-add-member').onclick = () => { addGroupMember().catch(error); };
+$('delete-group').onclick = () => { deleteGroup().catch(error); };
 $('theme-toggle').onclick = toggleTheme;
 $('show-context').onchange = () => setContextOpen($('show-context').checked);
 $('context-close').onclick = () => setContextOpen(false);

@@ -1713,6 +1713,14 @@ func TestGroupViewAPI(t *testing.T) {
 	if len(view.Tasks) != 1 || view.Tasks[0].Title != "check the gate" {
 		t.Fatalf("board = %+v", view.Tasks)
 	}
+	// The browser reads snake_case keys. core.Group and core.Task carry JSON tags
+	// for exactly this reason: without them the panel bound undefined and rendered
+	// every name and goal as "undefined" while the API looked healthy.
+	for _, key := range []string{`"lead_name"`, `"max_members"`, `"members"`, `"title"`, `"status"`, `"version"`} {
+		if !strings.Contains(w.Body.String(), key) {
+			t.Fatalf("group view is missing %s: %s", key, w.Body.String())
+		}
+	}
 
 	if w := request(h, http.MethodGet, "/api/group?name=nope", "", nil, ""); w.Code != http.StatusNotFound {
 		t.Fatalf("unknown group = %d, want 404", w.Code)
@@ -1886,5 +1894,148 @@ func TestServiceCreateAPI(t *testing.T) {
 	}
 	if w := request(h, http.MethodPost, "/api/service", `{"name":"river"}`, nil, "http://pai.test"); w.Code != http.StatusBadRequest {
 		t.Fatalf("missing manifest = %d, want 400", w.Code)
+	}
+}
+
+// groupAdminAPI is a writable directory double: it keeps rows in memory, so the
+// POST path (write, then read the view back) is exercised the way the panel uses
+// it.
+type groupAdminAPI struct {
+	backend
+	groups  map[string]core.Group
+	members map[string][]core.GroupMember
+	// calls records one line per accepted write, so a test can tell which port
+	// method the endpoint used rather than just that something changed.
+	calls []string
+}
+
+func (b *groupAdminAPI) GroupByName(name string) (core.Group, bool, error) {
+	g, ok := b.groups[name]
+	return g, ok, nil
+}
+
+func (b *groupAdminAPI) GroupBySession(id string) (core.Group, bool, error) {
+	for name, list := range b.members {
+		for _, m := range list {
+			if m.SessionID == id {
+				return b.groups[name], true, nil
+			}
+		}
+	}
+	return core.Group{}, false, nil
+}
+
+func (b *groupAdminAPI) Groups() ([]core.Group, error) {
+	out := make([]core.Group, 0, len(b.groups))
+	for _, g := range b.groups {
+		out = append(out, g)
+	}
+	return out, nil
+}
+
+func (b *groupAdminAPI) GroupMembers(groupID string) ([]core.GroupMember, error) {
+	for name, list := range b.members {
+		if b.groups[name].ID == groupID {
+			return list, nil
+		}
+	}
+	return nil, nil
+}
+
+func (b *groupAdminAPI) CreateGroup(name, goal, lead string, members []string, maxMembers int) error {
+	g := core.Group{ID: "g-" + name, Name: name, Goal: goal, LeadID: "id-" + lead, MaxMembers: maxMembers, Members: len(members)}
+	list := make([]core.GroupMember, 0, len(members))
+	for _, m := range members {
+		list = append(list, core.GroupMember{GroupID: g.ID, SessionID: "id-" + m, Name: m})
+	}
+	b.groups[name] = g
+	b.members[name] = list
+	b.calls = append(b.calls, "create "+name)
+	return nil
+}
+
+func (b *groupAdminAPI) AddGroupMember(group, session string) error {
+	g := b.groups[group]
+	b.members[group] = append(b.members[group], core.GroupMember{GroupID: g.ID, SessionID: "id-" + session, Name: session})
+	g.Members = len(b.members[group])
+	b.groups[group] = g
+	b.calls = append(b.calls, "add "+group+" "+session)
+	return nil
+}
+
+func (b *groupAdminAPI) RemoveGroupMember(group, session string) error {
+	kept := b.members[group][:0]
+	for _, m := range b.members[group] {
+		if m.Name != session {
+			kept = append(kept, m)
+		}
+	}
+	b.members[group] = kept
+	g := b.groups[group]
+	g.Members = len(kept)
+	b.groups[group] = g
+	b.calls = append(b.calls, "remove "+group+" "+session)
+	return nil
+}
+
+func (b *groupAdminAPI) DeleteGroup(name string) error {
+	delete(b.groups, name)
+	delete(b.members, name)
+	b.calls = append(b.calls, "delete "+name)
+	return nil
+}
+
+// Creating a group from the browser is one POST with an action; the response is
+// the same view GET returns, so the panel does not need a second round trip.
+func TestGroupCreateAPI(t *testing.T) {
+	b := &groupAdminAPI{groups: map[string]core.Group{}, members: map[string][]core.GroupMember{}}
+	m := runner.New(context.Background(), b, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+
+	body := `{"action":"create","name":"hydro","goal":"keep the gates safe","lead":"coord","members":["coord","hydro"],"max_members":4}`
+	w := request(h, http.MethodPost, "/api/group", body, nil, "http://pai.test")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var view runner.GroupView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Group.Name != "hydro" || view.Group.Goal != "keep the gates safe" || len(view.Members) != 2 {
+		t.Fatalf("view = %+v", view)
+	}
+	if len(b.calls) != 1 || b.calls[0] != "create hydro" {
+		t.Fatalf("calls = %v", b.calls)
+	}
+
+	// Membership is edited by the same endpoint, one action at a time.
+	if w := request(h, http.MethodPost, "/api/group", `{"action":"add","name":"hydro","session":"met"}`, nil, "http://pai.test"); w.Code != http.StatusOK {
+		t.Fatalf("add: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(h, http.MethodPost, "/api/group", `{"action":"remove","name":"hydro","session":"met"}`, nil, "http://pai.test"); w.Code != http.StatusOK {
+		t.Fatalf("remove: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(h, http.MethodPost, "/api/group", `{"action":"delete","name":"hydro"}`, nil, "http://pai.test"); w.Code != http.StatusOK {
+		t.Fatalf("delete: %d %s", w.Code, w.Body.String())
+	}
+	if _, found := b.groups["hydro"]; found {
+		t.Fatal("the group survived the delete")
+	}
+
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{`{"action":"create"}`, http.StatusBadRequest},
+		{`{"action":"add","name":"hydro"}`, http.StatusBadRequest},
+		{`{"action":"rename","name":"hydro"}`, http.StatusBadRequest},
+	} {
+		if w := request(h, http.MethodPost, "/api/group", tc.body, nil, "http://pai.test"); w.Code != tc.want {
+			t.Fatalf("%s = %d, want %d", tc.body, w.Code, tc.want)
+		}
+	}
+	if w := request(h, http.MethodPut, "/api/group", "", nil, "http://pai.test"); w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PUT = %d, want 405", w.Code)
 	}
 }

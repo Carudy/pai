@@ -67,6 +67,10 @@ See the [module map](../organization.md) for the storage adapter boundary.
   which references the immutable session id so a rename cannot move a session
   and deleting one drops its membership through the foreign key. A session is in
   at most one group, and a lead, when set, must be a member.
+- `GroupFromNames` turns a definition written by a person (member names, an
+  optional lead) into the ids the store needs, and is the only place the "a member
+  is a resident service" rule is stated. The CLI manifest and the web form both
+  call it, so the two surfaces cannot drift.
 - Membership reads are single indexed lookups, so nothing is scanned or
   backfilled at startup.
 - A group carries no scheduler state: it owns no wake counter and cannot pause a

@@ -1395,7 +1395,7 @@ async function verifyIdentity() {
   assert.equal(p.get('identity').hidden, true, 'an empty identity keeps the line hidden');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode(), verifyGroupPanel()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode(), verifyGroupPanel(), verifyGroupWrites()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
 
 // The sidebar has one list with a URL-backed mode filter, and a service shows the
 // durable view (state, last report, probes, manifest) above its transcript.
@@ -1584,4 +1584,57 @@ async function verifyGroupPanel() {
   assert.equal(p.get("group-panel").hidden, true, "closing restores the session view");
   assert.equal(p.get("conversation").hidden, false);
   assert.equal(p.get("composer-dock").hidden, false);
+}
+
+// The browser writes the same directory the CLI does: create from resident
+// services, add and remove a member, delete the group. Every write goes through
+// one endpoint with an action, and none of them needs the store lock.
+async function verifyGroupWrites() {
+  const p = browser();
+  p.run("globalThis.groupWrites=[]");
+  p.run("api = async (path, body) => {" +
+    " if (String(path).indexOf('sessions') === 0) return {sessions:[{name:'coord'},{name:'hydro'},{name:'met'}]};" +
+    " if (body) { groupWrites.push([path, body]); return {group:{name:body.name,members:2},members:[{name:'coord',lead:true},{name:'hydro'}],tasks:[]}; }" +
+    " return {group:{name:'hydro',goal:'',lead_name:'coord',members:2,max_members:8}," +
+    "   members:[{name:'coord',lead:true,role:'devops',state:'suspended'},{name:'hydro',role:'coder',state:'stopped'}],tasks:[]}; }");
+
+  await p.run('openGroupCreate()');
+  assert.equal(p.get('group-create-panel').hidden, false, 'the create dialog opens');
+  assert.equal(p.get('group-new-members').children.length, 3, 'one checkbox per resident service');
+  assert.equal(p.get('group-new-members-hint').textContent, '3 resident service(s)');
+  assert.equal(p.get('group-new-lead').children.length, 1, 'no lead is the only choice before a tick');
+  p.run("$('group-new-members').children[0].firstElementChild.checked=true; $('group-new-members').children[0].firstElementChild.onchange()");
+  assert.equal(p.get('group-new-lead').children.length, 2, 'a ticked member becomes a lead option');
+
+  p.run("$('group-new-name').value='hydro'; $('group-new-goal').value='keep the gates safe'; $('group-new-max').value='4'; $('group-new-lead').value='coord'");
+  await p.run('createGroup({preventDefault(){}})');
+  const created = p.run('groupWrites[0][1]');
+  assert.equal(created.action, 'create');
+  assert.deepEqual([...created.members], ['coord'], 'only ticked sessions are sent');
+  assert.equal(created.lead, 'coord');
+  assert.equal(created.max_members, 4);
+  assert.equal(p.get('group-create-panel').hidden, true, 'a successful create closes the dialog');
+  assert.equal(p.run('groupName'), 'hydro', 'the new group opens');
+
+  // The roster row action: the lead is inert, an ordinary member is removable.
+  assert.equal(p.get('group-members').children[1].children[4].disabled, true, 'the lead cannot be removed');
+  assert.equal(p.get('group-members').children[2].children[4].disabled, false, 'a member offers removal');
+
+  // Only services outside the group are offered for adding.
+  assert.equal(p.get('group-add').hidden, false);
+  assert.equal(p.get('group-new-member').children.length, 1, 'the one session not in the roster is offered');
+  assert.equal(p.get('group-new-member').children[0].textContent, 'met');
+  p.run("$('group-new-member').value='met'");
+  await p.run('addGroupMember()');
+  assert.equal(p.run('groupWrites[1][1].action'), 'add');
+  assert.equal(p.run('groupWrites[1][1].session'), 'met');
+
+  await p.run("removeGroupMember('hydro','hydro')");
+  assert.equal(p.run('groupWrites[2][1].action'), 'remove');
+  assert.equal(p.run('groupWrites[2][1].session'), 'hydro');
+
+  await p.run('deleteGroup()');
+  assert.equal(p.run('groupWrites[3][1].action'), 'delete');
+  assert.equal(p.get('group-panel').hidden, true, 'deleting closes the panel');
+  assert.equal(p.run('groupName'), '');
 }
