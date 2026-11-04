@@ -1121,7 +1121,7 @@ func TestAppDoesNotCallArrayMethodsOnChildren(t *testing.T) {
 func TestPageLayoutNesting(t *testing.T) {
 	h, _ := setup(t, "")
 	page := request(h, "GET", "/", "", nil, "").Body.String()
-	if !strings.Contains(page, `<div class="composer-dock">`) {
+	if !strings.Contains(page, `class="composer-dock"`) {
 		t.Fatal("missing composer container")
 	}
 	// Browser recovery of malformed container tags can move the activity panel
@@ -1642,6 +1642,95 @@ func (serviceViewBackend) ServiceView(name string) (runner.ServiceView, error) {
 			{ID: 7, Class: "peer", Priority: 60, Kind: "mail", Source: "session:alice", Payload: "check the gate", At: time.Now()},
 		},
 	}, nil
+}
+
+// The group view is readable while a server holds the store lock: it carries the
+// roster with each member's persisted state and the board, which /api/sessions
+// does not.
+type groupViewBackend struct{ backend }
+
+func (groupViewBackend) GroupByName(name string) (core.Group, bool, error) {
+	if name != "hydro" {
+		return core.Group{}, false, nil
+	}
+	return core.Group{ID: "g1", Name: "hydro", Goal: "keep the gates safe", LeadID: "c1", LeadName: "coord", MaxMembers: 8, Members: 2}, true, nil
+}
+
+func (groupViewBackend) GroupBySession(string) (core.Group, bool, error) {
+	return core.Group{ID: "g1", Name: "hydro", LeadID: "c1"}, true, nil
+}
+
+func (groupViewBackend) Groups() ([]core.Group, error) {
+	return []core.Group{{ID: "g1", Name: "hydro", LeadName: "coord", MaxMembers: 8, Members: 2}}, nil
+}
+
+func (groupViewBackend) GroupMembers(string) ([]core.GroupMember, error) {
+	return []core.GroupMember{
+		{GroupID: "g1", SessionID: "c1", Name: "coord"},
+		{GroupID: "g1", SessionID: "h1", Name: "hydro"},
+	}, nil
+}
+
+func (groupViewBackend) CreateTask(core.Task) (core.Task, error) { return core.Task{}, nil }
+func (groupViewBackend) Task(string) (core.Task, error)          { return core.Task{}, runner.ErrNotFound }
+func (groupViewBackend) Tasks(string, []core.TaskStatus, int) ([]core.Task, error) {
+	return []core.Task{{ID: "t1", GroupID: "g1", Title: "check the gate", Status: core.TaskOpen, Version: 1}}, nil
+}
+func (groupViewBackend) ClaimTask(string, string, time.Time, time.Duration) (core.Task, error) {
+	return core.Task{}, nil
+}
+func (groupViewBackend) UpdateTask(string, string, int, core.TaskStatus, string, bool, time.Time) (core.Task, error) {
+	return core.Task{}, nil
+}
+func (groupViewBackend) ExpireTasks(time.Time) ([]core.Task, error) { return nil, nil }
+func (groupViewBackend) OrphanTasksOwnedBy(string, time.Time) ([]core.Task, error) {
+	return nil, nil
+}
+func (groupViewBackend) DueEscalations(string, time.Time) ([]core.Task, error) { return nil, nil }
+func (groupViewBackend) MarkTaskEscalated(string, core.TaskStatus, time.Time) (bool, error) {
+	return false, nil
+}
+
+func TestGroupViewAPI(t *testing.T) {
+	m := runner.New(context.Background(), groupViewBackend{}, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+
+	w := request(h, http.MethodGet, "/api/group?name=hydro", "", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("group view: %d %s", w.Code, w.Body.String())
+	}
+	var view runner.GroupView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Group.Name != "hydro" || view.Group.Goal == "" || len(view.Members) != 2 {
+		t.Fatalf("view = %+v", view)
+	}
+	if !view.Members[0].Lead || view.Members[1].Lead {
+		t.Fatalf("lead flag = %+v", view.Members)
+	}
+	if len(view.Tasks) != 1 || view.Tasks[0].Title != "check the gate" {
+		t.Fatalf("board = %+v", view.Tasks)
+	}
+
+	if w := request(h, http.MethodGet, "/api/group?name=nope", "", nil, ""); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown group = %d, want 404", w.Code)
+	}
+
+	w = request(h, http.MethodGet, "/api/group", "", nil, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("group list: %d %s", w.Code, w.Body.String())
+	}
+	var listed struct {
+		Groups []core.Group `json:"groups"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Groups) != 1 || listed.Groups[0].Name != "hydro" {
+		t.Fatalf("groups = %+v", listed.Groups)
+	}
 }
 
 // The service view is readable while a server holds the store lock: it carries

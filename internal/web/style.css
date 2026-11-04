@@ -2588,6 +2588,118 @@ header p {
     font-size: 12px;
 }
 
+/* ── Group inspector ────────────────────────────────────── */
+/* A read-only view of a group: it covers the conversation while open and
+   changes no URL state, so closing it returns to the selected session. */
+#group-panel {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 10px;
+    margin: 10px 14px 0;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--panel);
+    overflow: auto;
+}
+
+#group-panel[hidden] {
+    display: none;
+}
+
+#group-panel summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.group-name {
+    font-weight: 600;
+}
+
+.group-goal {
+    margin: 0;
+    color: var(--muted);
+}
+
+.group-goal[hidden] {
+    display: none;
+}
+
+.group-row-head,
+.group-member {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto 16ch;
+    gap: 10px;
+    align-items: baseline;
+    padding: 5px 0;
+    border-top: 1px solid var(--border);
+}
+
+.group-row-head,
+.task-head {
+    border-top: none;
+    color: var(--muted);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.group-member-name,
+.task-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.group-member-meta,
+.task-meta {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.task-head,
+.task-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 11ch 14ch 5ch;
+    gap: 10px;
+    align-items: baseline;
+    padding: 5px 0;
+    border-top: 1px solid var(--border);
+}
+
+.task-status {
+    justify-self: start;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--soft);
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.task-status[data-status="claimed"] {
+    background: var(--link-bg);
+    color: var(--link-ink);
+}
+
+.task-status[data-status="done"] {
+    background: var(--complete-bg);
+    color: var(--green);
+}
+
+.task-status[data-status="blocked"] {
+    color: var(--red);
+}
+
+.task-status[data-status="orphaned"] {
+    border: 1px dashed var(--border);
+}
+
+.task-status[data-status="cancelled"] {
+    text-decoration: line-through;
+}
+
 .service-watchers {
     overflow-x: auto;
 }

@@ -843,7 +843,9 @@ Groups are managed from the CLI. Writes (`create`, `add`, `rm-member`, `rm`,
 (`pai group ls/show`, `pai session ls/show`, `pai service ls/show`) fall back to
 the running server, so you can inspect the roster and board while it runs; they
 resolve the server exactly as `pai conn` does (`conn.url`/`conn.token`, or
-`PAI_SERVE_URL`/`PAI_SERVE_TOKEN`).
+`PAI_SERVE_URL`/`PAI_SERVE_TOKEN`). The browser has the same view: a **Groups**
+section in the sidebar opens a read-only panel with the shared goal, the roster,
+and the board.
 
 ## 🌐 Browser / server mode
 

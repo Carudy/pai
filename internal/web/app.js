@@ -457,7 +457,7 @@ function notify(message) {
 }
 function error(e) { notify(e.message || String(e)); }
 function toast(message) { notify(message); }
-function showApp() { $('login').hidden = true; $('app').hidden = false; connectDiagnostics(); }
+function showApp() { $('login').hidden = true; $('app').hidden = false; connectDiagnostics(); applyGroupsCollapsed(storedGroupsCollapsed()); loadGroups().catch(() => {}); }
 function loginNeeded() { $('login').hidden = false; $('app').hidden = true; disconnect(); disconnectDiagnostics(); }
 // The workspace shell starts hidden (see index.html), so a signed-out load never
 // flashes it before the first request is answered. A 401 needs the login form; any
@@ -2234,6 +2234,7 @@ function jumpContextBottom() {
 }
 // ── Session actions ─────────────────────────────────────────
 async function select(name, cwd, replaceURL = false) {
+  if (groupName) closeGroup();
   disconnect(); generation++; const version = generation; selected = name; selectedMode = ''; historyOffset = 0; sessionBusy = false;
   setSessionURL(name, replaceURL);
   clearReasoning(); contextEstimate = null; usageSnapshot({}); liveModel = ''; modelDirty = false; roleDirty = false; cwdDirty = false; reasoningDirty = false; modelBlocked = true; sessionMetadata();
@@ -2740,6 +2741,154 @@ async function createService(e) {
 function composerKey(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); if (!$('send').disabled) action('send'); }
 }
+// ── Groups ─────────────────────────────────────────────────
+// A group is a read-only inspector, not a session: it covers the conversation
+// while it is open and changes no URL state, so a reload returns to the selected
+// session. Membership and the board are edited from the CLI; this view is for
+// watching them while `pai serve` runs, which a bare `pai group show` cannot do.
+const GROUPS_COLLAPSED_KEY = 'pai.groupsCollapsed';
+let groupName = '', groupView = null, groupError = '', groupRequest = 0;
+
+function groupsCollapsed() { return !!$('groups-body').hidden; }
+function storedGroupsCollapsed() { try { return localStorage.getItem(GROUPS_COLLAPSED_KEY) === '1'; } catch (_) { return false; } }
+function applyGroupsCollapsed(collapsed) {
+  $('groups-body').hidden = collapsed;
+  const toggle = $('toggle-groups-list');
+  if (!toggle) return;
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-label', collapsed ? 'Expand group list' : 'Collapse group list');
+  try { localStorage.setItem(GROUPS_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch (_) {}
+}
+
+// The sidebar list is the directory: name and roster size. The detail view is
+// loaded on demand, so the list stays one request.
+async function loadGroups() {
+  try {
+    const page = await api('group');
+    paintGroupList(page.groups || []);
+  } catch (e) {
+    $('groups-status').textContent = e.status === 404 ? 'Groups unavailable on this server.' : 'Could not load groups.';
+  }
+}
+
+function paintGroupList(groups) {
+  const nav = $('groups');
+  nav.replaceChildren();
+  for (const g of groups) {
+    const row = text('div', '', 'session-row group-row');
+    row.dataset.name = g.name;
+    row.classList.toggle('selected', g.name === groupName);
+    row.title = g.goal || g.name;
+    const button = text('button', g.name, 'session-open');
+    button.type = 'button';
+    button.title = g.goal || g.name;
+    button.onclick = () => { openGroup(g.name).catch(error); };
+    row.append(button);
+    row.append(text('span', (g.members || 0) + '/' + (g.max_members || 0), 'session-state'));
+    nav.append(row);
+  }
+  $('groups-status').textContent = groups.length ? '' : 'No groups. Create one with `pai group create --file …`.';
+  $('groups-status').hidden = groups.length > 0;
+}
+
+async function openGroup(name) {
+  groupName = name;
+  groupError = '';
+  const request = ++groupRequest;
+  $('group-panel').hidden = false;
+  $('conversation').hidden = true;
+  const dock = $('composer-dock');
+  if (dock) dock.hidden = true;
+  paintGroup();
+  for (const row of $('groups').children) {
+    const active = row.dataset && row.dataset.name === name;
+    row.classList.toggle('selected', active);
+  }
+  try {
+    const view = await api('group?name=' + encodeURIComponent(name));
+    if (request !== groupRequest) return;
+    groupView = view;
+    paintGroup();
+  } catch (e) {
+    if (request !== groupRequest) return;
+    groupView = null;
+    groupError = e.message || 'Could not load this group';
+    paintGroup();
+  }
+}
+
+function closeGroup() {
+  groupName = '';
+  groupView = null;
+  groupError = '';
+  groupRequest++;
+  $('group-panel').hidden = true;
+  $('conversation').hidden = false;
+  const dock = $('composer-dock');
+  if (dock) dock.hidden = false;
+  for (const row of $('groups').children) row.classList.remove('selected');
+}
+
+function paintGroup() {
+  if (!groupName) { $('group-panel').hidden = true; return; }
+  $('group-name').textContent = groupName;
+  $('group-error').textContent = groupError || '';
+  $('group-error').hidden = !groupError;
+  const view = groupView;
+  if (!view) {
+    $('group-lead').textContent = '';
+    $('group-goal').textContent = '';
+    $('group-goal').hidden = true;
+    $('group-members').replaceChildren();
+    $('group-board').replaceChildren();
+    return;
+  }
+  const g = view.group || {};
+  $('group-lead').textContent = g.lead_name ? 'lead ' + g.lead_name : 'no lead';
+  $('group-goal').textContent = g.goal || '';
+  $('group-goal').hidden = !g.goal;
+  paintGroupMembers(view.members || []);
+  paintGroupBoard(view.tasks || []);
+}
+
+function paintGroupMembers(members) {
+  const box = $('group-members');
+  box.replaceChildren();
+  if (!members.length) { box.append(text('p', 'No members.', 'muted')); return; }
+  const head = text('div', '', 'group-row-head');
+  for (const label of ['Member', 'Role', 'State', 'Next wake']) head.append(text('span', label));
+  box.append(head);
+  for (const m of members) {
+    const row = text('div', '', 'group-member');
+    row.append(text('span', m.name + (m.lead ? ' (lead)' : ''), 'group-member-name'));
+    row.append(text('span', m.role || '—', 'group-member-meta'));
+    row.append(text('span', serviceStateLabel(m.state || 'stored'), 'session-state'));
+    row.append(text('span', m.next_wake ? formatWakeShort(m.next_wake) : '—', 'group-member-meta'));
+    box.append(row);
+  }
+}
+
+function paintGroupBoard(tasks) {
+  const box = $('group-board');
+  box.replaceChildren();
+  if (!tasks.length) { box.append(text('p', 'No tasks on the board.', 'muted')); return; }
+  const head = text('div', '', 'task-head');
+  for (const label of ['Task', 'Status', 'Owner', 'Version']) head.append(text('span', label));
+  box.append(head);
+  for (const t of tasks) {
+    const row = text('div', '', 'task-row');
+    const title = text('span', t.title || t.id, 'task-title');
+    title.title = t.detail || t.title || t.id;
+    row.append(title);
+    const status = text('span', t.status, 'task-status');
+    status.dataset.status = t.status;
+    row.append(status);
+    row.append(text('span', t.owner_name || '—', 'task-meta'));
+    row.append(text('span', 'v' + t.version, 'task-meta'));
+    box.append(row);
+  }
+}
+
 // ── Event wiring ────────────────────────────────────────────
 wireServiceEditor(serviceEditors.create);
 wireServiceEditor(serviceEditors.edit);
@@ -2783,6 +2932,9 @@ $('trust-all').onchange = () => setTrustAll($('trust-all').checked);
 $('trust-sudo').onchange = () => setCommandTrust('sudo', $('trust-sudo').checked);
 $('more-sessions').onclick = () => sessions().catch(error);
 $('toggle-sessions-list').onclick = () => applySessionsCollapsed(!sessionsCollapsed());
+$('toggle-groups-list').onclick = () => applyGroupsCollapsed(!groupsCollapsed());
+$('refresh-group').onclick = () => { if (groupName) openGroup(groupName).catch(error); };
+$('close-group').onclick = () => closeGroup();
 $('theme-toggle').onclick = toggleTheme;
 $('show-context').onchange = () => setContextOpen($('show-context').checked);
 $('context-close').onclick = () => setContextOpen(false);

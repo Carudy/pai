@@ -56,6 +56,24 @@
                     <nav id="sessions" aria-label="Sessions"></nav>
                     <button id="more-sessions" hidden>More sessions</button>
                 </div>
+                <hr class="response-divider" />
+                <div class="panel-head">
+                    <h2 id="groups-heading">Groups</h2>
+                    <button
+                        id="toggle-groups-list"
+                        type="button"
+                        aria-expanded="true"
+                        aria-controls="groups-body"
+                        aria-label="Collapse group list"
+                        title="Collapse or expand the group list"
+                    >
+                        <span class="chevron" aria-hidden="true">▾</span></button
+                    >
+                </div>
+                <div id="groups-body">
+                    <p id="groups-status" role="status">Loading groups…</p>
+                    <nav id="groups" aria-label="Groups"></nav>
+                </div>
             </aside>
             <main>
                 <header>
@@ -161,6 +179,21 @@
                         </header>
                         <div id="context-body"></div>
                     </section>
+                    <section id="group-panel" aria-label="Group" hidden>
+                        <div class="service-head">
+                            <span id="group-name" class="group-name"></span>
+                            <span id="group-lead" class="service-next"></span>
+                            <button id="refresh-group" type="button" title="Reload this group">↻</button>
+                            <button id="close-group" type="button" title="Close the group view">✕ Close</button>
+                        </div>
+                        <p id="group-error" class="service-error" hidden></p>
+                        <p id="group-goal" class="group-goal"></p>
+                        <div id="group-members" class="group-members"></div>
+                        <details id="group-board-box" open>
+                            <summary>Board</summary>
+                            <div id="group-board" class="group-board"></div>
+                        </details>
+                    </section>
                     <section id="service-panel" aria-label="Service" hidden>
                         <div class="service-head">
                             <button
@@ -211,7 +244,7 @@
                         aria-labelledby="pending-title"
                     ></section>
                 </div>
-                <div class="composer-dock">
+                <div class="composer-dock" id="composer-dock">
                     <form id="composer">
                         <div class="composer-row">
                             <div class="composer-trust">

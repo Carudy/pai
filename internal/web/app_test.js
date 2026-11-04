@@ -1395,7 +1395,7 @@ async function verifyIdentity() {
   assert.equal(p.get('identity').hidden, true, 'an empty identity keeps the line hidden');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode(), verifyGroupPanel()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
 
 // The sidebar has one list with a URL-backed mode filter, and a service shows the
 // durable view (state, last report, probes, manifest) above its transcript.
@@ -1537,4 +1537,36 @@ async function verifyServiceMode() {
   assert.equal(p.get('new-service').hidden, true);
   p.run('closeCreate()');
   assert.equal(p.get('create-panel').hidden, true);
+}
+
+// ── Groups ──────────────────────────────────────────────────
+// The group panel is a read-only inspector: opening it covers the conversation,
+// closing it restores the session view, and the board renders statuses.
+async function verifyGroupPanel() {
+  const p = browser();
+  p.run("globalThis.groupCalls = []");
+  p.run("api = async path => { globalThis.groupCalls.push(path); return {" +
+    "group:{name:'hydro',goal:'keep the gates safe',lead_name:'coord',members:2,max_members:8}," +
+    "members:[{name:'coord',lead:true,role:'devops',state:'suspended',next_wake:'2026-10-30T02:00:00Z'},{name:'hydro',role:'coder',state:'stopped'}]," +
+    "tasks:[{id:'t1',title:'check the gate',status:'open',owner_name:'',version:1},{id:'t2',title:'dive team',status:'blocked',owner_name:'coord',version:3}] }; }");
+  await p.run("openGroup('hydro')");
+  assert.equal(p.run("groupCalls[0]"), "group?name=hydro", "the detail is fetched by name");
+  assert.equal(p.get("group-panel").hidden, false, "the group panel opens");
+  assert.equal(p.get("conversation").hidden, true, "the conversation is covered");
+  assert.equal(p.get("composer-dock").hidden, true, "the composer is out of reach in a read-only view");
+  assert.match(p.get("group-name").textContent, /hydro/);
+  assert.match(p.get("group-lead").textContent, /lead coord/);
+  assert.match(p.get("group-goal").textContent, /keep the gates safe/);
+  const members = p.get("group-members").textContent;
+  assert.match(members, /coord \(lead\)/, "the lead is marked");
+  assert.match(members, /coder/, "roles are shown");
+  assert.match(members, /Stopped/, "states are shown");
+  const board = p.get("group-board").textContent;
+  assert.match(board, /check the gate/, "the board lists tasks");
+  assert.match(board, /blocked/, "task status is rendered");
+  assert.match(board, /v3/, "the version is visible so a writer knows what it read");
+  p.run("closeGroup()");
+  assert.equal(p.get("group-panel").hidden, true, "closing restores the session view");
+  assert.equal(p.get("conversation").hidden, false);
+  assert.equal(p.get("composer-dock").hidden, false);
 }

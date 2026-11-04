@@ -465,6 +465,15 @@ word (`Idle`, `Parked`, `Working`, `Stopped`), the next wake to the second, and
 service rows use the same vocabulary in two lines: name, then a state dot with the
 next wake.
 
+Below the session list, a **Groups** section lists the group directory (name and
+roster size, collapsed state remembered per browser). Opening a group covers the
+conversation with a read-only inspector: its shared goal, the roster with each
+member's role, state, next wake and lead marker, and the board (`title`, status,
+owner, version). It calls `GET /api/group?name=…`, changes no URL state, and a
+close button returns to the selected session, so a reload never lands on it. The
+composer is hidden while it is open — membership and the board are edited from
+the CLI, not here.
+
 Model, role, and reasoning are editable in the shared header while the service is
 idle — suspended, parked, or stopped — because the resident runtime is retired
 and the next wake re-prepares with the new setting. A role change also updates the
