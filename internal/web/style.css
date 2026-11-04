@@ -253,6 +253,19 @@ main > header h2 {
     background: var(--panel);
 }
 
+/* Both lists live in one scroll region: with a handful of sessions the sections
+   sit one after another instead of the list stretching and pushing Groups to the
+   floor, and with many of them the region scrolls rather than clipping. */
+#sidebar-lists {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 20px;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
 .brand h1 {
     font-size: 27px;
     font-weight: 800;
@@ -344,7 +357,7 @@ header p {
     accent-color: var(--accent);
 }
 
-#sessions-heading {
+.panel-head h2 {
     font-size: 15px;
     margin: 0;
 }
@@ -359,7 +372,7 @@ header p {
     margin-bottom: -10px;
 }
 
-#toggle-sessions-list {
+.panel-toggle {
     padding: 4px 10px;
     border: 0;
     background: none;
@@ -371,19 +384,19 @@ header p {
     transition: color 0.15s;
 }
 
-#toggle-sessions-list:hover {
+.panel-toggle:hover {
     color: var(--ink);
     background: none;
 }
 
 /* Rotate the glyph, not the padded button, so the hit area never overlaps the
    heading when the list is closed. */
-#toggle-sessions-list .chevron {
+.panel-toggle .chevron {
     display: inline-block;
     transition: transform 0.15s;
 }
 
-#toggle-sessions-list[aria-expanded='false'] .chevron {
+.panel-toggle[aria-expanded='false'] .chevron {
     transform: rotate(-90deg);
 }
 
@@ -391,11 +404,29 @@ header p {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    flex: 1;
-    min-height: 0;
 }
 
 #sessions-body[hidden] {
+    display: none;
+}
+
+#groups-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+#groups-body[hidden] {
+    display: none;
+}
+
+#groups-status {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+#groups-status:empty,
+#groups-status[hidden] {
     display: none;
 }
 
@@ -409,12 +440,9 @@ header p {
 }
 
 #sessions {
-    overflow: auto;
-    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    flex: 1;
 }
 
 .session-row {

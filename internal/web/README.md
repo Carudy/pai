@@ -466,7 +466,10 @@ service rows use the same vocabulary in two lines: name, then a state dot with t
 next wake.
 
 Below the session list, a **Groups** section lists the group directory (name and
-roster size, collapsed state remembered per browser). Opening a group covers the
+roster size, collapsed state remembered per browser). Both sections live in one
+scroll region and size to their content, so a short session list no longer
+stretches to fill the column and push Groups to the floor; when the combined
+list is longer than the sidebar, that region scrolls. Opening a group covers the
 conversation with a read-only inspector: its shared goal, the roster with each
 member's role, state, next wake and lead marker, and the board (`title`, status,
 owner, version). It calls `GET /api/group?name=…`, changes no URL state, and a

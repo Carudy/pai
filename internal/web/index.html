@@ -34,45 +34,49 @@
                 <hr class="response-divider">
                 <button id="open-create" class="primary new-session" type="button">+ New session</button>
                 <hr class="response-divider">
-                <div class="panel-head">
-                    <h2 id="sessions-heading">Session list</h2>
-                    <button
-                        id="toggle-sessions-list"
-                        type="button"
-                        aria-expanded="true"
-                        aria-controls="sessions-body"
-                        aria-label="Collapse session list"
-                        title="Collapse or expand the session list"
-                    >
-                        <span class="chevron" aria-hidden="true">▾</span></button
-                    >
-                </div>
-                <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Session mode">
-                    <button id="tab-chat" type="button" role="tab" aria-selected="true" aria-controls="sessions">Chat</button
-                    ><button id="tab-service" type="button" role="tab" aria-selected="false" aria-controls="sessions">Services</button>
-                </div>
-                <div id="sessions-body">
-                    <p id="sessions-status" role="status">Loading sessions…</p>
-                    <nav id="sessions" aria-label="Sessions"></nav>
-                    <button id="more-sessions" hidden>More sessions</button>
-                </div>
-                <hr class="response-divider" />
-                <div class="panel-head">
-                    <h2 id="groups-heading">Groups</h2>
-                    <button
-                        id="toggle-groups-list"
-                        type="button"
-                        aria-expanded="true"
-                        aria-controls="groups-body"
-                        aria-label="Collapse group list"
-                        title="Collapse or expand the group list"
-                    >
-                        <span class="chevron" aria-hidden="true">▾</span></button
-                    >
-                </div>
-                <div id="groups-body">
-                    <p id="groups-status" role="status">Loading groups…</p>
-                    <nav id="groups" aria-label="Groups"></nav>
+                <div id="sidebar-lists">
+                    <div class="panel-head">
+                        <h2 id="sessions-heading">Session list</h2>
+                        <button
+                            id="toggle-sessions-list"
+                            class="panel-toggle"
+                            type="button"
+                            aria-expanded="true"
+                            aria-controls="sessions-body"
+                            aria-label="Collapse session list"
+                            title="Collapse or expand the session list"
+                        >
+                            <span class="chevron" aria-hidden="true">▾</span></button
+                        >
+                    </div>
+                    <div id="session-tabs" class="session-tabs" role="tablist" aria-label="Session mode">
+                        <button id="tab-chat" type="button" role="tab" aria-selected="true" aria-controls="sessions">Chat</button
+                        ><button id="tab-service" type="button" role="tab" aria-selected="false" aria-controls="sessions">Services</button>
+                    </div>
+                    <div id="sessions-body">
+                        <p id="sessions-status" role="status">Loading sessions…</p>
+                        <nav id="sessions" aria-label="Sessions"></nav>
+                        <button id="more-sessions" hidden>More sessions</button>
+                    </div>
+                    <hr class="response-divider" />
+                    <div class="panel-head">
+                        <h2 id="groups-heading">Groups</h2>
+                        <button
+                            id="toggle-groups-list"
+                            class="panel-toggle"
+                            type="button"
+                            aria-expanded="true"
+                            aria-controls="groups-body"
+                            aria-label="Collapse group list"
+                            title="Collapse or expand the group list"
+                        >
+                            <span class="chevron" aria-hidden="true">▾</span></button
+                        >
+                    </div>
+                    <div id="groups-body">
+                        <p id="groups-status" role="status">Loading groups…</p>
+                        <nav id="groups" aria-label="Groups"></nav>
+                    </div>
                 </div>
             </aside>
             <main>
