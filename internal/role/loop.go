@@ -62,6 +62,9 @@ type Runtime struct {
 	Hops  int
 	// SessionName is the conversation's initial storage name ("" = ephemeral).
 	SessionName string
+	// GroupName is the group this session belongs to, when it has one. It is only
+	// used to label delivered mail ("in group X"); addressing never depends on it.
+	GroupName string
 
 	// TrustedCmds are command names trusted for this run only, added when the user
 	// answers a confirmation with "trust this session". They extend (never replace)

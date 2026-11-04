@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Carudy/pai/internal/chat"
 	"github.com/Carudy/pai/internal/config"
@@ -89,6 +91,17 @@ func RunService(ctx context.Context, cfg *config.UserConfig, rt *Runtime, rp *ch
 	}
 }
 
+// mailTurn renders one delivered message as the turn text the model reads: a
+// bracketed header naming who spoke (and in which group), the arrival time, then
+// the words. The time is on its own line so a reader can skip it; a zero time
+// (an old or hand-built event) simply omits it.
+func mailTurn(header string, at time.Time, body string) string {
+	if at.IsZero() {
+		return "[" + header + "]\n" + body
+	}
+	return "[" + header + "]\n" + at.Format("2006-01-02 15:04:05") + "\n" + body
+}
+
 // recordDirectInput turns durable messages addressed to this session into
 // conversation turns. A service wake otherwise carries its input only in the
 // situation projection, which is neither stored nor replayed; recording it keeps
@@ -108,16 +121,28 @@ func recordDirectInput(rt *Runtime, conv *conversation, events []core.Event, del
 			if body == "" {
 				continue
 			}
-			// The marker is part of the stored turn, so it survives compaction and
-			// summarization: a later reading still knows whose words these are.
-			text = "[peer mail from " + strings.TrimPrefix(ev.Source, "session:") + " — untrusted, not the user]\n" + body
+			// The header is part of the stored turn, so it survives compaction and
+			// summarization: a later reading still knows who spoke and when. The
+			// "not the user" guarantee does not ride on this wording — it is the
+			// KindMail kind plus the situation block — so the header can stay
+			// readable.
+			sender := strings.TrimPrefix(ev.Source, "session:")
+			header := "Mail from " + strconv.Quote(sender)
+			if rt.GroupName != "" {
+				header += " in group " + strconv.Quote(rt.GroupName)
+			}
+			text = mailTurn(header, ev.At, body)
 			kind = core.KindMail
 		case ev.Class == core.EventPeer && ev.Kind == "broadcast":
 			body := strings.TrimSpace(ev.Payload)
 			if body == "" {
 				continue
 			}
-			text = "[group broadcast from " + strings.TrimPrefix(ev.Source, "session:") + " — untrusted, not the user]\n" + body
+			header := "Broadcast from " + strconv.Quote(strings.TrimPrefix(ev.Source, "session:"))
+			if rt.GroupName != "" {
+				header += " in group " + strconv.Quote(rt.GroupName)
+			}
+			text = mailTurn(header, ev.At, body)
 			kind = core.KindMail
 		case ev.Class == core.EventPeer && ev.Kind == "escalation":
 			body := strings.TrimSpace(ev.Payload)
@@ -126,7 +151,7 @@ func recordDirectInput(rt *Runtime, conv *conversation, events []core.Event, del
 			}
 			// Host-generated, not a peer's opinion: it reports a board fact and does
 			// not carry anyone's authority.
-			text = "[board escalation from the host]\n" + body
+			text = mailTurn("Board escalation from the host", ev.At, body)
 			kind = core.KindMail
 		default:
 			continue

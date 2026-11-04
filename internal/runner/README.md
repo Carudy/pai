@@ -53,9 +53,11 @@ Mail from another session is an `EventPeer`: `deliverMail` appends it durably an
 wakes a registered target (a stopped target keeps it until it starts). The
 receiver records it as a `KindMail` turn, so the model reads the sender's words
 without them becoming a user instruction: it cannot answer a pending question,
-approve a tool, or consume `keep_turns`. The situation names the sender and marks
-the content untrusted without repeating the body. Each message carries the
-sender's trace and is refused past `core.MaxMailHops` deliveries. It is data,
+approve a tool, or consume `keep_turns`. The turn text is a readable header, the
+arrival time, then the body (`[Mail from "alice" in group "hydro"]`); the
+trust signal does not ride on that wording — it is the kind, plus the situation
+line that marks the content untrusted without repeating it. Each message carries
+the sender's trace and is refused past `core.MaxMailHops` deliveries. It is data,
 never a trust grant; the sender needs the `mail` tool, and only resident sessions
 are targets.
 

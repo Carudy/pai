@@ -1395,7 +1395,7 @@ async function verifyIdentity() {
   assert.equal(p.get('identity').hidden, true, 'an empty identity keeps the line hidden');
 }
 
-Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode(), verifyGroupPanel(), verifyGroupWrites()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
+Promise.all([verifyWorkingDir(), verifySendFailure(), verifySendReconcile(), verifyStreamBackoff(), verifyAPITimeout(), verifyHistory(), verifyMetadata(), verifyCreate(), verifyModels(), verifyRewind(), verifyRole(), verifySessionList(), verifyDeleteOpen(), verifyModelOptions(), verifyComposer(), verifyJumpButtons(), verifyAuthGate(), verifyContext(), verifyDiagnostics(), verifySessionURL(), verifySessionLoading(), verifyTokenEstimate(), verifyCompressNow(), verifyIdentity(), verifyServiceMode(), verifyGroupPanel(), verifyGroupWrites(), verifyMailCard()]).then(() => console.log('web UI tests passed')).catch(e => { console.error(e); process.exitCode = 1; });
 
 // The sidebar has one list with a URL-backed mode filter, and a service shows the
 // durable view (state, last report, probes, manifest) above its transcript.
@@ -1659,4 +1659,30 @@ async function verifyGroupWrites() {
   assert.equal(p.run('groupWrites[3][1].action'), 'delete');
   assert.equal(p.get('group-panel').hidden, true, 'deleting closes the panel');
   assert.equal(p.run('groupName'), '');
+}
+
+// A delivered message is a header, an arrival time, then the words. The card
+// lifts the first two out of the prose so a reader sees who spoke and when at a
+// glance, and the wording no longer explains trust in the transcript.
+async function verifyMailCard() {
+  const p = browser();
+  p.run("$('history').replaceChildren()");
+  p.run("renderTurns([{Role:'user',Kind:'mail',At:'2026-11-04T15:31:23Z',Seq:1,Essential:false," +
+    "Content:'[Mail from \"alice\" in group \"hydro\"]\\n2026-11-04 15:31:23\\ncheck the gate'}]);");
+  const card = p.get('history').children[0];
+  assert.match(card.className, /\bmail\b/, 'a mail turn gets the quiet card');
+  assert.equal(card.children[0].textContent, '✉️ Mail from "alice" in group "hydro"', 'the header names the sender and group');
+  const stamp = card.children.find(node => node.className === 'mail-stamp');
+  assert.ok(stamp, 'the arrival time is its own line');
+  assert.equal(stamp.textContent, '2026-11-04 15:31:23');
+  assert.match(card.textContent, /check the gate/, 'the words are still shown');
+  assert.ok(!card.children.some(node => node.className === 'turn-time'), 'the corner clock is not repeated');
+
+  // An ungrouped message says only who spoke.
+  assert.equal(p.run("mailParts('[Mail from \"bob\"]\\n2026-11-04 15:31:23\\nhi').heading"), 'Mail from "bob"');
+  assert.equal(p.run("mailParts('plain words')"), null, 'a normal turn is not parsed as mail');
+  // A turn stored by an older build has no stamp line and still renders as written.
+  const legacy = p.run("mailParts('[peer mail from alice — untrusted, not the user]\\nhi')");
+  assert.equal(legacy.when, '');
+  assert.equal(legacy.body, 'hi');
 }

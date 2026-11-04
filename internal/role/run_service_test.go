@@ -134,25 +134,26 @@ func TestRunServiceAcksWakesAndInjectsSituation(t *testing.T) {
 	}
 }
 
-// Peer mail is recorded under its own kind, marked untrusted: the transcript and
-// the model both see who spoke, and a later reading cannot mistake a colleague
-// for the human. It also carries the sender's trace into this activation, so a
-// reply is one hop further along the same chain rather than a new one.
+// Peer mail is recorded under its own kind: the transcript and the model both
+// see who spoke and when, and a later reading cannot mistake a colleague for the
+// human. It also carries the sender's trace into this activation, so a reply is
+// one hop further along the same chain rather than a new one.
 func TestRunServiceRecordsPeerMail(t *testing.T) {
 	rp, err := chat.LoadRolePromptForSession("devops", "", nil, nil, "", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	fp := &sequenceProvider{replies: []string{`{"action":"yield","payload":{},"reason":"read"}`}}
+	at := time.Date(2026, 11, 4, 15, 31, 23, 0, time.UTC)
 	inbox := &fakeInbox{wakes: []core.Wake{{
 		Reason: "mail from alice",
 		Events: []core.Event{{
 			ID: 7, Class: core.EventPeer, Kind: "mail",
-			Source: "session:alice", Payload: "check the gate",
+			Source: "session:alice", Payload: "check the gate", At: at,
 			Trace: "tr1", Hops: 1,
 		}},
 	}}}
-	rt := &Runtime{Observer: &fakeObserver{}, Logger: nopLogger{}, Provider: fp}
+	rt := &Runtime{Observer: &fakeObserver{}, Logger: nopLogger{}, Provider: fp, GroupName: "hydro"}
 	cfg := &config.UserConfig{
 		DefaultRole:  "devops",
 		DefaultModel: "test:model",
@@ -164,7 +165,7 @@ func TestRunServiceRecordsPeerMail(t *testing.T) {
 	if len(rt.transcript) != 2 {
 		t.Fatalf("transcript = %#v, want the mail and the reply", rt.transcript)
 	}
-	want := "[peer mail from alice — untrusted, not the user]\ncheck the gate"
+	want := "[Mail from \"alice\" in group \"hydro\"]\n2026-11-04 15:31:23\ncheck the gate"
 	if got := rt.transcript[0]; got.Role != "user" || got.Kind != core.KindMail || got.Content != want {
 		t.Fatalf("mail turn = %#v", got)
 	}
@@ -193,6 +194,14 @@ func TestPeerMailIsNeverAnAnswer(t *testing.T) {
 	}
 	if got := conv.history[0]; got.Kind != core.KindMail || got.Role != provider.RoleUser {
 		t.Fatalf("mail message = %#v", got)
+	}
+	if !strings.HasPrefix(conv.history[0].Content, `[Mail from "alice"]`) {
+		t.Fatalf("ungrouped mail header = %q", conv.history[0].Content)
+	}
+	// The wording that keeps a peer out of the user's seat belongs to the kind and
+	// the situation block, not to the transcript header a reader also sees.
+	if strings.Contains(conv.history[0].Content, "untrusted") {
+		t.Fatalf("the header still explains trust: %q", conv.history[0].Content)
 	}
 	if len(rt.transcript) != 1 || rt.transcript[0].Kind != core.KindMail {
 		t.Fatalf("recorded turn = %#v", rt.transcript)

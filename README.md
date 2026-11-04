@@ -772,8 +772,12 @@ the scheduler is woken, so a busy target gets it at its next activation, a
 stopped target keeps it until it starts, and a crash does not lose it. The
 receiver records it as a `mail` turn: the model reads the sender's words, but
 they are not a user instruction, so a peer cannot answer a pending question,
-approve a tool, or consume the `keep_turns` window. The situation names the
-sender and marks the content untrusted without repeating the body. Mail is text,
+approve a tool, or consume the `keep_turns` window. The turn is stored as a
+readable header, the arrival time, then the words — `[Mail from "hydrology" in
+group "river"]`, a `YYYY-MM-DD HH:MM:SS` line, then the message — so a reader
+(or a later reading after compaction) knows who spoke and when. That the sender
+is not the user is carried by the turn kind and by the situation line, which
+marks the content untrusted without repeating the body. Mail is text,
 not a capability: it never extends trust, and the receiver's own tool
 confirmations still apply. Each message carries a trace and is refused past six
 hops, so a two-session acknowledgement loop stops structurally rather than by

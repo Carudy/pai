@@ -945,6 +945,16 @@ header p {
 }
 
 .turn.mail .turn-heading {
+    /* The header names who spoke (and where), so it is the card's most useful
+       line, not a label: keep it at heading weight and normal ink. */
+    color: var(--ink);
+}
+
+/* The arrival time under a mail header: metadata, so italic and quiet. */
+.mail-stamp {
+    margin: -6px 0 8px;
+    font-size: 11px;
+    font-style: italic;
     color: var(--muted);
 }
 

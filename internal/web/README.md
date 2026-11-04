@@ -142,7 +142,11 @@ follow's own scroll events are skipped so the animation cannot cancel itself, wh
 an upward move hands control back to the reader. Both panels are bounded: the
 activity log keeps the last 60 cards and the in-memory conversation window is
 capped (older turns reload from the store) so a long session does not grow
-without limit. Confirmation choices render as one aligned row of equal-width
+without limit. A delivered message is stored as a header line, an arrival time,
+then the words; the card lifts the first two out of the prose, so the heading
+reads `✉️ Mail from "hydrology" in group "river"` and the timestamp sits under
+it in italics instead of a second corner clock. Confirmation choices render as
+one aligned row of equal-width
 buttons. The new-session form picks the role from a two-column radio grid, so
 every role is visible at once instead of hidden behind a dropdown.
 

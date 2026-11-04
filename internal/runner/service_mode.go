@@ -555,6 +555,9 @@ func (w *worker) runService() {
 		groupSource := ""
 		if inGroup {
 			rt.Tasks = sessionTasks{m: w.m, from: w.name}
+			// Only used to label delivered mail ("in group X"); addressing never
+			// depends on it.
+			rt.GroupName = brief.Name
 			groupTools = []string{"mail", "task_add", "task_claim", "task_update", "task_list"}
 			groupSource = "group:" + brief.Name
 		}

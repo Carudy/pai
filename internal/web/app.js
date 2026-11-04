@@ -1510,6 +1510,20 @@ function actionHeading(action) {
   if (action === 'yield') return '⏸️ PAI';
   return '✦ PAI';
 }
+// A delivered message is stored as a bracketed header, an arrival time, then the
+// words (see role.mailTurn). The first two are metadata, so the card paints them
+// as a heading and a quiet stamp instead of leaving them inside the prose. A turn
+// from an older build has no timestamp line; it still parses, and shows as it did.
+function mailParts(content) {
+  const nl = content.indexOf('\n');
+  const head = (nl < 0 ? content : content.slice(0, nl)).trim();
+  if (!head.startsWith('[') || !head.endsWith(']')) return null;
+  let rest = nl < 0 ? '' : content.slice(nl + 1);
+  let when = '';
+  const stamp = rest.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\n?/);
+  if (stamp) { when = stamp[1]; rest = rest.slice(stamp[0].length); }
+  return {heading: head.slice(1, -1), when, body: rest};
+}
 function renderTurns(turns) {
   let toolCard = null;
   const cards = [];
@@ -1522,10 +1536,11 @@ function renderTurns(turns) {
     // Peer mail shares the user role but is not the reader's own voice, so it
     // gets its own card and is excluded from the user-input navigation above.
     const mail = turn.Kind === 'mail';
+    const letter = mail ? mailParts(turn.Content) : null;
     const article = text('article', '', 'turn ' + (mail ? 'mail' : turn.Role === 'user' ? 'user' : 'assistant'));
     if (parsed && (parsed.action === 'inform' || parsed.action === 'yield')) article.classList.toggle('action-' + parsed.action, true);
     if (!parsed || parsed.action !== 'tool') {
-      const heading = mail ? '✉️ Mail' : turn.Role === 'user' ? 'You' : actionHeading(parsed && parsed.action);
+      const heading = mail ? (letter ? '✉️ ' + letter.heading : '✉️ Mail') : turn.Role === 'user' ? 'You' : actionHeading(parsed && parsed.action);
       article.append(text('div', heading, 'turn-heading'));
     }
     // Only a plain user instruction is a rewind point; ask-answers and tool
@@ -1549,8 +1564,13 @@ function renderTurns(turns) {
       essential.onclick = () => setEssential(turn.Seq, !turn.essential);
       article.append(essential);
     }
-    if (parsed) response(article, parsed); else article.append(prose(turn.Content));
-    stampTime(article, turn.At);
+    if (letter) {
+      // The header already names the sender and the moment, so the corner clock
+      // would repeat it; show it only when the turn predates the stamp line.
+      if (letter.when) article.append(text('div', letter.when, 'mail-stamp'));
+      article.append(prose(letter.body));
+    } else if (parsed) response(article, parsed); else article.append(prose(turn.Content));
+    if (!letter || !letter.when) stampTime(article, turn.At);
     $('history').append(article); cards.push(article); toolCard = parsed && parsed.action === 'tool' ? article : null;
   });
   return cards;
