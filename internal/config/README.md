@@ -28,6 +28,11 @@ See the [module map](../organization.md) for its near-leaf position.
   token is a credential: `Redacted` masks it and `ResetTemplate` keeps it, while
   the URL and origin reset with the rest. Flag/environment precedence is resolved
   in `cli`, not here.
+- `[serve]` holds the two runtime bounds for `pai serve`: `max_active_sessions`
+  (live chat runtimes; an idle one is evicted) and `max_resident` (prepared
+  service runtimes, 0 = unbounded). Both are optional pointers in the TOML so an
+  omitted key keeps the built-in default — 0 is a meaningful `max_resident`. The
+  command's flags override them.
 - `SetScalar` / `UnsetScalar` perform comment-preserving scalar edits.
 - `ParseServiceManifest` parses and validates a resident-session manifest
   (`[service]` plus `[[watcher]]`), normalizes durations, and produces the

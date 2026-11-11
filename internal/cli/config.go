@@ -50,6 +50,8 @@ var configKeys = map[string]configKey{
 	"conn.url":                       {section: "conn", key: "url", kind: "url"},
 	"conn.origin":                    {section: "conn", key: "origin", kind: "url"},
 	"conn.token":                     {section: "conn", key: "token", kind: "string", secret: true},
+	"serve.max_active_sessions":      {section: "serve", key: "max_active_sessions", kind: "int"},
+	"serve.max_resident":             {section: "serve", key: "max_resident", kind: "int"},
 	"context.exec_limit":             {section: "context", key: "exec_limit", kind: "int"},
 	"context.search_limit":           {section: "context", key: "search_limit", kind: "int"},
 	"context.paper_limit":            {section: "context", key: "paper_limit", kind: "int"},
@@ -370,6 +372,10 @@ func configValue(cfg *config.UserConfig, name string, reveal bool) string {
 		return strconv.FormatBool(cfg.ConfirmRead)
 	case "conn.url":
 		return cfg.Conn.URL
+	case "serve.max_active_sessions":
+		return strconv.Itoa(cfg.Serve.MaxActiveSessions)
+	case "serve.max_resident":
+		return strconv.Itoa(cfg.Serve.MaxResident)
 	case "conn.origin":
 		return cfg.Conn.Origin
 	case "conn.token":

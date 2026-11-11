@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Carudy/pai/internal/chat"
+	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/core"
 	"github.com/Carudy/pai/internal/runner"
 	"github.com/Carudy/pai/internal/session"
@@ -49,10 +50,16 @@ func TestServeModelsIncludePresets(t *testing.T) {
 }
 
 func TestServeFlags(t *testing.T) {
-	for _, args := range [][]string{{}, {"--ip", "127.0.0.1", "--port", "9384", "--max-active-sessions", "2"}, {"-ip", "127.0.0.1", "-p", "9384"}} {
+	for _, args := range [][]string{{}, {"--ip", "127.0.0.1", "--port", "9384"}, {"-ip", "127.0.0.1", "-p", "9384"}} {
 		f, err := parseServeFlags(args)
-		if err != nil || f.ip != "127.0.0.1" || f.port != 9384 || f.maxActive != 2 || f.maxResident != 4 || f.activityLog || f.debugLog {
+		if err != nil || f.ip != "127.0.0.1" || f.port != 9384 || f.maxActiveSet || f.maxResidentSet || f.activityLog || f.debugLog {
 			t.Fatalf("%v: %+v %v", args, f, err)
+		}
+		// With no flag the limits come from config, which defaults to the built-in
+		// numbers: the parser only records that the flag was absent.
+		maxActive, maxResident := serveLimits(f, nil)
+		if maxActive != config.DefaultMaxActiveSessions || maxResident != config.DefaultMaxResident {
+			t.Fatalf("%v: limits = %d/%d", args, maxActive, maxResident)
 		}
 	}
 	for _, args := range [][]string{{"--ip", "localhost"}, {"-p", "0"}, {"--port", "65536"}, {"--max-active-sessions", "0"}, {"--max-resident", "-1"}, {"extra"}, {"--unknown"}} {
@@ -64,6 +71,29 @@ func TestServeFlags(t *testing.T) {
 		if code := Run(context.Background(), io.Discard, []string{"serve", arg}); code != 0 {
 			t.Fatalf("help: %d", code)
 		}
+	}
+}
+
+// The two bounds come from config.toml unless the corresponding flag is given.
+// A zero max-resident is a real value (unbounded), so "unset" cannot be inferred
+// from the number itself.
+func TestServeLimitsPrecedence(t *testing.T) {
+	cfg := &config.UserConfig{Serve: config.ServeConfig{MaxActiveSessions: 6, MaxResident: 9}}
+
+	f, err := parseServeFlags(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxActive, maxResident := serveLimits(f, cfg); maxActive != 6 || maxResident != 9 {
+		t.Fatalf("config limits = %d/%d, want 6/9", maxActive, maxResident)
+	}
+
+	f, err = parseServeFlags([]string{"--max-active-sessions", "20", "--max-resident", "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if maxActive, maxResident := serveLimits(f, cfg); maxActive != 20 || maxResident != 0 {
+		t.Fatalf("flag limits = %d/%d, want 20/0", maxActive, maxResident)
 	}
 }
 

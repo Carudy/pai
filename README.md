@@ -888,7 +888,7 @@ internals, not the team's conversation.
 
 ```bash
 # Serve the current directory (localhost only by default).
-pai serve --port 9384 --max-active-sessions 2
+pai serve --port 9384
 ```
 
 Open `http://127.0.0.1:9384`. The embedded frontend uses no CDN, JavaScript
@@ -896,13 +896,21 @@ framework, or Node build step. See `pai serve --help` for bind address, port,
 authentication, and concurrency options.
 
 Two limits bound what a server keeps in memory, and they are independent:
-`--max-active-sessions` (default 2) counts **chat** runtimes that are running or
+`max_active_sessions` (default 16) counts **chat** runtimes that are running or
 waiting for an answer — an idle one is evicted to make room, so browsing many
-sessions does not need a bigger number; `--max-resident` (default 4, 0 =
+sessions does not need a bigger number; `max_resident` (default 32, 0 =
 unbounded) counts **prepared service** runtimes and evicts the least recently
-used. When every chat slot is busy the new instruction is refused with *"runner
-capacity reached"* (HTTP 429): finish one, or restart `serve` with a larger
-`--max-active-sessions`.
+used. Both live in the `[serve]` section of `config.toml` and can also be given
+as `--max-active-sessions`/`--max-resident`, which win for that run.
+
+```toml
+[serve]
+max_active_sessions = 16
+max_resident = 32
+```
+
+When every chat slot is busy the new instruction is refused with *"runner capacity
+reached"* (HTTP 429): finish one, or raise `max_active_sessions`.
 
 ### Using the UI
 

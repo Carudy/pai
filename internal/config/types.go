@@ -36,6 +36,27 @@ type ConnConfig struct {
 	Origin string
 }
 
+// Serve limits bound what a running server keeps in memory. They are separate
+// because the two kinds of runtime behave differently: a chat worker is one
+// instruction and can be evicted when idle, while a resident service is prepared
+// once and sleeps between wakes. A serve flag still wins over these values.
+type ServeConfig struct {
+	// MaxActiveSessions bounds live chat runtimes (busy or waiting for an answer);
+	// an idle one is evicted to make room. It never counts resident services.
+	MaxActiveSessions int
+	// MaxResident bounds prepared service runtimes, evicted least-recently-used.
+	// Zero means unbounded.
+	MaxResident int
+}
+
+// Built-in serve limits. The chat bound is generous because an idle worker is
+// evicted on demand, so the number only has to cover how many sessions a person
+// drives at once; the service bound covers a host running many groups.
+const (
+	DefaultMaxActiveSessions = 16
+	DefaultMaxResident       = 32
+)
+
 // ContextConfig controls how the conversation is kept within the model's context
 // window: shortening a single tool observation, and eliding old observations from
 // the replayed history. All values come from the [context] section of config.toml
@@ -167,6 +188,12 @@ type tomlConfig struct {
 		Token  string `toml:"token"`
 		Origin string `toml:"origin"`
 	} `toml:"conn"`
+	Serve struct {
+		// Pointers so an omitted key keeps the built-in default: 0 is a meaningful
+		// value for max_resident (unbounded).
+		MaxActiveSessions *int `toml:"max_active_sessions"`
+		MaxResident       *int `toml:"max_resident"`
+	} `toml:"serve"`
 }
 
 // UserConfig is PAI's configuration: everything here comes from config.toml,
@@ -230,6 +257,10 @@ type UserConfig struct {
 
 	// Conn is the default target for `pai conn`.
 	Conn ConnConfig
+
+	// Serve holds the default concurrency bounds for `pai serve`; the command's
+	// flags override them.
+	Serve ServeConfig
 
 	// SessionPersist makes every run persist to an auto-named session, even
 	// without -s/--attach/--continue. SessionMaxTurns caps how many resumed
@@ -328,6 +359,10 @@ func defaultConfig() *UserConfig {
 		},
 		SessionRecapTurns:   3,
 		SessionRewindBackup: true,
+		Serve: ServeConfig{
+			MaxActiveSessions: DefaultMaxActiveSessions,
+			MaxResident:       DefaultMaxResident,
+		},
 	}
 }
 
@@ -379,6 +414,12 @@ func (cfg *UserConfig) fromTOML(raw *tomlConfig) {
 		URL:    strings.TrimSpace(raw.Conn.URL),
 		Token:  strings.TrimSpace(raw.Conn.Token),
 		Origin: strings.TrimSpace(raw.Conn.Origin),
+	}
+	if raw.Serve.MaxActiveSessions != nil {
+		cfg.Serve.MaxActiveSessions = max(*raw.Serve.MaxActiveSessions, 1)
+	}
+	if raw.Serve.MaxResident != nil {
+		cfg.Serve.MaxResident = max(*raw.Serve.MaxResident, 0)
 	}
 	ctx := raw.Context
 	if ctx.ExecLimit > 0 {

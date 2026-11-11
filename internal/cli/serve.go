@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Carudy/pai/internal/config"
 	"github.com/Carudy/pai/internal/hostinfo"
 	"github.com/Carudy/pai/internal/runner"
 	"github.com/Carudy/pai/internal/session"
@@ -21,11 +22,11 @@ import (
 )
 
 func serveHelp() string {
-	return `FLAGS
+	return fmt.Sprintf(`FLAGS
   --ip, -ip <IP>                 Bind IP (default 127.0.0.1; no hostnames)
   --port, -p <port>              Bind port (default 9384)
-  --max-active-sessions <n>      Live chat runtimes, idle ones evicted (default 2)
-  --max-resident <n>             Prepared service runtimes, LRU-evicted (default 4, 0 = unbounded)
+  --max-active-sessions <n>      Live chat runtimes, idle ones evicted (default %d; config serve.max_active_sessions)
+  --max-resident <n>             Prepared service runtimes, LRU-evicted (default %d, 0 = unbounded; config serve.max_resident)
   --activity-log                Log tool calls/lifecycle to stdout (default false)
   --debug-log                   Log probe verdicts, scheduler and model facts to stdout
   --token-file <path>            Token file; overrides PAI_SERVE_TOKEN
@@ -48,8 +49,24 @@ with this process's permissions. Sessions use their saved workspace; new session
 --max-active-sessions bounds chat sessions that are running or waiting for an
 answer; an idle one is evicted to make room, so browsing does not need a bigger
 number. Resident services are counted separately by --max-resident, so a host
-with many services does not use up the chat budget. Raise either when the web UI
-reports that the runner is at capacity.`
+with many services does not use up the chat budget. Both come from config.toml's
+[serve] section unless a flag is given.`, config.DefaultMaxActiveSessions, config.DefaultMaxResident)
+}
+
+// serveLimits resolves the two runtime bounds: an explicit flag wins, then the
+// [serve] section of config.toml, then the built-in default.
+func serveLimits(f serveFlags, cfg *config.UserConfig) (maxActive, maxResident int) {
+	maxActive, maxResident = config.DefaultMaxActiveSessions, config.DefaultMaxResident
+	if cfg != nil {
+		maxActive, maxResident = cfg.Serve.MaxActiveSessions, cfg.Serve.MaxResident
+	}
+	if f.maxActiveSet {
+		maxActive = f.maxActive
+	}
+	if f.maxResidentSet {
+		maxResident = f.maxResident
+	}
+	return maxActive, maxResident
 }
 
 // repeatedFlag collects a flag given more than once, in order.
@@ -63,16 +80,21 @@ func (r *repeatedFlag) Set(value string) error {
 }
 
 type serveFlags struct {
-	ip           string
-	port         int
-	maxActive    int
-	maxResident  int
-	tokenFile    string
-	publicOrigin string
-	allowOrigins repeatedFlag
-	help         bool
-	activityLog  bool
-	debugLog     bool
+	ip          string
+	port        int
+	maxActive   int
+	maxResident int
+	// maxActiveSet and maxResidentSet record an explicit flag. The zero value
+	// cannot stand in for "unset": 0 is meaningful for max-resident (unbounded),
+	// and an unset flag must fall back to config.toml, not to zero.
+	maxActiveSet   bool
+	maxResidentSet bool
+	tokenFile      string
+	publicOrigin   string
+	allowOrigins   repeatedFlag
+	help           bool
+	activityLog    bool
+	debugLog       bool
 }
 
 func parseServeFlags(args []string) (serveFlags, error) {
@@ -82,8 +104,8 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	fs.StringVar(&f.ip, "ip", "127.0.0.1", "bind IP")
 	fs.IntVar(&f.port, "port", 9384, "bind port")
 	fs.IntVar(&f.port, "p", 9384, "bind port")
-	fs.IntVar(&f.maxActive, "max-active-sessions", 2, "maximum live chat runtimes")
-	fs.IntVar(&f.maxResident, "max-resident", 4, "prepared service runtimes (0 = unbounded)")
+	fs.IntVar(&f.maxActive, "max-active-sessions", 0, "maximum live chat runtimes")
+	fs.IntVar(&f.maxResident, "max-resident", 0, "prepared service runtimes (0 = unbounded)")
 	fs.StringVar(&f.tokenFile, "token-file", "", "token file")
 	fs.StringVar(&f.publicOrigin, "public-origin", "", "canonical browser origin")
 	fs.Var(&f.allowOrigins, "allow-origin", "extra browser origin to accept (repeatable)")
@@ -106,18 +128,26 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	if f.port < 1 || f.port > 65535 {
 		return f, errors.New("port must be between 1 and 65535")
 	}
-	if f.maxActive < 1 {
-		return f, errors.New("max-active-sessions must be positive")
-	}
-	if f.maxResident < 0 {
-		return f, errors.New("max-resident must not be negative")
-	}
+	// Which flags were given is observed, not inferred from a value: an omitted
+	// --max-resident must fall back to config.toml, while an explicit 0 means
+	// unbounded, and 0 is also what the flag package leaves behind.
 	publicOriginSet := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "public-origin" {
+	fs.Visit(func(fl *flag.Flag) {
+		switch fl.Name {
+		case "public-origin":
 			publicOriginSet = true
+		case "max-active-sessions":
+			f.maxActiveSet = true
+		case "max-resident":
+			f.maxResidentSet = true
 		}
 	})
+	if f.maxActiveSet && f.maxActive < 1 {
+		return f, errors.New("max-active-sessions must be positive")
+	}
+	if f.maxResidentSet && f.maxResident < 0 {
+		return f, errors.New("max-resident must not be negative")
+	}
 	if publicOriginSet {
 		origin, err := canonicalServeOrigin(f.publicOrigin)
 		if err != nil {
@@ -161,6 +191,12 @@ func runServe(ctx context.Context, args []string, stdout io.Writer, log *tui.Log
 		log.Errorf("serve: %v\n", err)
 		return 1
 	}
+	cfg, err := config.LoadUserConfig()
+	if err != nil {
+		log.Errorf("serve: config: %v\n", err)
+		return 1
+	}
+	maxActive, maxResident := serveLimits(f, cfg)
 	cwd, err := os.Getwd()
 	if err != nil {
 		log.Errorf("serve cwd: %v\n", err)
@@ -180,8 +216,8 @@ func runServe(ctx context.Context, args []string, stdout io.Writer, log *tui.Log
 	defer listener.Close()
 	runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
-	manager := runner.New(runCtx, &serveBackend{store: store, cwd: cwd}, f.maxActive)
-	manager.SetMaxResident(f.maxResident)
+	manager := runner.New(runCtx, &serveBackend{store: store, cwd: cwd}, maxActive)
+	manager.SetMaxResident(maxResident)
 	defer manager.Close()
 	if err := manager.StartServices(); err != nil {
 		log.Errorf("start services: %v\n", err)

@@ -139,6 +139,15 @@ elide_tail_lines  = 4
 # token = ""
 # Only needed when the server runs behind a reverse proxy with --public-origin.
 # origin = "https://pai.example.com"
+
+[serve]
+# Concurrency bounds for "pai serve"; the command's flags override them.
+# Live chat runtimes (running or waiting for an answer). An idle one is evicted to
+# make room, so this only needs to cover how many sessions you drive at once.
+# max_active_sessions = 16
+# Prepared service runtimes, evicted least-recently-used. 0 means unbounded; a
+# host running several groups raises this rather than the chat limit.
+# max_resident = 32
 `
 
 // Template returns the starter config.toml contents.
