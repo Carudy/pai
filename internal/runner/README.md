@@ -152,7 +152,7 @@ history, err := m.History(name, offset, limit)
 ```
 
 - `Send` starts/reuses a worker and queues an instruction. Acceptance is asynchronous; preparation/run failures appear as `error` events followed by `stopped`. Persisted history is supplied by the backend, not an event replay buffer.
-- Capacity caps **live** workers, including busy workers and pending approvals/questions. Idle (`awaiting`) workers are reused, or evicted and joined when a different session needs the slot. Full busy capacity returns `ErrCapacity`; there is no unbounded cross-session wait queue.
+- Capacity caps **live chat** workers, including busy workers and pending approvals/questions. Idle (`awaiting`) workers are reused, or evicted and joined when a different session needs the slot. Full busy capacity returns `ErrCapacity`; there is no unbounded cross-session wait queue. Resident services are **not** counted here: they are prepared once and sleep between wakes, and `maxResident` bounds them instead — counting them against the chat limit made a handful of services refuse a person a new chat.
 - Task and steering queues each hold 32 messages. `Send` never answers a model question. `Steer` is consumed at a safe point; while idle it becomes a normal instruction. `/new` and `/rename` are rejected, including case/whitespace variants; steering rejects slash commands altogether.
 - `Cancel` interrupts the active role step and aborts its pending prompt. It does not abort idle instruction input or discard queued tasks. Cancel during preparation shuts that worker down. Worker lifetime follows the application context, not HTTP request contexts.
 - `SetModel`, `SetRole`, `SetWorkingDir`, `Rename`, and `Rewind` change persisted session state. Each requires an idle session (a busy/starting worker, queued work, or a pending prompt returns `ErrBusy`) and retires the worker under a reservation, so the next `Send` re-prepares against the new settings and history; `Rename` also drops the old entry. A resident service counts as idle while it is `suspended` or `parked`; `SetWorkingDir` is refused for one, because the manifest owns its workspace. They are optional capabilities: each returns an error when the backend does not implement its interface.
@@ -168,9 +168,10 @@ history, err := m.History(name, offset, limit)
 
 ## Concurrency and workspaces
 
-The concurrency limit bounds live runtimes; idle runtimes can be evicted to
-make room. Full busy capacity rejects new work rather than growing an unbounded
-queue. Sessions execute in their persisted working directory, defaulting to the
+The concurrency limit bounds live chat runtimes; idle runtimes can be evicted to
+make room. Prepared service runtimes have their own bound (`SetMaxResident`,
+0 = unbounded) and are evicted least-recently-used. Full busy chat capacity
+rejects new work rather than growing an unbounded queue. Sessions execute in their persisted working directory, defaulting to the
 server's launch directory for new sessions. Directories must already exist and
 are normalized to absolute paths; they are not security sandboxes, and no request
 changes the process cwd. Use separate worktrees when concurrent tasks could

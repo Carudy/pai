@@ -895,6 +895,15 @@ Open `http://127.0.0.1:9384`. The embedded frontend uses no CDN, JavaScript
 framework, or Node build step. See `pai serve --help` for bind address, port,
 authentication, and concurrency options.
 
+Two limits bound what a server keeps in memory, and they are independent:
+`--max-active-sessions` (default 2) counts **chat** runtimes that are running or
+waiting for an answer — an idle one is evicted to make room, so browsing many
+sessions does not need a bigger number; `--max-resident` (default 4, 0 =
+unbounded) counts **prepared service** runtimes and evicts the least recently
+used. When every chat slot is busy the new instruction is refused with *"runner
+capacity reached"* (HTTP 429): finish one, or restart `serve` with a larger
+`--max-active-sessions`.
+
 ### Using the UI
 
 - The sidebar lists saved sessions; the `user@host` under the title names the

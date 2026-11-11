@@ -1447,3 +1447,34 @@ func TestQueueBoundAndParentCancellation(t *testing.T) {
 	cancel()
 	m.Close()
 }
+
+// Resident services are bounded by max-resident, not by the chat limit. Counting
+// the prepared services against max-active let two sleeping services use up a
+// budget of 2, so opening a chat answered "runner capacity reached" — the error a
+// host with groups hits constantly.
+func TestResidentServicesDoNotConsumeChatCapacity(t *testing.T) {
+	b := &fakeBackend{}
+	m := New(context.Background(), b, 2)
+	defer m.Close()
+
+	m.mu.Lock()
+	for _, name := range []string{"svc-a", "svc-b"} {
+		m.entries[name] = &worker{
+			m: m, name: name, mode: ModeService, state: StateSuspended,
+			ctx: context.Background(), cancel: func() {}, done: make(chan struct{}),
+			tasks: make(chan string, 1), steering: make(chan string, 1),
+		}
+	}
+	m.mu.Unlock()
+
+	if err := m.Send("one", "task"); err != nil {
+		t.Fatalf("a chat was refused while only services were prepared: %v", err)
+	}
+	// The chat limit itself still holds: two live chat sessions, then a refusal.
+	if err := m.Send("two", "task"); err != nil {
+		t.Fatalf("second chat: %v", err)
+	}
+	if err := m.Send("three", "task"); !errors.Is(err, ErrCapacity) {
+		t.Fatalf("third chat = %v, want ErrCapacity", err)
+	}
+}

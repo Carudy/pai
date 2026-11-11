@@ -24,7 +24,7 @@ func serveHelp() string {
 	return `FLAGS
   --ip, -ip <IP>                 Bind IP (default 127.0.0.1; no hostnames)
   --port, -p <port>              Bind port (default 9384)
-  --max-active-sessions <n>      Maximum live workers (default 2)
+  --max-active-sessions <n>      Live chat runtimes, idle ones evicted (default 2)
   --max-resident <n>             Prepared service runtimes, LRU-evicted (default 4, 0 = unbounded)
   --activity-log                Log tool calls/lifecycle to stdout (default false)
   --debug-log                   Log probe verdicts, scheduler and model facts to stdout
@@ -43,7 +43,13 @@ Activity logs omit reasoning and tool output; commands may contain sensitive dat
 Debug logs additionally include probe output, model token counts, and scheduler
 decisions: useful for auditing a service, but they can contain command output.
 Remote access requires TLS or a trusted TLS terminator. Clients can run tools
-with this process's permissions. Sessions use their saved workspace; new sessions default to the starting cwd.`
+with this process's permissions. Sessions use their saved workspace; new sessions default to the starting cwd.
+
+--max-active-sessions bounds chat sessions that are running or waiting for an
+answer; an idle one is evicted to make room, so browsing does not need a bigger
+number. Resident services are counted separately by --max-resident, so a host
+with many services does not use up the chat budget. Raise either when the web UI
+reports that the runner is at capacity.`
 }
 
 // repeatedFlag collects a flag given more than once, in order.
@@ -76,7 +82,7 @@ func parseServeFlags(args []string) (serveFlags, error) {
 	fs.StringVar(&f.ip, "ip", "127.0.0.1", "bind IP")
 	fs.IntVar(&f.port, "port", 9384, "bind port")
 	fs.IntVar(&f.port, "p", 9384, "bind port")
-	fs.IntVar(&f.maxActive, "max-active-sessions", 2, "maximum live workers")
+	fs.IntVar(&f.maxActive, "max-active-sessions", 2, "maximum live chat runtimes")
 	fs.IntVar(&f.maxResident, "max-resident", 4, "prepared service runtimes (0 = unbounded)")
 	fs.StringVar(&f.tokenFile, "token-file", "", "token file")
 	fs.StringVar(&f.publicOrigin, "public-origin", "", "canonical browser origin")

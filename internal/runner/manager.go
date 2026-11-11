@@ -555,17 +555,22 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 				return ErrQueueFull
 			}
 		}
-		if len(m.entries) >= m.max {
+		// Only chat runtimes count against this limit. A resident service is bounded
+		// by maxResident instead: it is prepared once and sleeps between wakes, so
+		// counting it here let a host's services exhaust the slots and refuse a
+		// person a new chat ("runner capacity reached").
+		if m.chatWorkersLocked() >= m.max {
 			var idle *worker
 			for _, w := range m.entries {
-				if w.state == StateAwaiting && len(w.tasks) == 0 && len(w.steering) == 0 {
+				if w.mode != ModeService && w.state == StateAwaiting && len(w.tasks) == 0 && len(w.steering) == 0 {
 					idle = w
 					break
 				}
 			}
 			if idle == nil {
 				m.mu.Unlock()
-				return ErrCapacity
+				return fmt.Errorf("%w: %d live chat session(s), none idle; finish one or raise --max-active-sessions",
+					ErrCapacity, m.max)
 			}
 			idle.state = StateStopped
 			idle.cancel()
@@ -585,6 +590,18 @@ func (m *Manager) SendWithWorkspace(name, text, cwd string) error {
 		return nil
 	}
 }
+
+// chatWorkersLocked counts live chat runtimes. The caller holds m.mu.
+func (m *Manager) chatWorkersLocked() int {
+	n := 0
+	for _, w := range m.entries {
+		if w.mode != ModeService {
+			n++
+		}
+	}
+	return n
+}
+
 func (m *Manager) Steer(name, text string) error {
 	if err := validate(text); err != nil {
 		return err
