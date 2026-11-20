@@ -92,3 +92,49 @@ func TestUngroupedHeadIsUnchanged(t *testing.T) {
 		t.Fatal("an ungrouped session rendered a group block")
 	}
 }
+
+// Member descriptions are operator instruction text rendered into every member's
+// head. Only described members appear, in roster order, and a group that uses
+// none composes exactly the same head as before.
+func TestGroupBlockRendersRoles(t *testing.T) {
+	build := func(brief GroupBrief) string {
+		t.Helper()
+		rp, err := LoadRolePromptForSession("devops", "", nil, nil, t.TempDir(), time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rp.SetGroup(brief)
+		return rp.Head()
+	}
+	brief := GroupBrief{
+		Name:    "hydro",
+		Members: []string{"met", "coord", "hydro"},
+		Lead:    "coord",
+		Roles: map[string]string{
+			"coord": "owns the gate schedule",
+			"hydro": "watches the river level",
+			"met":   "   ", // blank is the same as absent
+		},
+	}
+	head := build(brief)
+	for _, want := range []string{
+		"\nRoles:\n",
+		"- coord (lead): owns the gate schedule",
+		"- hydro: watches the river level",
+	} {
+		if !strings.Contains(head, want) {
+			t.Errorf("head is missing %q:\n%s", want, head)
+		}
+	}
+	if strings.Contains(head, "- met:") {
+		t.Errorf("a blank description was rendered:\n%s", head)
+	}
+	if strings.Index(head, "Members:") > strings.Index(head, "Roles:") {
+		t.Error("the roster must come before the descriptions")
+	}
+
+	// No descriptions: the block is absent, so the bytes match a pre-intro build.
+	if strings.Contains(build(GroupBrief{Name: "hydro", Members: []string{"a"}}), "Roles:") {
+		t.Fatal("an undescribed group rendered a Roles block")
+	}
+}

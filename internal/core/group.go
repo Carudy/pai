@@ -23,9 +23,12 @@ type Group struct {
 }
 
 // GroupMember is one session's membership. Name is the session's display name,
-// resolved on read so a listing needs no second query.
+// resolved on read so a listing needs no second query. Intro is the operator's
+// one-line description of what this session does *for this group*; it is not the
+// session's own role, and it is rendered into every member's prompt head.
 type GroupMember struct {
-	GroupID   string
-	SessionID string
-	Name      string
+	GroupID   string `json:"group_id"`
+	SessionID string `json:"session_id"`
+	Name      string `json:"name"`
+	Intro     string `json:"intro,omitempty"`
 }

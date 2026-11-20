@@ -541,6 +541,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Members    []string `json:"members"`
 				MaxMembers int      `json:"max_members"`
 				Session    string   `json:"session"`
+				Intro      string   `json:"intro"`
 			}
 			if !decode(w, r, &body) {
 				return
@@ -557,23 +558,45 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				respond(w, 201, view)
-			case "add", "remove":
+			case "add", "remove", "intro":
 				if strings.TrimSpace(body.Session) == "" {
 					fail(w, 400, "session is required")
 					return
 				}
 				var view runner.GroupView
 				var err error
-				if body.Action == "add" {
+				switch body.Action {
+				case "add":
 					view, err = h.manager.AddGroupMember(body.Name, body.Session)
-				} else {
+				case "remove":
 					view, err = h.manager.RemoveGroupMember(body.Name, body.Session)
+				default:
+					// Bound before the manager so a 400 names the limit, not the store.
+					intro, invalid := config.NormalizeMemberIntro(body.Intro)
+					if invalid != nil {
+						fail(w, 400, invalid.Error())
+						return
+					}
+					view, err = h.manager.SetGroupMemberIntro(body.Name, body.Session, intro)
 				}
 				if err != nil {
 					managerError(w, err)
 					return
 				}
 				respond(w, 200, view)
+			case "start", "stop":
+				changed, failed := 0, map[string]string(nil)
+				var err error
+				if body.Action == "start" {
+					changed, failed, err = h.manager.StartGroup(body.Name)
+				} else {
+					changed, failed, err = h.manager.StopGroup(body.Name)
+				}
+				if err != nil {
+					managerError(w, err)
+					return
+				}
+				respond(w, 200, map[string]any{"changed": changed, "failed": failed})
 			case "delete":
 				if err := h.manager.DeleteGroup(body.Name); err != nil {
 					managerError(w, err)
@@ -581,7 +604,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 				respond(w, 200, map[string]bool{"ok": true})
 			default:
-				fail(w, 400, "action must be create, add, remove, or delete")
+				fail(w, 400, "action must be create, add, remove, intro, start, stop, or delete")
 			}
 		default:
 			w.Header().Set("Allow", "GET, POST")

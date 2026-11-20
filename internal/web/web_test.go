@@ -1987,6 +1987,24 @@ func (b *groupAdminAPI) DeleteGroup(name string) error {
 	return nil
 }
 
+// SetGroupMemberIntro records the description on the roster row, like the store.
+func (b *groupAdminAPI) SetGroupMemberIntro(group, session, intro string) error {
+	for i, m := range b.members[group] {
+		if m.Name == session {
+			b.members[group][i].Intro = intro
+			b.calls = append(b.calls, "intro "+group+" "+session)
+			return nil
+		}
+	}
+	return runner.ErrNotFound
+}
+
+// List names one resident service, so a start/stop action takes the real path
+// (a member that is not a service is reported as a failure).
+func (b *groupAdminAPI) List() ([]runner.Meta, error) {
+	return []runner.Meta{{Name: "hydro", ID: "id-hydro", Mode: runner.ModeService}}, nil
+}
+
 func (b *groupAdminAPI) GroupActivity(members []core.GroupMember, limit int) ([]runner.GroupActivity, error) {
 	b.activityLimit = limit
 	return []runner.GroupActivity{{Kind: "mail", From: "coord", To: "hydro", Detail: "gate schedule final?"}}, nil
@@ -2087,5 +2105,72 @@ func TestGroupActivityAPI(t *testing.T) {
 	}
 	if w := request(h, http.MethodGet, "/api/group/activity", "", nil, "http://pai.test"); w.Code != http.StatusBadRequest {
 		t.Fatalf("missing name = %d, want 400", w.Code)
+	}
+}
+
+// A member description and a group-wide start/stop go through the same endpoint:
+// one action, one response. The description is flattened and bounded before it
+// reaches the store, and a start names the members that refused.
+func TestGroupIntroAndStateAPI(t *testing.T) {
+	b := &groupAdminAPI{
+		groups:  map[string]core.Group{},
+		members: map[string][]core.GroupMember{},
+	}
+	m := runner.New(context.Background(), b, 1)
+	t.Cleanup(m.Close)
+	h := New(m, Options{})
+	if err := m.StartServices(); err != nil {
+		t.Fatal(err)
+	}
+	post := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		return request(h, http.MethodPost, "/api/group", body, nil, "http://pai.test")
+	}
+	post(`{"action":"create","name":"hydro","goal":"g","members":["hydro","coord"]}`)
+
+	w := post(`{"action":"intro","name":"hydro","session":"hydro","intro":"  watches\n the   river level "}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("intro: %d %s", w.Code, w.Body.String())
+	}
+	var view runner.GroupView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, mem := range view.Members {
+		if mem.Name == "hydro" && mem.Intro == "watches the river level" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("roster = %+v, want the flattened description", view.Members)
+	}
+	if w := post(`{"action":"intro","name":"hydro","session":"hydro","intro":"` + strings.Repeat("x", 201) + `"}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("over-long intro = %d, want 400", w.Code)
+	}
+
+	// hydro is a resident service (started at startup) and coord is not: stopping
+	// changes one member and names the other instead of failing the whole action.
+	counts := func(body string) (int, map[string]string) {
+		t.Helper()
+		w := post(body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+		var out struct {
+			Changed int               `json:"changed"`
+			Failed  map[string]string `json:"failed"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Changed, out.Failed
+	}
+	if changed, failed := counts(`{"action":"stop","name":"hydro"}`); changed != 1 || failed["coord"] == "" {
+		t.Fatalf("stop = %d %v, want one change and coord refused", changed, failed)
+	}
+	// Now it is stopped, so starting it is a real transition too.
+	if changed, failed := counts(`{"action":"start","name":"hydro"}`); changed != 1 || failed["coord"] == "" {
+		t.Fatalf("start = %d %v, want one change and coord refused", changed, failed)
 	}
 }

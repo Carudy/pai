@@ -1562,7 +1562,7 @@ async function verifyGroupPanel() {
   p.run("globalThis.groupCalls = []");
   p.run("api = async path => { globalThis.groupCalls.push(path); return {" +
     "group:{name:'hydro',goal:'keep the gates safe',lead_name:'coord',members:2,max_members:8}," +
-    "members:[{name:'coord',lead:true,role:'devops',state:'suspended',next_wake:'2026-10-30T02:00:00Z'},{name:'hydro',role:'coder',state:'stopped'}]," +
+    "members:[{name:'coord',lead:true,role:'devops',state:'suspended',next_wake:'2026-10-30T02:00:00Z'},{name:'hydro',role:'coder',state:'stopped',intro:'watches the river level'}]," +
     "tasks:[{id:'t1',title:'check the gate',status:'open',owner_name:'',version:1},{id:'t2',title:'dive team',status:'blocked',owner_name:'coord',version:3}]," +
     "activity:[{at:'2026-10-30T01:05:00Z',kind:'inform',from:'hydro',detail:'level 3.8 m'}," +
     "{at:'2026-10-30T01:00:00Z',kind:'mail',from:'coord',to:'hydro',trace:'ab12cd34',detail:'gate schedule final?'}] }; }");
@@ -1585,6 +1585,8 @@ async function verifyGroupPanel() {
 
   // The timeline merges deliveries with reports, newest first.
   assert.equal(p.get('group-members-count').textContent, '2/8 member(s)', 'the roster head carries the count');
+  assert.match(p.get('group-members').children[1].children[4].children[0].title, /Describe/, 'an undescribed member offers a description');
+  assert.equal(p.get('group-members').children[2].children[5].textContent, 'watches the river level', 'the description is a note under its row');
   const activity = p.get('group-activity');
   assert.equal(activity.children.length, 3, 'a header plus two rows');
   assert.equal(activity.children[0].children[3].textContent, 'Detail', 'the timeline has aligned columns');
@@ -1616,9 +1618,10 @@ async function verifyGroupWrites() {
   p.run("globalThis.groupWrites=[]");
   p.run("api = async (path, body) => {" +
     " if (String(path).indexOf('sessions') === 0) return {sessions:[{name:'coord'},{name:'hydro'},{name:'met'}]};" +
-    " if (body) { groupWrites.push([path, body]); return {group:{name:body.name,members:2},members:[{name:'coord',lead:true},{name:'hydro'}],tasks:[]}; }" +
+    " if (body && (body.action === 'start' || body.action === 'stop')) { groupWrites.push([path, body]); return {changed:2}; }" +
+    " if (body) { groupWrites.push([path, body]); return {group:{name:body.name,members:2},members:[{name:'coord',lead:true},{name:'hydro'}],tasks:[],activity:[]}; }" +
     " return {group:{name:'hydro',goal:'',lead_name:'coord',members:2,max_members:8}," +
-    "   members:[{name:'coord',lead:true,role:'devops',state:'suspended'},{name:'hydro',role:'coder',state:'stopped'}],tasks:[]}; }");
+    "   members:[{name:'coord',lead:true,role:'devops',state:'suspended'},{name:'hydro',role:'coder',state:'stopped'}],tasks:[],activity:[]}; }");
 
   await p.run('openGroupCreate()');
   assert.equal(p.get('group-create-panel').hidden, false, 'the create dialog opens');
@@ -1638,9 +1641,11 @@ async function verifyGroupWrites() {
   assert.equal(p.get('group-create-panel').hidden, true, 'a successful create closes the dialog');
   assert.equal(p.run('groupName'), 'hydro', 'the new group opens');
 
-  // The roster row action: the lead is inert, an ordinary member is removable.
-  assert.equal(p.get('group-members').children[1].children[4].disabled, true, 'the lead cannot be removed');
-  assert.equal(p.get('group-members').children[2].children[4].disabled, false, 'a member offers removal');
+  // The roster's last cell holds describe + remove; the lead is inert for removal.
+  assert.equal(p.get('group-members').children[1].children[4].children[1].disabled, true, 'the lead cannot be removed');
+  assert.equal(p.get('group-members').children[2].children[4].children[1].disabled, false, 'a member offers removal');
+  assert.equal(p.get('group-start').disabled, false, 'the group can be started');
+  assert.equal(p.get('group-stop').disabled, false, 'and stopped');
 
   // Only services outside the group are offered for adding.
   assert.equal(p.get('group-add').hidden, false);
@@ -1655,6 +1660,25 @@ async function verifyGroupWrites() {
   assert.equal(p.run('groupWrites[2][1].action'), 'remove');
   assert.equal(p.run('groupWrites[2][1].session'), 'hydro');
 
+  // A member description is one line the operator writes; a cancelled prompt
+  // sends nothing.
+  p.run("prompt=()=>'watches the river level'");
+  await p.run("editGroupIntro({name:'hydro'})");
+  const described = p.run('groupWrites[groupWrites.length-1][1]');
+  assert.equal(described.action, 'intro');
+  assert.equal(described.session, 'hydro');
+  assert.equal(described.intro, 'watches the river level');
+  p.run("prompt=()=>null");
+  const afterIntro = p.run('groupWrites.length');
+  await p.run("editGroupIntro({name:'hydro'})");
+  assert.equal(p.run('groupWrites.length'), afterIntro, 'a cancelled prompt sends nothing');
+
+  // Start all / Stop all are one action each, over the roster.
+  await p.run('groupStateChange(true)');
+  assert.equal(p.run('groupWrites[groupWrites.length-1][1].action'), 'start');
+  await p.run('groupStateChange(false)');
+  assert.equal(p.run('groupWrites[groupWrites.length-1][1].action'), 'stop');
+
   // A declined confirmation sends nothing.
   p.run("confirm=()=>false; $('group-new-member').value='met'");
   const before = p.run('groupWrites.length');
@@ -1665,7 +1689,7 @@ async function verifyGroupWrites() {
   p.run('confirm=()=>true');
 
   await p.run('deleteGroup()');
-  assert.equal(p.run('groupWrites[3][1].action'), 'delete');
+  assert.equal(p.run('groupWrites[groupWrites.length-1][1].action'), 'delete');
   assert.equal(p.get('group-panel').hidden, true, 'deleting closes the panel');
   assert.equal(p.run('groupName'), '');
 }

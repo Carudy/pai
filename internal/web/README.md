@@ -250,15 +250,17 @@ rejected; there is no URL authentication.
 - `GET /api/group/activity?name=...&limit=...`: `{"activity": [...]}` — the same
   rows over a wider window, for the panel's **Show more**. The limit defaults to
   10 and is clamped to 100; the roster and board are not re-read.
-- `POST /api/group`: `{ "action": "create" | "add" | "remove" | "delete",
-  "name": "<group>", "goal": "...", "lead": "<session>", "members": [...] ,
-  "max_members": 8, "session": "<session>" }`. `create` returns 201 with the new
-  view, `add` and `remove` return 200 with the updated one, `delete` returns
-  `{ "ok": true }`. This is the only write path that works while the server owns
-  the store: every affected member's worker is marked, and its next wake rebuilds
-  the prompt head (roster, shared goal, group tools) from the directory, so no
-  restart is needed. Names are resolved by `session.GroupFromNames`, the same rule
-  the CLI manifest uses.
+- `POST /api/group`: `{ "action": "create" | "add" | "remove" | "intro" | "start" | "stop"
+  | "delete", "name": "<group>", "goal": "...", "lead": "<session>", "members": [...] ,
+  "max_members": 8, "session": "<session>", "intro": "..." }`. `create` returns 201
+  with the new view, `add`, `remove`, and `intro` return 200 with the updated one,
+  `start`/`stop` return `{ "changed": n, "failed": {"<member>": "why"} }`, and
+  `delete` returns `{ "ok": true }`. This is the only write path that works while
+  the server owns the store: every affected member's worker is marked, and its
+  next wake rebuilds the prompt head (roster, shared goal, descriptions, group
+  tools) from the directory, so no restart is needed. Names are resolved by
+  `session.GroupFromNames`, the same rule the CLI manifest uses. An `intro` is
+  flattened to one line and bounded to 200 bytes, and an empty one clears it.
 - `GET /api/service?name=...`: `runner.ServiceView` — the durable view of a
   resident session: metadata (mode, state, next wake), `status` (the last
   report), `spec` (the stored manifest as canonical JSON), `manifest_toml` (the
@@ -500,9 +502,15 @@ list is longer than the sidebar, that region scrolls. **＋** beside the Groups
 heading opens a form over the resident services (name, shared goal, optional lead,
 member checkboxes, member cap). Opening a group covers the conversation with an
 inspector: its shared goal, the roster with each member's role, state, next wake
-and lead marker, and the board (`title`, status, owner, version). A roster row
-removes that member (inert for the lead, which the store refuses), a select adds
-one, and **Delete** removes the directory after a confirmation. Every write goes
+and lead marker, and the board (`title`, status, owner, version). **▶ Start all**
+and **■ Stop all** loop over the roster through the same service start/stop the
+service panel uses; the toast counts the transitions and names any member that
+refused (a group itself has no lifecycle state). A roster row's **✎** edits the
+member's in-group description — one line, up to 200 characters, operator text that
+every member reads as a `Roles:` block — and its description renders as a note
+under the row. The row's **✕** removes that member (inert for the lead, which the
+store refuses), a select adds one, and **Delete** removes the directory after a
+confirmation. Every write goes
 through `POST /api/group`; a change takes effect at each member's next wake, so
 none of it needs a restart. It calls `GET /api/group?name=…` to read, changes no
 URL state, and a close button returns to the selected session, so a reload never

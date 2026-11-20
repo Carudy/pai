@@ -2740,6 +2740,43 @@ header p {
     white-space: nowrap;
 }
 
+/* Two quiet row actions share the last cell: describe, then remove. */
+.group-member-actions {
+    display: flex;
+    gap: 2px;
+    justify-content: flex-end;
+    overflow: visible;
+}
+
+.group-member-edit {
+    border: 0;
+    background: none;
+    padding: 0 2px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.group-member-edit:hover {
+    color: var(--accent);
+}
+
+/* The in-group description is a note under the row, spanning its columns. */
+.group-member > .group-member-intro {
+    grid-column: 1 / -1;
+    padding: 0 0 2px 2px;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: normal;
+}
+
+/* Start all / Stop all: a compact pair in the panel head, not a second toolbar. */
+.group-state {
+    padding: 3px 8px;
+    font-size: 12px;
+}
+
 /* Removing a member is a row action, not a headline: a quiet glyph that only
    turns red on hover, and is inert for the lead (the store refuses it). */
 .group-member-remove {

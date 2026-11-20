@@ -124,17 +124,6 @@ func (b *serveBackend) CreateGroup(name, goal, lead string, members []string, ma
 func (b *serveBackend) AddGroupMember(group, name string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	store, err := b.groupStore()
-	if err != nil {
-		return err
-	}
-	g, found, err := store.GroupByName(group)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return fmt.Errorf("group %q does not exist", group)
-	}
 	meta, err := b.store.Get(name)
 	if err != nil {
 		return fmt.Errorf("%q is not a session: %w", name, err)
@@ -142,12 +131,37 @@ func (b *serveBackend) AddGroupMember(group, name string) error {
 	if meta.Meta.Mode != session.ModeService {
 		return fmt.Errorf("%q is a chat session; a group member must be a service session", name)
 	}
-	return store.AddGroupMember(g.ID, meta.Meta.ID)
+	return b.memberTarget(group, name, func(store session.GroupStore, groupID, sessionID string) error {
+		return store.AddGroupMember(groupID, sessionID)
+	})
 }
 
 func (b *serveBackend) RemoveGroupMember(group, name string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.memberTarget(group, name, func(store session.GroupStore, groupID, sessionID string) error {
+		return store.RemoveGroupMember(groupID, sessionID)
+	})
+}
+
+// SetGroupMemberIntro resolves the group and member names the group panel sends
+// and writes the description onto the membership row.
+func (b *serveBackend) SetGroupMemberIntro(group, name, intro string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.memberTarget(group, name, func(store session.GroupStore, groupID, sessionID string) error {
+		flat, err := config.NormalizeMemberIntro(intro)
+		if err != nil {
+			return err
+		}
+		return store.SetGroupMemberIntro(groupID, sessionID, flat)
+	})
+}
+
+// memberTarget resolves the (group, session) names a write addresses and calls op
+// with their ids. Both writes share it so "group not found" and "not a session"
+// read the same everywhere.
+func (b *serveBackend) memberTarget(group, name string, op func(session.GroupStore, string, string) error) error {
 	store, err := b.groupStore()
 	if err != nil {
 		return err
@@ -163,7 +177,7 @@ func (b *serveBackend) RemoveGroupMember(group, name string) error {
 	if err != nil {
 		return fmt.Errorf("%q is not a session: %w", name, err)
 	}
-	return store.RemoveGroupMember(g.ID, meta.Meta.ID)
+	return op(store, g.ID, meta.Meta.ID)
 }
 
 func (b *serveBackend) DeleteGroup(name string) error {

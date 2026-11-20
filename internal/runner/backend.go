@@ -250,6 +250,9 @@ type GroupAdminBackend interface {
 	AddGroupMember(group, session string) error
 	// RemoveGroupMember removes one membership. The lead cannot be removed.
 	RemoveGroupMember(group, session string) error
+	// SetGroupMemberIntro writes a member's in-group description through the group
+	// name. An empty text clears it.
+	SetGroupMemberIntro(group, session, intro string) error
 	// DeleteGroup removes the directory rows and the board; member sessions stay.
 	DeleteGroup(name string) error
 }

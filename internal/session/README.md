@@ -78,6 +78,10 @@ See the [module map](../organization.md) for the storage adapter boundary.
   lead. `groups.lead_id` is deliberately not a foreign key: a lead that no longer
   exists reads as "no lead" (`GroupByName` left-joins the name), and both delete
   paths refuse to create one in the first place.
+- `group_members.intro` is the operator's one-line description of what a member
+  does for this group. It hangs off the membership, not the session, and is
+  written by `SetGroupMemberIntro` (empty clears it); `ApplyGroupIntros` writes
+  the set a manifest names, after the group exists.
 - `TaskStore` is the group board: `tasks` rows with a status, an owner, a lease,
   and a version. A claim is a lease, so a lapsed one is recoverable without an
   operator; every write is optimistic, so a stale edit is rejected with the

@@ -3,6 +3,7 @@ package runner
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Carudy/pai/internal/chat"
@@ -18,6 +19,9 @@ type GroupMemberView struct {
 	State    string     `json:"state,omitempty"`
 	NextWake *time.Time `json:"next_wake,omitempty"`
 	Lead     bool       `json:"lead,omitempty"`
+	// Intro is what this member does for the group, written by the operator and
+	// rendered into every member's prompt head. Empty means none was set.
+	Intro string `json:"intro,omitempty"`
 }
 
 // GroupView is the read model for `pai group show` over a running server, which
@@ -144,6 +148,96 @@ func (m *Manager) groupMemberNames(name string) []string {
 	return names
 }
 
+// SetGroupMemberIntro records what a member does in this group and refreshes the
+// roster: the text is part of every member's prompt head, not just the described
+// member's. An empty intro clears it.
+func (m *Manager) SetGroupMemberIntro(group, session, intro string) (GroupView, error) {
+	admin, ok := m.backend.(GroupAdminBackend)
+	if !ok {
+		return GroupView{}, errors.New("this host cannot edit groups")
+	}
+	if err := admin.SetGroupMemberIntro(group, session, intro); err != nil {
+		return GroupView{}, err
+	}
+	outcome := "described"
+	if strings.TrimSpace(intro) == "" {
+		outcome = "cleared"
+	}
+	m.diag(Diagnostic{Session: group, Kind: "group", Subject: session, Outcome: outcome})
+	m.reloadGroupMembers(group)
+	return m.GroupView(group)
+}
+
+// StartGroup resumes every member's schedule and StopGroup pauses it. Both are
+// loops over the roster, not a group lifecycle: a group still schedules nothing
+// of its own, so there is no group-level state to persist. A member that refuses
+// is reported by name and does not stop the others.
+func (m *Manager) StartGroup(name string) (int, map[string]string, error) {
+	return m.setGroupRunning(name, true)
+}
+
+func (m *Manager) StopGroup(name string) (int, map[string]string, error) {
+	return m.setGroupRunning(name, false)
+}
+
+func (m *Manager) setGroupRunning(name string, running bool) (int, map[string]string, error) {
+	members, err := m.groupMembers(name)
+	if err != nil {
+		return 0, nil, err
+	}
+	changed := 0
+	var failed map[string]string
+	for _, member := range members {
+		// Only real transitions count, so pressing Start on a running group is not
+		// a burst of immediate probes: StartService registers "due now".
+		m.mu.Lock()
+		known, stopped := m.serviceNames[member.Name], m.stoppedServices[member.Name]
+		m.mu.Unlock()
+		if !known {
+			if failed == nil {
+				failed = make(map[string]string, len(members))
+			}
+			failed[member.Name] = "not a resident service"
+			continue
+		}
+		if running == !stopped {
+			continue
+		}
+		if running {
+			err = m.StartService(member.Name)
+		} else {
+			err = m.StopService(member.Name)
+		}
+		if err != nil {
+			if failed == nil {
+				failed = make(map[string]string, len(members))
+			}
+			failed[member.Name] = err.Error()
+			continue
+		}
+		changed++
+	}
+	m.diag(Diagnostic{Session: name, Kind: "group", Outcome: map[bool]string{true: "started", false: "stopped"}[running],
+		Detail: fmt.Sprintf("%d member(s), %d failed", changed, len(failed))})
+	return changed, failed, nil
+}
+
+// groupMembers resolves a group's roster, or ErrNotFound.
+func (m *Manager) groupMembers(name string) ([]core.GroupMember, error) {
+	groups, ok := m.backend.(GroupBackend)
+	if !ok {
+		return nil, errors.New("this host has no group directory")
+	}
+	g, found, err := groups.GroupByName(name)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, ErrNotFound
+	}
+	return groups.GroupMembers(g.ID)
+}
+
 // reloadGroupMembers marks every current member for re-preparation.
 func (m *Manager) reloadGroupMembers(name string) {
 	for _, member := range m.groupMemberNames(name) {
@@ -228,7 +322,7 @@ func (m *Manager) GroupView(name string) (GroupView, error) {
 	}
 	view := GroupView{Group: g}
 	for _, mem := range members {
-		mv := GroupMemberView{ID: mem.SessionID, Name: mem.Name, Lead: mem.SessionID == g.LeadID}
+		mv := GroupMemberView{ID: mem.SessionID, Name: mem.Name, Lead: mem.SessionID == g.LeadID, Intro: mem.Intro}
 		if meta, ok := byID[mem.SessionID]; ok {
 			mv.Role, mv.State, mv.NextWake = meta.Role, meta.State, meta.NextWake
 		}
@@ -277,6 +371,12 @@ func (m *Manager) groupBrief(sessionID string) (chat.GroupBrief, bool) {
 	brief := chat.GroupBrief{Name: g.Name, Goal: g.Goal, Lead: g.LeadName}
 	for _, mem := range members {
 		brief.Members = append(brief.Members, mem.Name)
+		if mem.Intro != "" {
+			if brief.Roles == nil {
+				brief.Roles = make(map[string]string, len(members))
+			}
+			brief.Roles[mem.Name] = mem.Intro
+		}
 	}
 	return brief, true
 }

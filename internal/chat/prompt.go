@@ -137,6 +137,11 @@ type GroupBrief struct {
 	Goal    string
 	Lead    string
 	Members []string
+	// Roles is the operator's in-group description of a member, keyed by name.
+	// Empty entries are omitted, and the block is rendered only when at least one
+	// is set: a group that does not use descriptions composes the same head as
+	// before, so its prefix stays byte-identical to an older build's.
+	Roles map[string]string
 }
 
 // SetGroup installs the team context and recomposes the head. Members are
@@ -154,6 +159,15 @@ func (rp *RolePrompt) SetGroup(brief GroupBrief) *RolePrompt {
 	brief.Lead = strings.TrimSpace(brief.Lead)
 	brief.Members = append([]string(nil), brief.Members...)
 	sort.Strings(brief.Members)
+	if len(brief.Roles) > 0 {
+		roles := make(map[string]string, len(brief.Roles))
+		for name, text := range brief.Roles {
+			if text = strings.TrimSpace(text); text != "" {
+				roles[name] = text
+			}
+		}
+		brief.Roles = roles
+	}
 	rp.group = brief
 	rp.head = composeHead(rp, rp.hostInfo)
 	return rp
@@ -278,6 +292,25 @@ func composeHead(rp *RolePrompt, hostInfo string) string {
 				}
 			}
 			b.WriteString(".")
+			// Descriptions come from the operator, like the goal: they are instruction
+			// text, not data a peer can write. SetGroup dropped the empty ones, so any
+			// entry left here is rendered, and sorted members keep the bytes stable.
+			if len(g.Roles) > 0 {
+				b.WriteString("\nRoles:")
+				for _, m := range g.Members {
+					role, ok := g.Roles[m]
+					if !ok {
+						continue
+					}
+					b.WriteString("\n- ")
+					b.WriteString(m)
+					if g.Lead != "" && m == g.Lead {
+						b.WriteString(" (lead)")
+					}
+					b.WriteString(": ")
+					b.WriteString(role)
+				}
+			}
 			if rp.hasTool("mail") {
 				b.WriteString("\nMail: address a member by name; `group:")
 				b.WriteString(g.Name)

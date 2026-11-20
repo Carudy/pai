@@ -160,6 +160,7 @@ CREATE TABLE IF NOT EXISTS group_members (
   group_id   TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   joined_at  INTEGER NOT NULL,
+  intro      TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (group_id, session_id)
 );
 CREATE INDEX IF NOT EXISTS group_members_session ON group_members(session_id);
@@ -180,6 +181,11 @@ CREATE TABLE IF NOT EXISTS tasks (
   escalated_orphaned_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS tasks_group ON tasks(group_id, status, priority);`); err != nil {
+		return err
+	}
+	// An existing database predates the in-group description, so the column is
+	// added after the table exists: additive and defaulted, like the others.
+	if err := s.ensureColumn("group_members", "intro", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 	// No worker survives the process, so a lease left by a crash is pending work.

@@ -2934,6 +2934,7 @@ function closeGroup() {
 
 function paintGroup() {
   if (!groupName) { $('group-panel').hidden = true; return; }
+  groupControls();
   $('group-name').textContent = groupName;
   $('group-error').textContent = groupError || '';
   $('group-error').hidden = !groupError;
@@ -3030,14 +3031,28 @@ function paintGroupMembers(members) {
     row.append(text('span', m.role || '—', 'group-member-meta'));
     row.append(text('span', serviceStateLabel(m.state || 'stored'), 'session-state'));
     row.append(text('span', m.next_wake ? formatWakeShort(m.next_wake) : '—', 'group-member-meta'));
-    // The lead is the group's escalation address, so the store refuses to remove
-    // it; say so on the control instead of letting the click fail.
+    // Two row actions in one cell: describe what the member does here, and remove
+    // it. The lead is the group's escalation address, so the store refuses to
+    // remove it; say so on the control instead of letting the click fail.
+    const actions = text('span', '', 'group-member-actions');
+    const describe = text('button', '✎', 'group-member-edit');
+    describe.type = 'button';
+    describe.title = m.intro ? 'Edit the in-group description' : 'Describe what this member does in this group';
+    describe.onclick = () => editGroupIntro(m).catch(error);
     const remove = text('button', '✕', 'group-member-remove');
     remove.type = 'button';
     remove.disabled = !!m.lead;
     remove.title = m.lead ? 'The lead cannot be removed; delete the group or make another member the lead' : 'Remove ' + m.name + ' from this group';
     remove.onclick = () => removeGroupMember(groupName, m.name).catch(error);
-    row.append(remove);
+    actions.append(describe, remove);
+    row.append(actions);
+    // The description is the operator's own text about this team, so it reads as a
+    // note under the row rather than as another column.
+    if (m.intro) {
+      const note = text('span', m.intro, 'group-member-intro');
+      note.title = m.intro;
+      row.append(note);
+    }
     box.append(row);
   }
 }
@@ -3153,7 +3168,7 @@ async function createGroup(e) {
     await openGroup(name);
     toast('created group ' + name);
   } catch (err) { error(err); }
-  finally { groupBusy = false; $('create-group').disabled = false; }
+  finally { groupBusy = false; $('create-group').disabled = false; groupControls(); }
 }
 
 async function showMoreGroupActivity() {
@@ -3164,6 +3179,45 @@ async function showMoreGroupActivity() {
   groupActivityShown = limit;
   if (groupView) groupView.activity = data.activity || [];
   paintGroup();
+}
+
+// The in-group description is operator text rendered into every member's prompt
+// head, so the panel edits it where the roster is: one line, bounded server-side.
+// An empty answer clears it; a cancelled prompt changes nothing.
+async function editGroupIntro(member) {
+  if (!groupName || !member) return;
+  const answer = prompt('What does "' + member.name + '" do in group "' + groupName +
+    '"? One line, up to 200 characters. Leave empty to clear.', member.intro || '');
+  if (answer === null) return;
+  const view = await api('group', {action:'intro', name:groupName, session:member.name, intro:answer});
+  groupView = view;
+  paintGroup();
+}
+
+// Start or stop every member. A group schedules nothing itself, so this is a loop
+// over the roster: the host counts the members that actually changed and names
+// the ones that refused, and the others still apply.
+async function groupStateChange(running) {
+  if (!groupName || groupBusy) return;
+  const name = groupName;
+  groupBusy = true;
+  groupControls();
+  try {
+    const out = await api('group', {action: running ? 'start' : 'stop', name});
+    const failed = Object.keys(out.failed || {});
+    const verb = running ? 'started ' : 'stopped ';
+    toast(failed.length
+      ? verb + out.changed + ' member(s); failed: ' + failed.join(', ')
+      : verb + out.changed + ' member(s)');
+    if (groupName === name) await openGroup(name);
+  } catch (err) { error(err); }
+  finally { groupBusy = false; groupControls(); }
+}
+
+function groupControls() {
+  const disabled = !groupName || groupBusy;
+  $('group-start').disabled = disabled;
+  $('group-stop').disabled = disabled;
 }
 
 async function addGroupMember() {
@@ -3244,6 +3298,8 @@ $('open-group-create').onclick = () => { openGroupCreate().catch(error); };
 $('close-group-create').onclick = closeGroupCreate;
 $('new-group').onsubmit = createGroup;
 $('group-add-member').onclick = () => { addGroupMember().catch(error); };
+$('group-start').onclick = () => { groupStateChange(true).catch(error); };
+$('group-stop').onclick = () => { groupStateChange(false).catch(error); };
 $('group-activity-more').onclick = () => { showMoreGroupActivity().catch(error); };
 $('delete-group').onclick = () => { deleteGroup().catch(error); };
 $('theme-toggle').onclick = toggleTheme;

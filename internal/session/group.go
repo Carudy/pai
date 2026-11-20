@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/Carudy/pai/internal/core"
@@ -35,6 +36,10 @@ type GroupStore interface {
 	// RemoveGroupMember removes a membership. The lead cannot be removed: a group
 	// without a lead cannot be addressed, so that is a delete-and-recreate.
 	RemoveGroupMember(groupID, sessionID string) error
+	// SetGroupMemberIntro stores the operator's one-line description of what a
+	// member does in this group; an empty string clears it. It is per membership,
+	// not per session: the same session's in-group job is about this team.
+	SetGroupMemberIntro(groupID, sessionID, intro string) error
 	// DeleteGroup removes the directory rows. Member sessions and their
 	// transcripts are untouched.
 	DeleteGroup(name string) error
@@ -77,6 +82,48 @@ func GroupFromNames(store Store, name, goal, lead string, members []string, maxM
 		leadID = meta.ID
 	}
 	return core.Group{Name: name, Goal: goal, LeadID: leadID, MaxMembers: maxMembers}, ids, nil
+}
+
+// ApplyGroupIntros stores the in-group descriptions a definition carries. It runs
+// after CreateGroup because the descriptions hang off the membership rows; it
+// looks the group up by name, since the id is the store's to assign. A caller
+// that fails here should delete the group: a half described roster is worse than
+// none.
+func ApplyGroupIntros(gs GroupStore, groupName string, intros map[string]string) error {
+	if len(intros) == 0 {
+		return nil
+	}
+	g, found, err := gs.GroupByName(groupName)
+	if err != nil {
+		return fmt.Errorf("look up group: %w", err)
+	}
+	if !found {
+		return ErrNotFound
+	}
+	members, err := gs.GroupMembers(g.ID)
+	if err != nil {
+		return fmt.Errorf("read members: %w", err)
+	}
+	byName := make(map[string]string, len(members))
+	for _, m := range members {
+		byName[m.Name] = m.SessionID
+	}
+	// Sorted so a rejected description is always the same one.
+	names := make([]string, 0, len(intros))
+	for name := range intros {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		id, ok := byName[name]
+		if !ok {
+			return fmt.Errorf("%q is not a member of the group", name)
+		}
+		if err := gs.SetGroupMemberIntro(g.ID, id, intros[name]); err != nil {
+			return fmt.Errorf("describe %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // CreateGroup writes the group and its members in one transaction, so a partial
@@ -204,7 +251,7 @@ FROM groups g LEFT JOIN sessions l ON l.id = g.lead_id ORDER BY g.name`)
 }
 
 func (s *sqliteStore) GroupMembers(groupID string) ([]core.GroupMember, error) {
-	rows, err := s.db.Query(`SELECT m.group_id, m.session_id, s.name
+	rows, err := s.db.Query(`SELECT m.group_id, m.session_id, s.name, COALESCE(m.intro, '')
 FROM group_members m JOIN sessions s ON s.id = m.session_id
 WHERE m.group_id = ? ORDER BY s.name`, groupID)
 	if err != nil {
@@ -214,12 +261,27 @@ WHERE m.group_id = ? ORDER BY s.name`, groupID)
 	var out []core.GroupMember
 	for rows.Next() {
 		var m core.GroupMember
-		if err := rows.Scan(&m.GroupID, &m.SessionID, &m.Name); err != nil {
+		if err := rows.Scan(&m.GroupID, &m.SessionID, &m.Name, &m.Intro); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// SetGroupMemberIntro stores what a member does for this group. An empty string
+// clears it; the row must already exist, so a typo in a member name is an error
+// rather than a silent write to nothing.
+func (s *sqliteStore) SetGroupMemberIntro(groupID, sessionID, intro string) error {
+	res, err := s.db.Exec(`UPDATE group_members SET intro = ? WHERE group_id = ? AND session_id = ?`,
+		intro, groupID, sessionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *sqliteStore) AddGroupMember(groupID, sessionID string) error {

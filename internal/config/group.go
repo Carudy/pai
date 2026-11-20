@@ -22,7 +22,23 @@ const (
 	// prompt head, so a long paste would be paid for by the whole group every
 	// wake.
 	maxGroupGoal = 1 << 10
+	// MaxMemberIntro bounds one member's in-group description. Unlike the goal it is
+	// a line, not a paragraph: the roster block is shared by every member on every
+	// wake, so a per-member budget has to stay small.
+	MaxMemberIntro = 200
 )
+
+// NormalizeMemberIntro trims and flattens an in-group description onto one line.
+// The text is rendered into the prompt head, where a newline would let one
+// member's entry imitate the block's own structure, so whitespace is collapsed
+// rather than preserved. An empty result means "no description".
+func NormalizeMemberIntro(text string) (string, error) {
+	flat := strings.Join(strings.Fields(text), " ")
+	if len(flat) > MaxMemberIntro {
+		return "", fmt.Errorf("a member description is longer than %d bytes", MaxMemberIntro)
+	}
+	return flat, nil
+}
 
 // GroupManifest is one parsed, normalized group definition.
 type GroupManifest struct {
@@ -31,6 +47,10 @@ type GroupManifest struct {
 	Lead       string // optional escalation hint; no routing role
 	MaxMembers int
 	Members    []string
+	// MemberIntros is the in-group description of a member, keyed by name. It is
+	// optional per member, so a manifest that does not use it reads exactly as
+	// before.
+	MemberIntros map[string]string
 }
 
 type groupFile struct {
@@ -46,7 +66,8 @@ type groupSection struct {
 }
 
 type memberSection struct {
-	Name string `toml:"name"`
+	Name  string `toml:"name"`
+	Intro string `toml:"intro"`
 }
 
 // ParseGroupManifest parses and validates a group manifest. Members must already
@@ -59,9 +80,10 @@ func ParseGroupManifest(data []byte) (*GroupManifest, error) {
 		return nil, fmt.Errorf("parse group manifest: %w", err)
 	}
 	// A member is a reference to an existing session, so a key like `role` here
-	// would read as if the group configured that session. It does not.
+	// would read as if the group configured that session. It does not: only the
+	// in-group description belongs to the membership.
 	if keys := meta.Undecoded(); len(keys) > 0 {
-		return nil, fmt.Errorf("unknown key %q in group manifest (a member only names an existing session)", keys[0].String())
+		return nil, fmt.Errorf("unknown key %q in group manifest (a member names an existing session and, optionally, its in-group intro)", keys[0].String())
 	}
 	m := &GroupManifest{
 		Name:       strings.TrimSpace(raw.Name),
@@ -92,6 +114,17 @@ func ParseGroupManifest(data []byte) (*GroupManifest, error) {
 		}
 		seen[name] = true
 		m.Members = append(m.Members, name)
+		if strings.TrimSpace(entry.Intro) == "" {
+			continue
+		}
+		intro, err := NormalizeMemberIntro(entry.Intro)
+		if err != nil {
+			return nil, fmt.Errorf("member %q: %w", name, err)
+		}
+		if m.MemberIntros == nil {
+			m.MemberIntros = make(map[string]string, len(raw.Member))
+		}
+		m.MemberIntros[name] = intro
 	}
 	if len(m.Members) == 0 {
 		return nil, fmt.Errorf("a group needs at least one [[member]]")

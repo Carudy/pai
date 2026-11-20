@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -132,5 +133,63 @@ func TestGroupFromNames(t *testing.T) {
 		if _, _, err := GroupFromNames(s, "bad", "", tc.lead, tc.members, 8); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Fatalf("%v: %v, want %q", tc.members, err, tc.want)
 		}
+	}
+}
+
+// A member's in-group description is per membership, cleared by an empty write,
+// and refused when the member is not on the roster.
+func TestGroupMemberIntroRoundTrip(t *testing.T) {
+	s := openSQLiteStore(t)
+	lead := makeService(t, s, "coord")
+	hydro := makeService(t, s, "hydro")
+
+	if err := s.CreateGroup(core.Group{Name: "hydro", LeadID: lead, MaxMembers: 4}, []string{lead, hydro}); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.GroupByName("hydro")
+	if err != nil || !found {
+		t.Fatalf("group = %v %v", found, err)
+	}
+
+	if err := s.SetGroupMemberIntro(got.ID, hydro, "watches the river level"); err != nil {
+		t.Fatal(err)
+	}
+	members, err := s.GroupMembers(got.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]core.GroupMember{}
+	for _, m := range members {
+		byName[m.Name] = m
+	}
+	if byName["hydro"].Intro != "watches the river level" {
+		t.Fatalf("members = %+v", members)
+	}
+	if byName["coord"].Intro != "" {
+		t.Fatalf("an undescribed member gained one: %+v", byName["coord"])
+	}
+
+	if err := s.SetGroupMemberIntro(got.ID, hydro, ""); err != nil {
+		t.Fatal(err)
+	}
+	members, _ = s.GroupMembers(got.ID)
+	for _, m := range members {
+		if m.Intro != "" {
+			t.Fatalf("clearing left text: %+v", members)
+		}
+	}
+	if err := s.SetGroupMemberIntro(got.ID, "nope", "x"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown member = %v", err)
+	}
+
+	// ApplyGroupIntros resolves names against the roster it just wrote.
+	if err := ApplyGroupIntros(s, "hydro", map[string]string{"coord": "owns the schedule"}); err != nil {
+		t.Fatal(err)
+	}
+	if members, _ := s.GroupMembers(got.ID); members[0].Intro != "owns the schedule" {
+		t.Fatalf("applied intro = %+v", members)
+	}
+	if err := ApplyGroupIntros(s, "hydro", map[string]string{"ghost": "x"}); err == nil {
+		t.Fatal("a non-member was described")
 	}
 }

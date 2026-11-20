@@ -806,23 +806,34 @@ lead = "coordinator"   # optional escalation hint; not an address
 
 [[member]]
 name = "coordinator"
+intro = "owns the gate schedule; escalates blocked work"
 [[member]]
 name = "hydrology"
+intro = "watches the river level and mails the coordinator above 4 m"
 ```
+
+`intro` is optional and per membership: a one-line description of what that
+session does *for this team*, rendered into every member's prompt head as a
+`Roles:` block. It is operator instruction text, not data a peer can write, and
+it is bounded to 200 bytes on one line. A group that sets none composes exactly
+the same prompt as before.
 
 ```bash
 pai group create --file hydro.toml
 pai group show hydro
 pai group add hydro meteo-ops
+pai group intro hydro hydrology "cross-checks the forecast"
+pai group start hydro      # or stop
 ```
 
 The browser edits the same directory: **＋** beside the sidebar's Groups heading
 opens a form over your resident services (name, shared goal, optional lead,
-members), and the open group's panel can add or remove a member and delete the
-group. A write made while `pai serve` runs takes effect at each member's next
-wake — the host rebuilds that worker's prompt head from the directory — so
-neither surface needs a restart. Writing from the terminal still needs the store
-lock, since it opens the database directly.
+members), and the open group's panel can add or remove a member, describe what a
+member does here (**✎** on its row), start or stop every member (**▶ Start all** /
+**■ Stop all**), and delete the group. A write made while `pai serve` runs takes
+effect at each member's next wake — the host rebuilds that worker's prompt head
+from the directory — so neither surface needs a restart. Writing from the
+terminal still needs the store lock, since it opens the database directly.
 
 Mail never crosses a group edge, and a session outside every group may only mail
 another ungrouped one — so a group is a real boundary rather than a label.

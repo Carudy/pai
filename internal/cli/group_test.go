@@ -62,6 +62,7 @@ name = "coord"
 
 [[member]]
 name = "hydro"
+intro = "watches the river level"
 `)
 	var out bytes.Buffer
 	log := tui.NewLogger(&out, false)
@@ -88,6 +89,31 @@ name = "hydro"
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("show output is missing %q:\n%s", want, out.String())
 		}
+	}
+
+	if !strings.Contains(out.String(), "watches the river level") {
+		t.Fatalf("the manifest intro is missing from show:\n%s", out.String())
+	}
+
+	// `group intro` writes and clears a member's description.
+	out.Reset()
+	if code := runGroupCmd(context.Background(), []string{"intro", "hydro", "coord", "owns the gate schedule"}, &out, log); code != 0 {
+		t.Fatalf("group intro: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "coord in group hydro: owns the gate schedule") {
+		t.Fatalf("intro output = %q", out.String())
+	}
+	out.Reset()
+	runGroupCmd(context.Background(), []string{"show", "hydro"}, &out, log)
+	if !strings.Contains(out.String(), "owns the gate schedule") {
+		t.Fatalf("show is missing the intro:\n%s", out.String())
+	}
+	out.Reset()
+	if code := runGroupCmd(context.Background(), []string{"intro", "hydro", "coord"}, &out, log); code != 0 {
+		t.Fatalf("clearing: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "cleared the description") {
+		t.Fatalf("clear output = %q", out.String())
 	}
 
 	// The lead is the address for `group:name` mail, so it cannot simply leave.

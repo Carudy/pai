@@ -24,6 +24,7 @@ func groupHelp() string {
   create, new --file F         Create a group from a manifest
   add <group> <session>        Add an existing service session to a group
   rm-member <group> <session>  Remove a member (the lead cannot be removed)
+  intro <group> <session> [t]  Describe what a member does (empty text clears it)
   start, enable <group>        Resume every member service
   stop, disable <group>        Stop every member service
   rm, delete <name>            Delete the group directory (sessions are kept)
@@ -33,6 +34,10 @@ of process: each member keeps its own role, model, workspace, and watchers. It
 decides who may mail whom, and it gives every member the same three things: a
 shared goal, the roster, and (if their role lacks it) the ` + "`mail`" + ` tool. It
 schedules nothing and budgets nothing.
+
+A member is a resident service session; the optional intro (see "pai group
+intro") is a one-line description of what it does for this team, which every
+member reads in its prompt head.
 
 ` + "`group:<name>`" + ` broadcasts to every other member, so a group address is one
 message and N copies, not N². ` + "`lead`" + ` is optional and is only an escalation
@@ -72,6 +77,16 @@ func runGroupCmd(_ context.Context, args []string, stdout io.Writer, log *tui.Lo
 			return 1
 		}
 		return groupRemoveMember(args[1], args[2], stdout, log)
+	case "intro", "describe":
+		if len(args) < 3 {
+			log.Errorf("Usage: pai group intro <group> <session> [text]\n")
+			return 1
+		}
+		text := ""
+		if len(args) > 3 {
+			text = strings.Join(args[3:], " ")
+		}
+		return groupSetIntro(args[1], args[2], text, stdout, log)
 	case "rm", "delete", "del":
 		if len(args) < 2 {
 			log.Errorf("Usage: pai group rm <name>\n")
@@ -222,9 +237,14 @@ func groupShow(name string, stdout io.Writer, log *tui.Logger) int {
 		state[m.ID] = m.State
 	}
 	printGroupHeader(g, stdout)
-	fmt.Fprintln(stdout, "member               state")
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "MEMBER\tSTATE\tINTRO")
 	for _, m := range members {
-		fmt.Fprintf(stdout, "%-20s %s\n", m.Name, emptyOr(state[m.SessionID], "-"))
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", m.Name, emptyOr(state[m.SessionID], "-"), emptyOr(m.Intro, "-"))
+	}
+	if err := tw.Flush(); err != nil {
+		log.Errorf("Error writing members: %v\n", err)
+		return 1
 	}
 	var tasks []core.Task
 	if ts, ok := store.(session.TaskStore); ok {
@@ -251,9 +271,14 @@ func groupShowRemote(client *conn.Client, name string, stdout io.Writer, log *tu
 		return 1
 	}
 	printGroupHeader(view.Group, stdout)
-	fmt.Fprintln(stdout, "member               state")
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "MEMBER\tSTATE\tINTRO")
 	for _, m := range view.Members {
-		fmt.Fprintf(stdout, "%-20s %s\n", m.Name, emptyOr(m.State, "-"))
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", m.Name, emptyOr(m.State, "-"), emptyOr(m.Intro, "-"))
+	}
+	if err := tw.Flush(); err != nil {
+		log.Errorf("Error writing members: %v\n", err)
+		return 1
 	}
 	if code := renderGroupBoard(view.Tasks, stdout, log); code != 0 {
 		return code
@@ -369,6 +394,17 @@ func groupCreate(args []string, stdout io.Writer, log *tui.Logger) int {
 		log.Errorf("Error creating group: %v\n", err)
 		return 1
 	}
+	if err := session.ApplyGroupIntros(gs, manifest.Name, manifest.MemberIntros); err != nil {
+		// A half-described roster is worse than none: the manifest named what each
+		// member does, so a failure rolls the directory back rather than leaving a
+		// group that silently lacks it.
+		if delErr := gs.DeleteGroup(manifest.Name); delErr != nil {
+			log.Errorf("Error rolling back group %s: %v\n", manifest.Name, delErr)
+			return 1
+		}
+		log.Errorf("Error describing members: %v\n", err)
+		return 1
+	}
 	leadNote := "no lead"
 	if manifest.Lead != "" {
 		leadNote = "lead " + manifest.Lead
@@ -426,6 +462,42 @@ func groupRemoveMember(group, name string, stdout io.Writer, log *tui.Logger) in
 		return 1
 	}
 	fmt.Fprintf(stdout, "removed %s from group %s; the session itself is unchanged\n", name, group)
+	return 0
+}
+
+// groupSetIntro writes what a member does for the group. The text is operator
+// instruction rendered into every member's head, so it is flattened to one line
+// and bounded; an empty text clears it.
+func groupSetIntro(group, name, text string, stdout io.Writer, log *tui.Logger) int {
+	intro, err := config.NormalizeMemberIntro(text)
+	if err != nil {
+		log.Errorf("Error: %v\n", err)
+		return 1
+	}
+	store, gs, ok := openGroupStore(log)
+	if !ok {
+		return 1
+	}
+	defer store.Close()
+	g, found, ok := groupByName(gs, group)
+	if !ok || !found {
+		log.Errorf("Error: group %q not found\n", group)
+		return 1
+	}
+	meta, err := store.Get(name)
+	if err != nil {
+		log.Errorf("Error: %q is not a session\n", name)
+		return 1
+	}
+	if err := gs.SetGroupMemberIntro(g.ID, meta.Meta.ID, intro); err != nil {
+		log.Errorf("Error describing %s in %s: %v\n", name, group, err)
+		return 1
+	}
+	if intro == "" {
+		fmt.Fprintf(stdout, "cleared the description of %s in group %s\n", name, group)
+		return 0
+	}
+	fmt.Fprintf(stdout, "%s in group %s: %s\n", name, group, intro)
 	return 0
 }
 

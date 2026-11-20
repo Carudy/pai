@@ -109,6 +109,14 @@ the two sources are read (events by id, turns by name) and where a report's acti
 is parsed out of its JSON. A timeline is presentation, so a failure or a missing
 port leaves the roster and goal intact rather than failing the view.
 
+A member's `Intro` (what it does for this team) rides the brief into the frozen
+head as a `Roles:` block after the roster; only described members appear, and it
+is written through `GroupAdminBackend.SetGroupMemberIntro`, so changing one
+member's line re-prepares every member. `StartGroup`/`StopGroup` are a loop over
+the roster calling `StartService`/`StopService`: a group still schedules nothing
+of its own, and only real transitions count, so pressing Start on a running
+group does not fire a burst of probes.
+
 `List` overlays a live worker's state on the stored one. The store only records
 the state an activation ended in; "busy" exists in the worker, and a listing is
 what a sidebar paints, so reporting the stale value made every row read idle.

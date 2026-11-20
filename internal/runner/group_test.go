@@ -218,6 +218,25 @@ func (b *groupTestBackend) RemoveGroupMember(group, member string) error {
 	return nil
 }
 
+func (b *groupTestBackend) SetGroupMemberIntro(group, member, intro string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	g, ok := b.groups[group]
+	if !ok {
+		return errors.New("group not found")
+	}
+	id := b.idsBySession[member]
+	list := b.members[g.ID]
+	for i := range list {
+		if list[i].SessionID == id {
+			list[i].Intro = intro
+			b.members[g.ID] = list
+			return nil
+		}
+	}
+	return errors.New("not a member")
+}
+
 func (b *groupTestBackend) DeleteGroup(name string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -711,6 +730,9 @@ func TestGroupViewForTheServer(t *testing.T) {
 func TestGroupBriefRoster(t *testing.T) {
 	m, backend := groupManager(t)
 	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+	if err := backend.SetGroupMemberIntro("hydro", "hydro", "watches the river level"); err != nil {
+		t.Fatal(err)
+	}
 	brief, ok := m.groupBrief("h1")
 	if !ok {
 		t.Fatal("a member got no brief")
@@ -718,8 +740,43 @@ func TestGroupBriefRoster(t *testing.T) {
 	if brief.Name != "hydro" || brief.Lead != "coord" || len(brief.Members) != 2 {
 		t.Fatalf("brief = %+v", brief)
 	}
+	// The description rides the brief; the member without one is absent, so the
+	// prompt renders no empty entry.
+	if brief.Roles["hydro"] != "watches the river level" || len(brief.Roles) != 1 {
+		t.Fatalf("roles = %+v", brief.Roles)
+	}
 	if _, ok := m.groupBrief("l2"); ok {
 		t.Fatal("an ungrouped session got a brief")
+	}
+}
+
+// Starting or stopping a group counts only real transitions, so pressing Start on
+// a running group is not a burst of immediate probes; a member that refuses is
+// named and does not stop the others.
+func TestGroupStartStopCountsTransitions(t *testing.T) {
+	m, backend := groupManager(t)
+	backend.seed("hydro", "c1", [][2]string{{"c1", "coord"}, {"h1", "hydro"}})
+	m.mu.Lock()
+	m.stoppedServices["coord"] = true
+	m.stoppedServices["hydro"] = true
+	m.mu.Unlock()
+
+	changed, failed, err := m.StartGroup("hydro")
+	if err != nil || changed != 2 || len(failed) != 0 {
+		t.Fatalf("start = %d %v %v", changed, failed, err)
+	}
+	if changed, _, _ := m.StartGroup("hydro"); changed != 0 {
+		t.Fatalf("a second start changed %d member(s)", changed)
+	}
+	changed, failed, err = m.StopGroup("hydro")
+	if err != nil || changed != 2 || len(failed) != 0 {
+		t.Fatalf("stop = %d %v %v", changed, failed, err)
+	}
+	if changed, _, _ := m.StopGroup("hydro"); changed != 0 {
+		t.Fatalf("a second stop changed %d member(s)", changed)
+	}
+	if _, _, err := m.StartGroup("nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing group = %v", err)
 	}
 }
 

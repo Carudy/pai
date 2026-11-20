@@ -79,3 +79,49 @@ func TestParseGroupManifestRejectsUnknownKeys(t *testing.T) {
 		t.Fatalf("err = %v, want an unknown-key refusal", err)
 	}
 }
+
+// A member may say what it does for this team. The text is injected into every
+// member's prompt head, so it is flattened to one line and bounded; a manifest
+// that omits it behaves exactly as before.
+func TestParseGroupManifestMemberIntro(t *testing.T) {
+	m, err := ParseGroupManifest([]byte(`
+name = "hydro"
+
+[group]
+goal = "keep the gates safe"
+
+[[member]]
+name = "coordinator"
+intro = "owns the gate schedule"
+
+[[member]]
+name = "hydrology"
+intro = """
+watches the river level,
+mails the coordinator above 4 m
+"""
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.MemberIntros["coordinator"]; got != "owns the gate schedule" {
+		t.Fatalf("intro = %q", got)
+	}
+	// Whitespace, including a multi-line literal, collapses onto one line.
+	if got := m.MemberIntros["hydrology"]; got != "watches the river level, mails the coordinator above 4 m" {
+		t.Fatalf("multi-line intro = %q", got)
+	}
+
+	long, err := NormalizeMemberIntro(strings.Repeat("x", MaxMemberIntro+1))
+	if err == nil || long != "" {
+		t.Fatalf("over-long intro = %q, %v", long, err)
+	}
+	if _, err := ParseGroupManifest([]byte(`
+name = "g"
+[[member]]
+name = "a"
+role = "devops"
+`)); err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("a member still only names a session and its intro: %v", err)
+	}
+}

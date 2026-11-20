@@ -24,15 +24,16 @@ See the [module map](../organization.md) for dependency rules.
   member can pick it up. `runner.Manager.Delete` applies the same rule while the
   server is running, which is why the rule lives in both places.
 - `group.go` manages the group directory: create from a manifest, list, show the
-  shared goal, members, and board, add or remove a member, start or stop every
-  member, and delete the directory without touching the sessions. Like
-  `service.go` it needs the store lock. Membership is enforced by `runner` through
-  the optional `GroupBackend` port, which `servebackend.go` forwards to the store;
-  the board is forwarded the same way through `TaskBackend`. The web edits the
-  same directory through `GroupAdminBackend`, so a group can be created while the
-  server runs; name resolution lives in `session.GroupFromNames` so the manifest
-  and the form agree on what a member may be. `group show` also lists the newest
-  activity rows; `groupactivity.go` builds that timeline (events plus parsed
+  shared goal, members, their in-group descriptions, and board, add or remove a
+  member, set a member's description (`pai group intro`, empty clears it), start
+  or stop every member, and delete the directory without touching the sessions.
+  Like `service.go` it needs the store lock. Membership is enforced by `runner`
+  through the optional `GroupBackend` port, which `servebackend.go` forwards to
+  the store; the board is forwarded the same way through `TaskBackend`. The web
+  edits the same directory through `GroupAdminBackend`, so a group can be created
+  while the server runs; name resolution lives in `session.GroupFromNames` so the
+  manifest and the form agree on what a member may be. `group show` also lists the
+  newest activity rows; `groupactivity.go` builds that timeline (events plus parsed
   `inform`/`done` turns) for both the local and the remote path.
   - `remote.go` is the read fallback: while `pai serve` owns the store lock, the
   read commands (`session ls/show`, `service ls/show`, `group ls/show`) query the
